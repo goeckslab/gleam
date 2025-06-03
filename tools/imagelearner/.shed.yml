@@ -1,12 +1,19 @@
-
 owner: goeckslab
 categories:
   - Machine Learning
 remote_repository_url: https://github.com/goeckslab/gleam.git
 homepage_url: https://github.com/goeckslab/gleam/tree/main/tools/imagelearner
+long_description: |
+  ImageLearner is a Galaxy tool for training and evaluating image classification models.
+  It provides a user-friendly interface for managing datasets, configuring model parameters,
+  and visualizing results, making it accessible for users with varying levels of expertise in machine learning.
 auto_tool_repositories:
   name_template: "{{ tool_id }}"
   description_template: "Wrapper for Imagelearner tool: {{ tool_name }}"
 suite:
   name: suite_imagelearner
   description: ImageLearner is a Galaxy tool for training and evaluating image classification models.
+  long_description: |
+    ImageLearner is a Galaxy tool for training and evaluating image classification models.
+    It provides a user-friendly interface for managing datasets, configuring model parameters,
+    and visualizing results, making it accessible for users with varying levels of expertise in machine learning.
