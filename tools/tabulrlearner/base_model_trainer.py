@@ -193,18 +193,18 @@ class BaseModelTrainer:
         LOG.info("Saving HTML report")
 
         model_name = type(self.best_model).__name__
-        excluded_params = ["html", "log_experiment", "system_log", "test_data"]
+        excluded_params = ['html', 'log_experiment', 'system_log', 'test_data']
         filtered_setup_params = {
-            k: v for k,
-            v in self.setup_params.items() if k not in excluded_params
+            k: v
+            for k, v in self.setup_params.items() if k not in excluded_params
         }
         setup_params_table = pd.DataFrame(
-            list(filtered_setup_params.items()), columns=["Parameter", "Value"]
+            list(filtered_setup_params.items()), columns=['Parameter', 'Value']
         )
 
         best_model_params = pd.DataFrame(
             self.best_model.get_params().items(),
-            columns=["Parameter", "Value"]
+            columns=['Parameter', 'Value']
         )
         best_model_params.to_csv(
             os.path.join(self.output_dir, "best_model.csv"), index=False
