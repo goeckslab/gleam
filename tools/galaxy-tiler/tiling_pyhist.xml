@@ -1,0 +1,43 @@
+<tool id="tiling_pyhist" name="Tile Images with PyHIST" version="1.0.0">
+    <description>Tile pathology images using PyHIST in parallel</description>
+
+    <requirements>
+        <container type="docker">pyhist-custom:latest</container>
+    </requirements>
+
+    <command><![CDATA[
+        python "$__tool_directory__/tiling_pyhist.py"
+        #for $i, $img in enumerate($input_collection)
+            --input '${img}' --original_name "${img.element_identifier}"
+        #end for
+        --output_zip '$output_zip'
+    ]]></command>
+
+    <inputs>
+        <param name="input_collection" type="data_collection" collection_type="list" format="svs,tiff,tif" label="Input Image Collection"
+               help="Provide a dataset collection of pathology images (.svs, .tiff, .tif)." />
+    </inputs>
+
+    <outputs>
+        <data name="output_zip" format="zip" label="Image Tiles (zip)" />
+    </outputs>
+
+    <help><![CDATA[
+        **Tile Images with PyHIST**
+
+        This tool tiles pathology images using PyHIST in parallel using Docker. It accepts a **collection** of pathology images:
+
+        - A dataset collection of individual pathology images (e.g., `.svs`, `.tiff`, `.tif`).
+
+        Each image in the collection will be processed in a batch using PyHIST. The output is a ZIP file containing tiled image folders named after the input images.
+
+        **Inputs:**
+        - **Input Image Collection**: Provide a collection of images to tile.
+        - **Output ZIP Filename**: The resulting ZIP file of tiled patches.
+
+        **Outputs:**
+        - **Tiled Images ZIP**: A single ZIP archive with all tiled outputs.
+
+        **Note**: Requires Docker on the Galaxy server. Ensure sufficient disk and CPU resources for parallel processing.
+    ]]></help>
+</tool>
