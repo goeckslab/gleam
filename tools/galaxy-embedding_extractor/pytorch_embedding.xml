@@ -1,0 +1,127 @@
+<tool id="extract_embeddings" name="Image Embedding Extraction" version="1.0.0">
+    <description>Extract image embeddings using a deep learning model</description>
+
+    <requirements>
+        <container type="docker">quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1</container>
+    </requirements>
+
+    <command><![CDATA[
+        python $__tool_directory__/pytorch_embeddings.py 
+        --zip_file '$input_zip' 
+        --output_csv '$output_csv'
+        --model_name '$model_name'
+        #if $apply_normalization
+            --normalize
+        #end if
+        #if $ludwig_format
+        --ludwig_format
+        #end if
+        --transform_type '$transform_type'
+    ]]></command>
+    <configfiles>
+        <inputs name="inputs" />
+    </configfiles>
+    <inputs>
+        <param argument="input_zip" type="data" format="zip" label="Input Zip File (Images)" help="Provide a zip file containing images to process." />
+        <param argument="model_name" type="select" label="Model for Embedding Extraction" help="Select the model to use for embedding extraction.">
+            <option value="alexnet">AlexNet</option>
+            <option value="convnext_tiny">ConvNeXt-Tiny</option>
+            <option value="convnext_small">ConvNeXt-Small</option>
+            <option value="convnext_base">ConvNeXt-Base</option>
+            <option value="convnext_large">ConvNeXt-Large</option>
+            <option value="densenet121">DenseNet121</option>
+            <option value="densenet161">DenseNet161</option>
+            <option value="densenet169">DenseNet169</option>
+            <option value="densenet201">DenseNet201</option>
+            <option value="efficientnet_b0" >EfficientNet-B0</option>
+            <option value="efficientnet_b1">EfficientNet-B1</option>
+            <option value="efficientnet_b2">EfficientNet-B2</option>
+            <option value="efficientnet_b3">EfficientNet-B3</option>
+            <option value="efficientnet_b4">EfficientNet-B4</option>
+            <option value="efficientnet_b5">EfficientNet-B5</option>
+            <option value="efficientnet_b6">EfficientNet-B6</option>
+            <option value="efficientnet_b7">EfficientNet-B7</option>
+            <option value="efficientnet_v2_s">EfficientNetV2-S</option>
+            <option value="efficientnet_v2_m">EfficientNetV2-M</option>
+            <option value="efficientnet_v2_l">EfficientNetV2-L</option>
+            <option value="googlenet">GoogLeNet</option>
+            <option value="inception_v3">Inception-V3</option>
+            <option value="mnasnet0_5">MNASNet-0.5</option>
+            <option value="mnasnet0_75">MNASNet-0.75</option>
+            <option value="mnasnet1_0">MNASNet-1.0</option>
+            <option value="mnasnet1_3">MNASNet-1.3</option>
+            <option value="mobilenet_v2">MobileNetV2</option>
+            <option value="mobilenet_v3_large">MobileNetV3-Large</option>
+            <option value="mobilenet_v3_small">MobileNetV3-Small</option>
+            <option value="regnet_x_400mf">RegNet-X-400MF</option>
+            <option value="regnet_x_800mf">RegNet-X-800MF</option>
+            <option value="regnet_x_1_6gf">RegNet-X-1.6GF</option>
+            <option value="regnet_x_3_2gf">RegNet-X-3.2GF</option>
+            <option value="regnet_x_8gf">RegNet-X-8GF</option>
+            <option value="resnet18">ResNet-18</option>
+            <option value="resnet34">ResNet-34</option>
+            <option value="resnet50" selected="true">ResNet-50</option>
+            <option value="resnet101">ResNet-101</option>
+            <option value="resnet152">ResNet-152</option>
+            <option value="resnext50_32x4d">ResNeXt-50-32x4d</option>
+            <option value="resnext101_32x8d">ResNeXt-101-32x8d</option>
+            <option value="shufflenet_v2_x0_5">ShuffleNetV2-0.5x</option>
+            <option value="shufflenet_v2_x1_0">ShuffleNetV2-1.0x</option>
+            <option value="squeezenet1_0">SqueezeNet1.0</option>
+            <option value="squeezenet1_1">SqueezeNet1.1</option>
+            <option value="swin_b">Swin-B</option>
+            <option value="swin_s">Swin-S</option>
+            <option value="swin_t">Swin-T</option>
+            <option value="vgg11">VGG-11</option>
+            <option value="vgg13">VGG-13</option>
+            <option value="vgg16">VGG-16</option>
+            <option value="vgg19">VGG-19</option>
+            <option value="vit_b_16">ViT-B-16</option>
+            <option value="vit_b_32">ViT-B-32</option>
+            <option value="wide_resnet50_2">Wide-ResNet50-2</option>
+            <option value="wide_resnet101_2">Wide-ResNet101-2</option>
+        </param>
+        <param argument="apply_normalization" type="boolean" label="Apply Normalization" help="Enable or disable normalization of embeddings." checked="true"/>
+        <param argument="transform_type" type="select" label="Image Transformation Type" help="Choose the transformation type to apply before extraction.">
+            <option value="RGB" selected="true">RGB</option>
+            <option value="grayscale">Grayscale</option>
+            <option value="rgba_to_rgb">RGBA to RGB</option>
+            <option value="clahe">CLAHE (Contrast Limited Adaptive Histogram Equalization)</option>
+            <option value="edges">Edge Detection</option>
+        </param>
+        <param name="ludwig_format" type="boolean" optional="true" label="Convert vectors (stored as columns) into a single string column (Ludwig Format)?"/>
+        </inputs>
+    <outputs>
+        <data name="output_csv" format="csv" label="Extracted Embeddings" />
+    </outputs>
+
+    <tests>
+        <test>
+            <param name="input_zip" value="100_digits_test.zip" ftype="zip" />
+            <param name="model_name" value="resnet50" />
+            <param name="apply_normalization" value="true" />
+            <param name="transform_type" value="RGB" />
+            <output name="output_csv">
+                <assert_contents>
+                    <has_text text="sample_name" />
+                    <has_n_columns min="1" />
+                </assert_contents>
+            </output>
+        </test>
+    </tests>
+    <help>
+        <![CDATA[
+        **What it does**
+        This tool extracts image embeddings using a selected deep learning model.
+
+        **Inputs**
+        - A zip file containing images to process.
+        - A model selection for embedding extraction.
+        - An option to apply normalization to the extracted embeddings.
+        - A choice of image transformation type before processing.
+
+        **Outputs**
+        - A CSV file containing embeddings. Each row corresponds to an image, with the file name in the first column and embedding vectors in the subsequent columns.
+        ]]>
+    </help>
+</tool>
