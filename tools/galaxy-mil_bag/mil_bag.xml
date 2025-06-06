@@ -1,0 +1,146 @@
+<tool id="bagging_tool" name="Bagging Embeddings Processor">
+    <description>Process CSV files to create bags of embeddings for machine learning</description>
+    <requirements>
+        <container type="docker">quay.io/goeckslab/milbag:0.1</container>
+    </requirements>
+    <stdio>
+        <exit_code range="137" level="fatal_oom" description="Out of Memory" />
+        <exit_code range="1:" level="fatal" description="Error occurred. Please check Tool Standard Error" />
+    </stdio>
+    <command>
+        python "$__tool_directory__/mil_bag.py"
+        --embeddings_csv "$embeddings_csv"
+        --metadata_csv "$metadata_csv"
+        --split_proportions "$split_proportions"
+        --bag_size "$bag_size"
+        --pooling_method "$pooling_method"
+        --repeats "$repeats"
+        --output_csv "$output_csv"
+        #if $dataleak
+        --dataleak
+        #end if
+        #if $balance_enforced
+        --balance_enforced
+        #end if
+        #if $ludwig_format
+        --ludwig_format
+        #end if
+        #if $random_seed != ""
+        --random_seed "$random_seed"
+        #end if
+        #if $imbalance_cap != ""
+        --imbalance_cap "$imbalance_cap"
+        #end if
+        #if $truncate_bags
+        --truncate_bags
+        #end if
+        #if $use_gpu
+        --use_gpu
+        #end if
+        #if $by_sample != ""
+        --by_sample "$by_sample"
+        #end if
+    </command>
+    <inputs>
+        <param name="embeddings_csv" type="data" format="csv" label="Embeddings CSV File" help="CSV file containing embeddings with a 'sample_name' column."/>
+        <param name="metadata_csv" type="data" format="csv" label="Metadata CSV File" help="CSV file with metadata containing 'sample_name' and 'label' columns."/>
+        <param name="split_proportions" type="text" value="0.7,0.1,0.2" label="Split Proportions (train,val,test)" help="Comma-separated proportions (e.g., '0.7,0.1,0.2') for train, validation, and test splits."/>
+        <param name="bag_size" type="text" value="3-5" label="Bag Size" help="Single number (e.g., '4') or range (e.g., '3-5') for bag sizes."/>
+        <param name="pooling_method" type="select" label="Pooling Method" help="Method to aggregate embeddings into bags.">
+            <option value="max_pooling">Max Pooling</option>
+            <option value="mean_pooling">Mean Pooling</option>
+            <option value="sum_pooling">Sum Pooling</option>
+            <option value="min_pooling">Min Pooling</option>
+            <option value="median_pooling">Median Pooling</option>
+            <option value="l2_norm_pooling">L2 Norm Pooling</option>
+            <option value="geometric_mean_pooling">Geometric Mean Pooling</option>
+            <option value="first_embedding">First Embedding</option>
+            <option value="last_embedding">Last Embedding</option>
+            <option value="attention_pooling">Attention Pooling</option>
+        </param>
+        <param name="repeats" type="integer" value="1" min="1" label="Number of Repeats" help="Number of times to repeat the bagging process."/>
+        <param name="dataleak" type="boolean" truevalue="--dataleak" falsevalue="" checked="false" label="Prevent Data Leakage?" help="If checked, prevents data leakage by splitting on unique sample names."/>
+        <param name="balance_enforced" type="boolean" truevalue="--balance_enforced" falsevalue="" checked="false" label="Enforce Balanced Bags?" help="If checked, alternates between classes to create balanced bags."/>
+        <param name="ludwig_format" type="boolean" truevalue="--ludwig_format" falsevalue="" checked="false" label="Ludwig Format?" help="If checked, outputs embeddings as a single string column for Ludwig compatibility."/>
+        <param name="by_sample" type="text" value="" optional="true" label="Splits for Within-Sample Bagging" help="Optional comma-separated list of splits (0=train, 1=val, 2=test) to bag within samples (e.g., '0,1'). Defaults to random or balanced bagging if empty."/>
+        <param name="random_seed" type="integer" value="" optional="true" label="Random Seed" help="Optional integer seed for reproducibility (e.g., 42). Leave blank for random behavior."/>
+        <param name="imbalance_cap" type="integer" value="" optional="true" label="Maximum Imbalance Percentage" help="Optional maximum allowable imbalance percentage between classes (e.g., 50). If set, balances bags to this threshold."/>
+        <param name="truncate_bags" type="boolean" truevalue="--truncate_bags" falsevalue="" checked="false" label="Truncate Bags for Balance?" help="If checked, truncates bags to ensure equal counts of positive and negative bags."/>
+        <param name="use_gpu" type="boolean" truevalue="--use_gpu" falsevalue="" checked="false" label="Use GPU?" help="If checked, uses GPU for pooling operations (requires compatible hardware and libraries)."/>
+    </inputs>
+    <outputs>
+        <data name="output_csv" format="csv" label="processed_bags.csv"/>
+    </outputs>
+    <tests>
+        <test>
+            <param name="embeddings_csv" value="100_digits_embeddings.csv" />
+            <param name="metadata_csv" value="100_digits_metadata.csv" />
+            <param name="split_proportions" value="0.7,0.2,0.1" />
+            <param name="bag_size" value="3-5" />
+            <param name="pooling_method" value="mean_pooling" />
+            <param name="repeats" value="1" />
+            <param name="dataleak" value="true" />
+            <param name="balance_enforced" value="false" />
+            <param name="ludwig_format" value="true" />
+            <param name="by_sample" value="" />
+            <param name="random_seed" value="42" />
+            <param name="imbalance_cap" value="" />
+            <param name="truncate_bags" value="false" />
+            <param name="use_gpu" value="false" />
+            <output name="output_csv">
+                <assert_contents>
+                    <has_text text="bag_samples" />
+                    <has_n_columns min="1" />
+                </assert_contents>
+            </output>
+        </test>
+        <test>
+            <param name="embeddings_csv" value="100_digits_embeddings.csv" />
+            <param name="metadata_csv" value="100_digits_metadata.csv" />
+            <param name="split_proportions" value="0.7,0.2,0.1" />
+            <param name="bag_size" value="3-5" />
+            <param name="pooling_method" value="mean_pooling" />
+            <param name="repeats" value="1" />
+            <param name="dataleak" value="true" />
+            <param name="balance_enforced" value="false" />
+            <param name="ludwig_format" value="true" />
+            <param name="by_sample" value="2" />
+            <param name="random_seed" value="123" />
+            <param name="imbalance_cap" value="50" />
+            <param name="truncate_bags" value="true" />
+            <param name="use_gpu" value="true" />
+            <output name="output_csv">
+                <assert_contents>
+                    <has_text text="bag_samples" />
+                    <has_n_columns min="1" />
+                </assert_contents>
+            </output>
+        </test>
+    </tests>
+    <help>
+        <![CDATA[
+        **What it does**
+        This tool processes embedding and metadata CSV files to create bags of samples with specified sizes and pooling methods, suitable for machine learning tasks.
+
+        **Inputs**
+        - **Embeddings CSV File**: A CSV file containing embeddings with a `sample_name` column.
+        - **Metadata CSV File**: A CSV file with metadata containing `sample_name` and `label` columns.
+        - **Split Proportions**: Define train, validation, and test split ratios (e.g., '0.7,0.1,0.2').
+        - **Bag Size**: Set a fixed number (e.g., '4') or range (e.g., '3-5') for bag sizes.
+        - **Pooling Method**: Choose how embeddings are aggregated into bags (e.g., mean, max).
+        - **Number of Repeats**: Specify how many times to repeat bagging (useful for augmentation).
+        - **Prevent Data Leakage**: Avoid leakage by splitting on unique sample names.
+        - **Enforce Balanced Bags**: Alternate classes for balanced bagging.
+        - **Ludwig Format**: Convert embeddings to a single string column for Ludwig compatibility.
+        - **Splits for Within-Sample Bagging**: Optional splits (0, 1, 2) to bag within samples (e.g., '0,1').
+        - **Random Seed**: Optional seed for reproducible results.
+        - **Maximum Imbalance Percentage**: Optional cap (e.g., 50) to balance class distribution.
+        - **Truncate Bags for Balance**: Truncate bags to equalize positive and negative counts.
+        - **Use GPU**: Enable GPU acceleration for pooling operations (if available).
+
+        **Outputs**
+        - A CSV file with bags of embeddings, including labels, split information, and processed embedding vectors.
+        ]]>
+    </help>
+    <expand macro="macro_citations" />
+</tool>
