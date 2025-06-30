@@ -242,18 +242,20 @@ def get_metrics_help_modal() -> str:
 <script>
 document.addEventListener("DOMContentLoaded", function() {
   var modal = document.getElementById("metricsHelpModal");
-  var openBtn = document.getElementById("openMetricsHelp");
-  var span = document.getElementsByClassName("close")[0];
-  if (openBtn && modal) {
-    openBtn.onclick = function() {
+  var closeBtn = document.getElementsByClassName("close")[0];
+
+  document.querySelectorAll(".openMetricsHelp").forEach(btn => {
+    btn.onclick = function() {
       modal.style.display = "block";
     };
-  }
-  if (span && modal) {
-    span.onclick = function() {
+  });
+
+  if (closeBtn) {
+    closeBtn.onclick = function() {
       modal.style.display = "none";
     };
   }
+
   window.onclick = function(event) {
     if (event.target == modal) {
       modal.style.display = "none";
@@ -1172,7 +1174,7 @@ class LudwigDirectBackend:
             return section_html
 
         button_html = """
-        <button class="help-modal-btn" id="openMetricsHelp">Model Evaluation Metrics — Help Guide</button>
+        <button class="help-modal-btn openMetricsHelp">Model Evaluation Metrics — Help Guide</button>
         <br><br>
         <style>
         .help-modal-btn {
