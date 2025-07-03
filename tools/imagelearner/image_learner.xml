@@ -44,23 +44,26 @@
                     #if $batch_size_define == "true"
                         --batch-size "$batch_size"
                     #end if
-                    --split-probabilities "$train_split" "$val_split" "$test_split"   
+                    --split-probabilities "$train_split" "$val_split" "$test_split"
                 #end if
-                --random-seed "$random_seed" 
+                #if $augmentation
+                    --augmentation "$augmentation"
+                #end if
+                --random-seed "$random_seed"
                 --output-dir "." &&
 
             mkdir -p '$output_model.extra_files_path' &&
             cp -r experiment_run/model/*.json experiment_run/model/model_weights '$output_model.extra_files_path' &&
 
-            echo "Image Learner Classification Experiment is Done!"        
+            echo "Image Learner Classification Experiment is Done!"
         ]]>
     </command>
-    
+
     <inputs>
         <param argument="input_csv" type="data" format="csv" optional="false" label="the metadata csv containing image_path column, label column and optional split column" />
         <param name="image_zip" type="data" format="zip" optional="false" label="Image zip" help="Image zip file containing your image data"/>
         <param name="model_name" type="select" optional="false" label="Select a model for your experiment" >
-           
+
             <option value="resnet18">Resnet18</option>
             <option value="resnet34">Resnet34</option>
             <option value="resnet50">Resnet50</option>
@@ -140,8 +143,7 @@
         <conditional name="scratch_fine_tune">
             <param name="use_pretrained" type="select"
                 label="Use pretrained weights?"
-                help="If select no, the encoder, combiner, and decoder will all be initialized and trained from scratch.  
-               (e.g. when your images are very different from ImageNet or no suitable pretrained model exists.)">
+                help="If select no, the encoder, combiner, and decoder will all be initialized and trained from scratch. (e.g. when your images are very different from ImageNet or no suitable pretrained model exists.)">
                 <option value="false">No</option>
                 <option value="true" selected="true">Yes</option>
             </param>
@@ -156,6 +158,20 @@
                 <!-- No additional parameters to show if the user selects 'No' -->
             </when>
         </conditional>
+        <param argument="augmentation"
+               name="augmentation"
+               type="select"
+               multiple="true"
+               display="checkboxes"
+               label="Image Augmentation"
+               help="Pick any combination of augmentations to apply">
+            <option value="random_horizontal_flip">Random Horizontal Flip</option>
+            <option value="random_vertical_flip">Random Vertical Flip</option>
+            <option value="random_rotate">Random Rotate</option>
+            <option value="random_blur">Random Blur</option>
+            <option value="random_brightness">Random Brightness</option>
+            <option value="random_contrast">Random Contrast</option>
+        </param>
         <param argument="random_seed" type="integer" value="42" optional="true" label="Random seed (set for reproducibility)" min="0" max="999999"/>
         <conditional name="advanced_settings">
             <param name="customize_defaults" type="select" label="Customize Default Settings?" help="Select yes if you want to customize the default settings of the experiment.">
@@ -205,8 +221,8 @@
             <when value="false">
                 <!-- No additional parameters to show if the user selects 'No' -->
             </when>
-        </conditional>    
-    </inputs>       
+        </conditional>
+    </inputs>
     <outputs>
         <data format="ludwig_model" name="output_model" label="${tool.name} trained model on ${on_string}" />
         <data format="html" name="output_report" from_work_dir="image_classification_results_report.html" label="${tool.name} report on ${on_string}" />
@@ -238,6 +254,48 @@
                 </element>
             </output_collection>
         </test>
+        <test expect_num_outputs="3">
+            <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
+            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
+            <param name="model_name" value="resnet18" />
+            <param name="augmentation" value="random_horizontal_flip,random_vertical_flip,random_rotate" />
+            <output name="output_report">
+                <assert_contents>
+                    <has_text text="Results Summary" />
+                    <has_text text="Train/Validation Results" />
+                    <has_text text="Test Results" />
+                </assert_contents>
+            </output>
+
+            <output_collection name="output_pred_csv" type="list" >
+                <element name="predictions.csv" >
+                    <assert_contents>
+                        <has_n_columns n="1" />
+                    </assert_contents>
+                </element>
+            </output_collection>
+        </test>
+        <test expect_num_outputs="3">
+            <param name="input_csv" value="utkface_labels.csv" ftype="csv" />
+            <param name="image_zip" value="age_regression.zip" ftype="zip" />
+            <param name="model_name" value="resnet18" />
+            <output name="output_report">
+                <assert_contents>
+                    <has_text text="Results Summary" />
+                    <has_text text="Train/Validation Results" />
+                    <has_text text="Test Results" />
+                </assert_contents>
+            </output>
+            <output name="output_report" file="expected_regression.html" compare="sim_size"/>
+
+            <output_collection name="output_pred_csv" type="list" >
+                <element name="predictions.csv" >
+                    <assert_contents>
+                        <has_n_columns n="1" />
+                    </assert_contents>
+                </element>
+            </output_collection>
+        </test>
     </tests>
     <help>
         <![CDATA[
@@ -247,6 +305,8 @@ It uses the metadata csv to find the image paths and labels.
 The metadata csv should contain a column with the name 'image_path' and a column with the name 'label'.
 Optionally, you can also add a column with the name 'split' to specify which split each row belongs to (train, val, test). 
 If you do not provide a split column, the tool will automatically split the data into train, val, and test sets based on the proportions you specify or [0.7, 0.1, 0.2] by default.
+
+**If the selected label column has more than 10 unique values, the tool will automatically treat the task as a regression problem and apply appropriate metrics (e.g., MSE, RMSE, R²).**
 
 
 **Outputs**
