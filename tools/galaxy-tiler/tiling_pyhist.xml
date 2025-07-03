@@ -28,10 +28,10 @@
         <test>
             <param name="input_collection">
                 <collection type="list">
-                    <element name="sample1" ftype="svs" value="test_image.svs" />
+                    <element name="sample1" ftype="svs" value="CMU-1-Small-Region.svs" />
                 </collection>
             </param>
-            <output name="output_zip" file="expected_output.zip" compare="sim_size" delta="10000"/>
+            <output name="output_zip" file="expected_output_CMU-1-Small-Region.zip" compare="sim_size" delta="10000"/>
         </test>
     </tests>
     <help><![CDATA[
