@@ -264,6 +264,8 @@ The metadata csv should contain a column with the name 'image_path' and a column
 Optionally, you can also add a column with the name 'split' to specify which split each row belongs to (train, val, test). 
 If you do not provide a split column, the tool will automatically split the data into train, val, and test sets based on the proportions you specify or [0.7, 0.1, 0.2] by default.
 
+**If the selected label column has more than 10 unique values, the tool will automatically treat the task as a regression problem and apply appropriate metrics (e.g., MSE, RMSE, R²).**
+
 
 **Outputs**
 The tool will output a trained model in the form of a ludwig_model file,
