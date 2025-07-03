@@ -101,7 +101,7 @@ jobs:
       id: lint
       with:
         mode: lint
-        fail-level: warn
+        fail-level: error
         repository-list: ${{ needs.setup.outputs.repository-list }}
         tool-list: ${{ needs.setup.outputs.tool-list }}
         additional-planemo-options: --skip version_bumped
