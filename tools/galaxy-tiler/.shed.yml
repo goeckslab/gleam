@@ -10,3 +10,5 @@ auto_tool_repositories:
 suite:
   name: suite_tiler
   description: A Galaxy tool for tiling whole slide images using PyHIST.
+  long_description: |
+    This tool allows users to tile whole slide images (WSIs) into smaller patches using PyHIST, which is particularly useful for deep learning applications. The tool supports various input formats and provides options for configuring the tiling process.
