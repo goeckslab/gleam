@@ -59,7 +59,7 @@ Set of three specialized tools designed to transforms raw, large pathology image
 
 2. Add entries for each tool in your tool_conf.xml of your galaxy instance:
     ```xml
-    <tool file="<path-to-your-local-tabularlearner/pycaret_train.xml>" />
+    <tool file="<path-to-your-local-tabularlearner/tabular_learner.xml>" />
     <tool file="<path-to-your-local-imagelearner/image_learner_train.xml>" />
     <tool file="<path-to-your-local-galaxy-ludwig/ludwig_train.xml>" />
     ```
