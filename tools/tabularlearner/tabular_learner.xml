@@ -28,10 +28,10 @@
                 --feature_selection
                 #end if
                 #if $enable_cross_validation == "true" 
-                --cross_validation 
-                #end if
-                #if $cross_validation_folds
-                --cross_validation_folds '$cross_validation_folds'
+                    --cross_validation
+                    #if $cross_validation_folds
+                        --cross_validation_folds '$cross_validation_folds'
+                    #end if 
                 #end if
                 #if $remove_outliers
                 --remove_outliers  
@@ -166,6 +166,28 @@
             <param name="feature_selection" value="true"/>
             <param name="enable_cross_validation" value="true"/>
             <param name="cross_validation_folds" value="5"/>
+            <param name="remove_outliers" value="true"/>
+            <param name="remove_multicollinearity" value="true"/>
+            <output name="model" file="expected_model_classification_customized.h5" compare="sim_size"/>
+            <output name="comparison_result">
+                <assert_contents>
+                    <has_text text="Validation Result Summary" />
+                    <has_text text="Test Results" />
+                    <has_text text="Feature Importance" />
+                </assert_contents>
+            </output>
+            <output name="best_model_csv" value="expected_best_model_classification_customized.csv" />
+        </test>
+        <test>
+            <param name="input_file" value="pcr.tsv"/>
+            <param name="target_feature" value="11"/> 
+            <param name="model_type" value="classification"/>
+            <param name="random_seed" value="42"/>
+            <param name="customize_defaults" value="true"/>
+            <param name="train_size" value="0.8"/>
+            <param name="normalize" value="true"/>
+            <param name="feature_selection" value="true"/>
+            <param name="enable_cross_validation" value="false"/>
             <param name="remove_outliers" value="true"/>
             <param name="remove_multicollinearity" value="true"/>
             <output name="model" file="expected_model_classification_customized.h5" compare="sim_size"/>
