@@ -184,12 +184,7 @@
             <param name="model_type" value="classification"/>
             <param name="random_seed" value="42"/>
             <param name="customize_defaults" value="true"/>
-            <param name="train_size" value="0.8"/>
-            <param name="normalize" value="true"/>
-            <param name="feature_selection" value="true"/>
             <param name="enable_cross_validation" value="false"/>
-            <param name="remove_outliers" value="true"/>
-            <param name="remove_multicollinearity" value="true"/>
             <output name="model" file="expected_model_classification_customized.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
