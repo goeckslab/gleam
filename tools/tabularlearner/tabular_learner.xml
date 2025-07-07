@@ -33,6 +33,9 @@
                         --cross_validation_folds '$cross_validation_folds'
                     #end if 
                 #end if
+                #if $enable_cross_validation == "false"
+                    --no_cross_validation
+                #end if
                 #if $remove_outliers
                 --remove_outliers  
                 #end if

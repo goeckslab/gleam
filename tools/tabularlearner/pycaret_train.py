@@ -27,8 +27,11 @@ def main():
                         default=None,
                         help="Perform feature selection for PyCaret setup")
     parser.add_argument("--cross_validation", action="store_true",
-                        default=False,
+                        default=None,
                         help="Perform cross-validation for PyCaret setup")
+    parser.add_argument("--no_cross_validation", action="store_true",
+                        default=None,
+                        help="Don't perform cross-validation for PyCaret setup")
     parser.add_argument("--cross_validation_folds", type=int,
                         default=None,
                         help="Number of cross-validation folds \
@@ -62,11 +65,15 @@ def main():
 
     args = parser.parse_args()
 
+    cross_validation = True
+    if args.no_cross_validation:
+        cross_validation = False
+
     model_kwargs = {
         "train_size": args.train_size,
         "normalize": args.normalize,
         "feature_selection": args.feature_selection,
-        "cross_validation": args.cross_validation,
+        "cross_validation": cross_validation,
         "cross_validation_folds": args.cross_validation_folds,
         "remove_outliers": args.remove_outliers,
         "remove_multicollinearity": args.remove_multicollinearity,
