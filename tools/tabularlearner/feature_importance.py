@@ -120,6 +120,9 @@ class FeatureImportanceAnalyzer:
             used_features = model.feature_name_
         elif hasattr(model, "booster_") and hasattr(model.booster_, "feature_name"):
             used_features = model.booster_.feature_name()
+        elif hasattr(model, "feature_names_in_"):
+            # scikit‐learn's standard attribute for the names of features used during fit
+            used_features = list(model.feature_names_in_)
         else:
             used_features = X_transformed.columns
 
@@ -130,7 +133,14 @@ class FeatureImportanceAnalyzer:
             plot_X = X_shap
             plot_title = f"SHAP Summary for {model_class_name} (TreeExplainer)"
         else:
-            sampled_X = X_transformed[used_features].sample(100, random_state=42)
+            logging.warning(f"len(X_transformed) = {len(X_transformed)}")
+            max_samples = 100
+            n_samples = min(max_samples, len(X_transformed))
+            sampled_X = X_transformed[used_features].sample(
+                n=n_samples,
+                replace=False,
+                random_state=42
+            )
             explainer = shap.KernelExplainer(model.predict, sampled_X)
             shap_values = explainer.shap_values(sampled_X)
             plot_X = sampled_X

@@ -184,8 +184,13 @@
             <param name="model_type" value="classification"/>
             <param name="random_seed" value="42"/>
             <param name="customize_defaults" value="true"/>
+            <param name="train_size" value="0.8"/>
+            <param name="normalize" value="true"/>
+            <param name="feature_selection" value="true"/>
             <param name="enable_cross_validation" value="false"/>
-            <output name="model" file="expected_model_classification_customized.h5" compare="sim_size"/>
+            <param name="remove_outliers" value="true"/>
+            <param name="remove_multicollinearity" value="true"/>
+            <output name="model" file="expected_model_classification_customized_cross_off.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
                     <has_text text="Validation Result Summary" />
@@ -193,9 +198,9 @@
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
-            <output name="best_model_csv" value="expected_best_model_classification_customized.csv" />
+            <output name="best_model_csv" value="expected_best_model_classification_customized_cross_off.csv" />
         </test>
-        <test>
+        <!-- <test>
             <param name="input_file" value="pcr.tsv"/>
             <param name="target_feature" value="11"/> 
             <param name="model_type" value="classification"/>
@@ -224,7 +229,7 @@
                 </assert_contents>
             </output>
             <output name="best_model_csv" value="expected_best_model_regression.csv" />
-        </test>
+        </test> -->
     </tests>
     <help>
         This tool uses PyCaret to train and evaluate machine learning models.

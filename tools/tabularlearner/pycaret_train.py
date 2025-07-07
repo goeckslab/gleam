@@ -27,7 +27,7 @@ def main():
                         default=None,
                         help="Perform feature selection for PyCaret setup")
     parser.add_argument("--cross_validation", action="store_true",
-                        default=None,
+                        default=False,
                         help="Perform cross-validation for PyCaret setup")
     parser.add_argument("--cross_validation_folds", type=int,
                         default=None,
