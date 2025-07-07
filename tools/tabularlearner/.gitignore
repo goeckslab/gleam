@@ -12,6 +12,5 @@ tool_test_output.html
 tool_test_output.json
 test_custom_metric.py
 prototype.py
-*.h5
-!tools/test-data/*
+!tools/tabularlearner/test-data/*
 tools/test-data/.DS_Store

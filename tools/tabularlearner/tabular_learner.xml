@@ -200,7 +200,7 @@
             </output>
             <output name="best_model_csv" value="expected_best_model_classification_customized_cross_off.csv" />
         </test>
-        <!-- <test>
+        <test>
             <param name="input_file" value="pcr.tsv"/>
             <param name="target_feature" value="11"/> 
             <param name="model_type" value="classification"/>
@@ -229,7 +229,7 @@
                 </assert_contents>
             </output>
             <output name="best_model_csv" value="expected_best_model_regression.csv" />
-        </test> -->
+        </test>
     </tests>
     <help>
         This tool uses PyCaret to train and evaluate machine learning models.
