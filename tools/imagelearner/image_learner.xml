@@ -139,6 +139,7 @@
             <option value="mobilenet_v2">Mobilenet_v2</option>
             <option value="mobilenet_v3_large">Mobilenet_v3_large</option>
             <option value="mobilenet_v3_small">Mobilenet_v3_small</option>
+            <option value="caformer_s18">Caformer S18 (timm)</option>
         </param>
 
         <conditional name="scratch_fine_tune">
