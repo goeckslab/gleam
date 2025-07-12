@@ -1240,6 +1240,8 @@ def aug_parse(aug_string: str):
     aug_list = []
     for tok in aug_string.split(","):
         key = tok.strip()
+        if not key:
+            continue
         if key not in mapping:
             valid = ", ".join(mapping.keys())
             raise ValueError(f"Unknown augmentation '{key}'. Valid choices: {valid}")
