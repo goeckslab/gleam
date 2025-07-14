@@ -7,6 +7,10 @@
         <include path="utils.py" />
         <include path="constants.py" />
         <include path="image_learner_cli.py" />
+        <include path="image_learner_cli_car.py" />
+        <include path="caformer_setup/caformer_encoder.py" />
+        <include path="caformer_setup/caformer_models.py" />
+        <include path="caformer_setup/caformer_stacked_cnn.py" />
     </required_files>
     <stdio>
         <exit_code range="137" level="fatal_oom" description="Out of Memory" />
@@ -15,14 +19,17 @@
     <command>
         <![CDATA[
             #import re
-
             #if $input_csv
-
             #set $sanitized_input_csv = re.sub('[^\w\-_\.]', '_', $input_csv.element_identifier.strip())
             ln -sf '$input_csv' "./${sanitized_input_csv}";
             #end if
 
-            python '$__tool_directory__/image_learner_cli.py'
+            #set caformer_models = ['caformer_s18', 'caformer_s36', 'caformer_m36', 'caformer_b36']
+            #if str($model_name) in caformer_models
+                python '$__tool_directory__/image_learner_cli_car.py'
+            #else
+                python '$__tool_directory__/image_learner_cli.py'
+            #end if
                 --csv-file "./${sanitized_input_csv}"
                 --image-zip "$image_zip"
                 --model-name "$model_name"
@@ -61,7 +68,7 @@
     </command>
 
     <inputs>
-        <param argument="input_csv" type="data" format="csv" optional="false" label="the metadata csv containing image_path column, label column and optional split column" />
+        <param name="input_csv" argument="input_csv" type="data" format="csv" optional="false" label="the metadata csv containing image_path column, label column and optional split column" />
         <param name="image_zip" type="data" format="zip" optional="false" label="Image zip" help="Image zip file containing your image data"/>
         <param name="model_name" type="select" optional="false" label="Select a model for your experiment" >
 
@@ -139,6 +146,10 @@
             <option value="mobilenet_v2">Mobilenet_v2</option>
             <option value="mobilenet_v3_large">Mobilenet_v3_large</option>
             <option value="mobilenet_v3_small">Mobilenet_v3_small</option>
+            <option value="caformer_s18">CAFormer S18</option>
+            <option value="caformer_s36">CAFormer S36</option>
+            <option value="caformer_m36">CAFormer M36</option>
+            <option value="caformer_b36">CAFormer B36</option>
         </param>
 
         <conditional name="scratch_fine_tune">
@@ -308,6 +319,46 @@
                 </assert_contents>
             </output>
             <output name="output_report" file="expected_regression.html" compare="sim_size"/>
+
+            <output_collection name="output_pred_csv" type="list" >
+                <element name="predictions.csv" >
+                    <assert_contents>
+                        <has_n_columns n="1" />
+                    </assert_contents>
+                </element>
+            </output_collection>
+        </test>
+        <test expect_num_outputs="3">
+            <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
+            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
+            <param name="model_name" value="caformer_s18" />
+            <output name="output_report">
+                <assert_contents>
+                    <has_text text="Results Summary" />
+                    <has_text text="Train/Validation Results" />
+                    <has_text text="Test Results" />
+                </assert_contents>
+            </output>
+
+            <output_collection name="output_pred_csv" type="list" >
+                <element name="predictions.csv" >
+                    <assert_contents>
+                        <has_n_columns n="1" />
+                    </assert_contents>
+                </element>
+            </output_collection>
+        </test>
+        <test expect_num_outputs="3">
+            <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
+            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
+            <param name="model_name" value="caformer_b36_timm" />
+            <output name="output_report">
+                <assert_contents>
+                    <has_text text="Results Summary" />
+                    <has_text text="Train/Validation Results" />
+                    <has_text text="Test Results" />
+                </assert_contents>
+            </output>
 
             <output_collection name="output_pred_csv" type="list" >
                 <element name="predictions.csv" >

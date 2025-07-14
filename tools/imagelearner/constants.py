@@ -8,6 +8,12 @@ DEFAULT_SPLIT_PROBABILITIES = [0.7, 0.1, 0.2]
 TEMP_CSV_FILENAME = "processed_data_for_ludwig.csv"
 TEMP_CONFIG_FILENAME = "ludwig_config.yaml"
 TEMP_DIR_PREFIX = "ludwig_api_work_"
+PREDICTIONS_PARQUET_FILE_NAME = "predictions.parquet"
+TEST_STATISTICS_FILE_NAME = "test_statistics.json"
+TRAIN_SET_METADATA_FILE_NAME = "train_set_metadata.json"
+DESCRIPTION_FILE_NAME = "description.json"
+TRAINING_STATISTICS_FILE_NAME = "training_statistics.json"
+PREDICTIONS_SHAPES_FILE_NAME = "predictions.shapes"
 MODEL_ENCODER_TEMPLATES: Dict[str, Any] = {
     "stacked_cnn": "stacked_cnn",
     "resnet18": {"type": "resnet", "model_variant": 18},
@@ -73,6 +79,31 @@ MODEL_ENCODER_TEMPLATES: Dict[str, Any] = {
     "vit_l_16": {"type": "vit", "model_variant": "l_16"},
     "vit_l_32": {"type": "vit", "model_variant": "l_32"},
     "vit_h_14": {"type": "vit", "model_variant": "h_14"},
+    "vit_huge_timm": {"type": "vit", "model_variant": "huge_timm", "custom_encoder": True},
+    "caformer_s18": {
+        "type": "stacked_cnn",
+        "custom_model": "caformer_s18",
+        "use_pretrained": True,
+        "trainable": True,
+    },
+    "caformer_s36": {
+        "type": "stacked_cnn", 
+        "custom_model": "caformer_s36",
+        "use_pretrained": True,
+        "trainable": True,
+    },
+    "caformer_m36": {
+        "type": "stacked_cnn",
+        "custom_model": "caformer_m36", 
+        "use_pretrained": True,
+        "trainable": True,
+    },
+    "caformer_b36": {
+        "type": "stacked_cnn",
+        "custom_model": "caformer_b36",
+        "use_pretrained": True,
+        "trainable": True,
+    },
     "convnext_tiny": {"type": "convnext", "model_variant": "tiny"},
     "convnext_small": {"type": "convnext", "model_variant": "small"},
     "convnext_base": {"type": "convnext", "model_variant": "base"},
