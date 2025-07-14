@@ -2,44 +2,22 @@ import argparse
 import json
 import logging
 import os
+import random
 import shutil
 import sys
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, Optional, Protocol, Tuple
+from typing import Any, Dict, List, Optional, Union, Tuple
 
-import pandas as pd
-import pandas.api.types as ptypes
-import yaml
-
-
-# CAFormer is integrated via StackedCNN patching, not schema registration
-
-# import CAFormer encoder for patching 
 try:
-    from caformer_encoder import CaformerEncoder
-    CUSTOM_CAFORMER_ENCODER_AVAILABLE = True
+    from typing import Protocol
 except ImportError:
-    CUSTOM_CAFORMER_ENCODER_AVAILABLE = False
-from constants import (
-    IMAGE_PATH_COLUMN_NAME,
-    LABEL_COLUMN_NAME,
-    METRIC_DISPLAY_NAMES,
-    MODEL_ENCODER_TEMPLATES,
-    SPLIT_COLUMN_NAME,
-    TEMP_CONFIG_FILENAME,
-    TEMP_CSV_FILENAME,
-    TEMP_DIR_PREFIX
-)
-from ludwig.globals import (
-    DESCRIPTION_FILE_NAME,
-    PREDICTIONS_PARQUET_FILE_NAME,
-    TEST_STATISTICS_FILE_NAME,
-    TRAIN_SET_METADATA_FILE_NAME,
-)
-from ludwig.utils.data_utils import get_split_path
-from ludwig.visualize import get_visualizations_registry
+    from typing_extensions import Protocol
+
+import numpy as np
+import pandas as pd
+import yaml
 from sklearn.model_selection import train_test_split
 from utils import (
     build_tabbed_html,
@@ -49,69 +27,108 @@ from utils import (
     get_metrics_help_modal
 )
 
-# Logging Setup 
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
 )
-logger = logging.getLogger("ImageLearner")
+logger = logging.getLogger(__name__)
 
 
-def patch_ludwig_encoders():
-    """Patch Ludwig's StackedCNNEncoder to use CAFormer when specified"""
-    patches_applied = []
+def set_global_random_seed(seed: int) -> None:
+    """Set random seed for all random number generators to ensure reproducibility."""
+    # Set environment variables FIRST, before any imports
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    os.environ['TF_DETERMINISTIC_OPS'] = '1'
+    os.environ['TF_CUDNN_DETERMINISTIC'] = '1'
+    os.environ['CUDA_LAUNCH_BLOCKING'] = '1'  # Force synchronous CUDA operations
     
-    # Patch CAFormer encoder
-    if CUSTOM_CAFORMER_ENCODER_AVAILABLE:
+    # Set Python random seeds
+    random.seed(seed)
+    np.random.seed(seed)
+    
+    # Set Ludwig/PyTorch seeds if available
+    try:
+        import torch
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
         try:
-            import ludwig.encoders.image.base
-            
-            # Patch the stacked_cnn encoder to handle CAFormer variants
-            original_stacked_cnn_encoder = ludwig.encoders.image.base.StackedCNNEncoder
-            
-            class PatchedStackedCNNEncoder(original_stacked_cnn_encoder):
-                def __init__(self, *args, **kwargs):
-                    custom_model = kwargs.get('custom_model', '')
-                    
-                    if custom_model in ['caformer_b36_timm', 'caformer_s18_timm']:
-                        # CAFormer encoder instead of StackedCNN
-                        logger.info(f"Using CAFormer encoder for model: {custom_model}")
-                        self.custom_model = custom_model
-                        self.is_caformer = True
-                        CaformerEncoder.__init__(self, model_variant=custom_model, **kwargs)
-                    else:
-                        #the original stacked_cnn encoder
-                        self.is_caformer = False
-                        super().__init__(*args, **kwargs)
-                
-                def forward(self, *args, **kwargs):
-                    if getattr(self, 'is_caformer', False):
-                        # CAFormer forward method
-                        return CaformerEncoder.forward(self, *args, **kwargs)
-                    else:
-                        # original stacked_cnn forward method
-                        return super().forward(*args, **kwargs)
-                
-                @property
-                def output_shape(self):
-                    if getattr(self, 'is_caformer', False):
-                        # CAFormer output shape
-                        return CaformerEncoder.output_shape.fget(self)
-                    else:
-                        # original stacked_cnn output shape
-                        return super().output_shape
-            
-            # replace Ludwig's StackedCNNEncoder with our patched version
-            ludwig.encoders.image.base.StackedCNNEncoder = PatchedStackedCNNEncoder
-            
-            logger.info("✓ Successfully patched Ludwig's StackedCNNEncoder to handle CAFormer variants")
-            patches_applied.append("caformer")
+            torch.use_deterministic_algorithms(True)
+            logger.info(f"PyTorch random seed set to {seed} (deterministic algorithms ON)")
         except Exception as e:
-            logger.error(f"Failed to patch Ludwig's StackedCNNEncoder for CAFormer: {e}")
-    else:
-        logger.warning("CAFormer encoder not available - skipping patch")
+            logger.warning(f"PyTorch deterministic algorithms setting failed: {e}")
+    except ImportError:
+        logger.info("PyTorch not available, skipping PyTorch seed setting")
     
-    return len(patches_applied) > 0
+    # Set TensorFlow seeds if available
+    try:
+        import tensorflow as tf
+        tf.random.set_seed(seed)
+        logger.info(f"TensorFlow random seed set to {seed}")
+    except ImportError:
+        logger.info("TensorFlow not available, skipping TensorFlow seed setting")
+    
+    logger.info(f"Global random seed set to {seed} for Python, NumPy, and PYTHONHASHSEED")
+
+
+# Import Ludwig with simpler approach
+try:
+    from ludwig.api import LudwigModel
+    LUDWIG_AVAILABLE = True
+    logger.info("Ludwig is available")
+except ImportError as e:
+    logger.error(f"Ludwig is not available: {e}")
+    LUDWIG_AVAILABLE = False
+    sys.exit(1)
+
+# Import constants
+try:
+    from constants import (
+        MODEL_ENCODER_TEMPLATES,
+        SPLIT_COLUMN_NAME,
+        LABEL_COLUMN_NAME,
+        IMAGE_PATH_COLUMN_NAME,
+        TEMP_CSV_FILENAME,
+        TEMP_CONFIG_FILENAME,
+        TEMP_DIR_PREFIX,
+        PREDICTIONS_PARQUET_FILE_NAME,
+        TEST_STATISTICS_FILE_NAME,
+        TRAIN_SET_METADATA_FILE_NAME,
+        DESCRIPTION_FILE_NAME,
+        TRAINING_STATISTICS_FILE_NAME,
+        PREDICTIONS_SHAPES_FILE_NAME,
+        METRIC_DISPLAY_NAMES
+    )
+    logger.info("Constants imported successfully")
+except ImportError as e:
+    logger.error(f"Failed to import constants: {e}")
+    sys.exit(1)
+
+# Import CAFormer stacked CNN encoder
+try:
+    import caformer_setup.caformer_stacked_cnn as caformer_stacked_cnn
+    from caformer_setup.caformer_stacked_cnn import patch_ludwig_stacked_cnn
+    logger.info("CAFORMER STACKED CNN MODULE IMPORTED")
+    
+    # Try to patch Ludwig's stacked_cnn encoder for CAFormer support
+    # This is optional - if it fails, we'll handle CAFormer models differently
+    try:
+        print(" About to call patch_ludwig_stacked_cnn() ")
+        if patch_ludwig_stacked_cnn():
+            logger.info(" Ludwig stacked_cnn successfully patched for CAFormer support")
+        else:
+            logger.info(" Ludwig stacked_cnn patching not available - will use fallback approach")
+    except Exception as e:
+        logger.info(f" Ludwig patching failed (non-critical): {e}")
+        
+except ImportError as e:
+    logger.warning(f"CAFormer stacked CNN not available: {e}")
+    # Continue without CAFormer support
+    pass
 
 
 def format_config_table_html(
@@ -568,133 +585,114 @@ class Backend(Protocol):
 
 
 class LudwigDirectBackend:
-    """Backend for running Ludwig experiments directly via the internal experiment_cli function."""
-
-    def prepare_config(
-        self,
-        config_params: Dict[str, Any],
-        split_config: Dict[str, Any],
-    ) -> str:
+    """Direct Ludwig backend for training and evaluation."""
+    
+    def __init__(self, temp_dir: str):
+        self.temp_dir = temp_dir
+        self.model = None
+        self.config = None
+        
+    def prepare_config(self, config_params: Dict[str, Any], split_config: Dict[str, Any]) -> str:
+        """Prepare Ludwig configuration."""
         logger.info("LudwigDirectBackend: Preparing YAML configuration.")
-
-        model_name = config_params.get("model_name", "resnet18")
+        
+        # Extract parameters from config_params
+        model_name = config_params.get("model_name", "stacked_cnn")
         use_pretrained = config_params.get("use_pretrained", False)
-        fine_tune = config_params.get("fine_tune", False)
-        if use_pretrained:
-            trainable = bool(fine_tune)
-        else:
-            trainable = True
-        epochs = config_params.get("epochs", 10)
-        batch_size = config_params.get("batch_size")
-        num_processes = config_params.get("preprocessing_num_processes", 1)
-        early_stop = config_params.get("early_stop", None)
-        learning_rate = config_params.get("learning_rate")
-        learning_rate = "auto" if learning_rate is None else float(learning_rate)
-        raw_encoder = MODEL_ENCODER_TEMPLATES.get(model_name, model_name)
+        trainable = config_params.get("fine_tune", True)  # fine_tune controls trainable
         
-        # Check if this is a custom CAFormer model
-        if isinstance(raw_encoder, dict) and raw_encoder.get("custom_encoder", False):
-            # Patch Ludwig's StackedCNNEncoder with our CAFormer implementation
-            if patch_ludwig_encoders():
-                logger.info(f"Using custom CAFormer encoder for model: {model_name}")
-            else:
-                logger.warning(f"Failed to patch encoder for {model_name}")
+        # Get encoder configuration
+        raw_encoder = MODEL_ENCODER_TEMPLATES.get(model_name, MODEL_ENCODER_TEMPLATES["stacked_cnn"])
         
-        if isinstance(raw_encoder, dict):
-            # Remove custom_encoder flag from config as it's not a Ludwig parameter
-            # But preserve custom_model for our patched encoder
+        # Log which model we're using
+        logger.info(f"Using model configuration for: {model_name}")
+        logger.info(f"Raw encoder config: {raw_encoder}")
+        
+        # Check if this is a CAFormer model
+        if isinstance(raw_encoder, dict) and "custom_model" in raw_encoder:
+            custom_model = raw_encoder["custom_model"]
+            logger.info(f"DETECTED CUSTOM MODEL: {custom_model}")
+            
+            # For CAFormer models, use a simpler approach that Ludwig can handle
+            # We'll use stacked_cnn with custom parameters that our patching will handle
             encoder_config = {
-                **{k: v for k, v in raw_encoder.items() if k not in ["custom_encoder"]},
+                "type": "stacked_cnn",
+                "height": 224,
+                "width": 224,
+                "num_channels": 3,
+                "output_size": 128,
+                "use_pretrained": use_pretrained,
+                "trainable": trainable,
+                # Add custom_model as a custom parameter
+                "custom_model": custom_model,
+            }
+        elif isinstance(raw_encoder, dict):
+            encoder_config = {
+                **raw_encoder,
                 "use_pretrained": use_pretrained,
                 "trainable": trainable,
             }
         else:
-            encoder_config = {"type": raw_encoder}
-
-        batch_size_cfg = batch_size or "auto"
-
-        label_column_path = config_params.get("label_column_data_path")
-        label_series = None
-        if label_column_path is not None and Path(label_column_path).exists():
-            try:
-                label_series = pd.read_csv(label_column_path)[LABEL_COLUMN_NAME]
-            except Exception as e:
-                logger.warning(f"Could not read label column for task detection: {e}")
-
-        if (
-            label_series is not None
-            and ptypes.is_numeric_dtype(label_series.dtype)
-            and label_series.nunique() > 10
-        ):
-            task_type = "regression"
-        else:
-            task_type = "classification"
-
-        config_params["task_type"] = task_type
-
-        image_feat: Dict[str, Any] = {
-            "name": IMAGE_PATH_COLUMN_NAME,
-            "type": "image",
-            "encoder": encoder_config,
-        }
-        if config_params.get("augmentation") is not None:
-            image_feat["augmentation"] = config_params["augmentation"]
-
-        if task_type == "regression":
-            output_feat = {
-                "name": LABEL_COLUMN_NAME,
-                "type": "number",
-                "decoder": {"type": "regressor"},
-                "loss": {"type": "mean_squared_error"},
-                "evaluation": {
-                    "metrics": [
-                        "mean_squared_error",
-                        "mean_absolute_error",
-                        "r2",
-                    ]
-                },
-            }
-            val_metric = config_params.get("validation_metric", "mean_squared_error")
-
-        else:
-            num_unique_labels = (
-                label_series.nunique() if label_series is not None else 2
-            )
-            output_type = "binary" if num_unique_labels == 2 else "category"
-            output_feat = {"name": LABEL_COLUMN_NAME, "type": output_type}
-            val_metric = None
-
-        conf: Dict[str, Any] = {
+            encoder_config = raw_encoder
+        
+        logger.info(f"Final encoder config: {encoder_config}")
+        
+        # Create Ludwig configuration
+        config = {
             "model_type": "ecd",
-            "input_features": [image_feat],
-            "output_features": [output_feat],
-            "combiner": {"type": "concat"},
+            "input_features": [
+                {
+                    "name": IMAGE_PATH_COLUMN_NAME,
+                    "type": "image",
+                    "encoder": encoder_config,
+                    "preprocessing": {
+                        "height": 224,
+                        "width": 224,
+                        "num_channels": 3,
+                        "resize_method": "interpolate",
+                        "standardize_image": None,
+                        "num_processes": 1,  # Force single process for reproducibility
+                    }
+                }
+            ],
+            "output_features": [
+                {
+                    "name": LABEL_COLUMN_NAME,
+                    "type": "category"
+                }
+            ],
             "trainer": {
-                "epochs": epochs,
-                "early_stop": early_stop,
-                "batch_size": batch_size_cfg,
-                "learning_rate": learning_rate,
-                # only set validation_metric for regression
-                **({"validation_metric": val_metric} if val_metric else {}),
+                "validation_metric": "accuracy"
             },
             "preprocessing": {
-                "split": split_config,
-                "num_processes": num_processes,
-                "in_memory": False,
-            },
+                "num_processes": 1,  # Force single process for reproducibility
+            }
         }
-
-        logger.debug("LudwigDirectBackend: Config dict built.")
-        try:
-            yaml_str = yaml.dump(conf, sort_keys=False, indent=2)
-            logger.info("LudwigDirectBackend: YAML config generated.")
-            return yaml_str
-        except Exception:
-            logger.error(
-                "LudwigDirectBackend: Failed to serialize YAML.",
-                exc_info=True,
-            )
-            raise
+        
+        # Add trainer parameters only if they have valid values
+        epochs = config_params.get("epochs")
+        if epochs is not None:
+            config["trainer"]["epochs"] = epochs
+        
+        batch_size = config_params.get("batch_size")
+        if batch_size is not None:
+            config["trainer"]["batch_size"] = batch_size
+        else:
+            # Set a fixed batch size to prevent Ludwig's batch size tuner from running
+            # This ensures reproducibility by avoiding non-deterministic batch size selection
+            config["trainer"]["batch_size"] = 1
+        
+        early_stop = config_params.get("early_stop")
+        if early_stop is not None:
+            config["trainer"]["early_stop"] = early_stop
+        
+        learning_rate = config_params.get("learning_rate")
+        if learning_rate is not None:
+            config["trainer"]["learning_rate"] = learning_rate
+        
+        logger.info("LudwigDirectBackend: YAML config generated.")
+        import yaml
+        return yaml.dump(config, default_flow_style=False)
 
     def run_experiment(
         self,
@@ -849,7 +847,7 @@ class LudwigDirectBackend:
             with open(desc, "r") as f:
                 cfg = json.load(f)
             dataset_path = _check(Path(cfg.get("dataset", "")))
-            split_file = _check(Path(get_split_path(cfg.get("dataset", ""))))
+            # split_file = _check(Path(get_split_path(cfg.get("dataset", ""))))
 
         output_feature = ""
         if desc.exists():
@@ -862,7 +860,12 @@ class LudwigDirectBackend:
                 stats = json.load(f)
             output_feature = next(iter(stats.keys()), "")
 
-        viz_registry = get_visualizations_registry()
+        try:
+            from ludwig.visualize import get_visualizations_registry
+            viz_registry = get_visualizations_registry()
+        except ImportError as e:
+            logger.error(f"Failed to import get_visualizations_registry: {e}")
+            return
         for viz_name, viz_func in viz_registry.items():
             if viz_name in train_plots:
                 viz_dir_plot = train_viz
@@ -1114,9 +1117,15 @@ class WorkflowOrchestrator:
     def _create_temp_dirs(self) -> None:
         """Create temporary output and image extraction directories."""
         try:
-            self.temp_dir = Path(
-                tempfile.mkdtemp(dir=self.args.output_dir, prefix=TEMP_DIR_PREFIX)
-            )
+            # Use deterministic temp directory name based on random seed for reproducibility
+            temp_dir_name = f"{TEMP_DIR_PREFIX}seed_{self.args.random_seed}"
+            self.temp_dir = Path(self.args.output_dir) / temp_dir_name
+            
+            # Remove existing directory if it exists (for clean runs)
+            if self.temp_dir.exists():
+                shutil.rmtree(self.temp_dir)
+            
+            self.temp_dir.mkdir(parents=True, exist_ok=True)
             self.image_extract_dir = self.temp_dir / "images"
             self.image_extract_dir.mkdir()
             logger.info(f"Created temp directory: {self.temp_dir}")
@@ -1253,6 +1262,7 @@ class WorkflowOrchestrator:
                 "early_stop": self.args.early_stop,
                 "batch_size": self.args.batch_size,
                 "learning_rate": self.args.learning_rate,
+                "random_seed": self.args.random_seed,
                 "augmentation": self.args.augmentation,
                 "preprocessing_num_processes": self.args.preprocessing_num_processes,
                 "label_column_data_path": str(final_csv),
@@ -1334,6 +1344,7 @@ class SplitProbAction(argparse.Action):
 
 
 def main():
+    # Parse arguments first to get the random seed
     parser = argparse.ArgumentParser(
         description="Image Classification Learner with Pluggable Backends",
     )
@@ -1397,7 +1408,7 @@ def main():
     parser.add_argument(
         "--preprocessing-num-processes",
         type=int,
-        default=max(1, os.cpu_count() // 2),
+        default=1,
         help="CPU processes for data prep",
     )
     parser.add_argument(
@@ -1435,8 +1446,22 @@ def main():
             "E.g. --augmentation random_horizontal_flip,random_rotate"
         ),
     )
+    parser.add_argument(
+        "--force-cpu",
+        action="store_true",
+        help="Force CPU-only training for maximum reproducibility (disables GPU)",
+    )
 
     args = parser.parse_args()
+
+    # Set global random seed IMMEDIATELY after parsing arguments
+    # This must happen before any other operations for maximum reproducibility
+    set_global_random_seed(args.random_seed)
+    
+    # Force CPU-only training if requested for maximum reproducibility
+    if args.force_cpu:
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        logger.info("Forced CPU-only training for maximum reproducibility")
 
     if not 0.0 <= args.validation_size <= 1.0:
         parser.error("validation-size must be between 0.0 and 1.0")
@@ -1451,7 +1476,12 @@ def main():
         except ValueError as e:
             parser.error(str(e))
 
-    backend_instance = LudwigDirectBackend()
+    # Create deterministic temporary directory for the backend
+    temp_dir = Path(args.output_dir) / f"image_learner_temp_seed_{args.random_seed}"
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir)
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    backend_instance = LudwigDirectBackend(str(temp_dir))
     orchestrator = WorkflowOrchestrator(args, backend_instance)
 
     exit_code = 0
@@ -1462,385 +1492,9 @@ def main():
         logger.error(f"Main script failed.{e}")
         exit_code = 1
     finally:
-        sys.exit(exit_code)
-
-
-if __name__ == "__main__":
-    try:
-        import ludwig
-
-        logger.debug(f"Found Ludwig version: {ludwig.globals.LUDWIG_VERSION}")
-    except ImportError:
-        logger.error(
-            "Ludwig library not found. Please ensure Ludwig is installed "
-            "('pip install ludwig[image]')"
-        )
-        sys.exit(1)
-
-    main()
-
-class WorkflowOrchestrator:
-    """Manages the image-classification workflow."""
-
-    def __init__(self, args: argparse.Namespace, backend: Backend):
-        self.args = args
-        self.backend = backend
-        self.temp_dir: Optional[Path] = None
-        self.image_extract_dir: Optional[Path] = None
-        logger.info(f"Orchestrator initialized with backend: {type(backend).__name__}")
-
-    def _create_temp_dirs(self) -> None:
-        """Create temporary output and image extraction directories."""
-        try:
-            self.temp_dir = Path(
-                tempfile.mkdtemp(dir=self.args.output_dir, prefix=TEMP_DIR_PREFIX)
-            )
-            self.image_extract_dir = self.temp_dir / "images"
-            self.image_extract_dir.mkdir()
-            logger.info(f"Created temp directory: {self.temp_dir}")
-        except Exception:
-            logger.error("Failed to create temporary directories", exc_info=True)
-            raise
-
-    def _extract_images(self) -> None:
-        """Extract images from ZIP into the temp image directory."""
-        if self.image_extract_dir is None:
-            raise RuntimeError("Temp image directory not initialized.")
-        logger.info(
-            f"Extracting images from {self.args.image_zip} → {self.image_extract_dir}"
-        )
-        try:
-            with zipfile.ZipFile(self.args.image_zip, "r") as z:
-                z.extractall(self.image_extract_dir)
-            logger.info("Image extraction complete.")
-        except Exception:
-            logger.error("Error extracting zip file", exc_info=True)
-            raise
-
-    def _prepare_data(self) -> Tuple[Path, Dict[str, Any], str]:
-        """Load CSV, update image paths, handle splits, and write prepared CSV."""
-        if not self.temp_dir or not self.image_extract_dir:
-            raise RuntimeError("Temp dirs not initialized before data prep.")
-
-        try:
-            df = pd.read_csv(self.args.csv_file)
-            logger.info(f"Loaded CSV: {self.args.csv_file}")
-        except Exception:
-            logger.error("Error loading CSV file", exc_info=True)
-            raise
-
-        required = {IMAGE_PATH_COLUMN_NAME, LABEL_COLUMN_NAME}
-        missing = required - set(df.columns)
-        if missing:
-            raise ValueError(f"Missing CSV columns: {', '.join(missing)}")
-
-        try:
-            df[IMAGE_PATH_COLUMN_NAME] = df[IMAGE_PATH_COLUMN_NAME].apply(
-                lambda p: str((self.image_extract_dir / p).resolve())
-            )
-        except Exception:
-            logger.error("Error updating image paths", exc_info=True)
-            raise
-
-        if SPLIT_COLUMN_NAME in df.columns:
-            df, split_config, split_info = self._process_fixed_split(df)
-        else:
-            logger.info("No split column; using random split")
-            split_config = {
-                "type": "random",
-                "probabilities": self.args.split_probabilities,
-            }
-            split_info = (
-                f"No split column in CSV. Used random split: "
-                f"{[int(p * 100) for p in self.args.split_probabilities]}% "
-                f"for train/val/test."
-            )
-
-        final_csv = self.temp_dir / TEMP_CSV_FILENAME
-        try:
-
-            df.to_csv(final_csv, index=False)
-            logger.info(f"Saved prepared data to {final_csv}")
-        except Exception:
-            logger.error("Error saving prepared CSV", exc_info=True)
-            raise
-
-        return final_csv, split_config, split_info
-
-    def _process_fixed_split(
-        self, df: pd.DataFrame
-    ) -> Tuple[pd.DataFrame, Dict[str, Any], str]:
-        logger.info(f"Fixed split column '{SPLIT_COLUMN_NAME}' detected.")
-        try:
-            col = df[SPLIT_COLUMN_NAME]
-            df[SPLIT_COLUMN_NAME] = pd.to_numeric(col, errors="coerce").astype(
-                pd.Int64Dtype()
-            )
-            if df[SPLIT_COLUMN_NAME].isna().any():
-                logger.warning("Split column contains non-numeric/missing values.")
-
-            unique = set(df[SPLIT_COLUMN_NAME].dropna().unique())
-            logger.info(f"Unique split values: {unique}")
-
-            if unique == {0, 2}:
-                df = split_data_0_2(
-                    df,
-                    SPLIT_COLUMN_NAME,
-                    validation_size=self.args.validation_size,
-                    label_column=LABEL_COLUMN_NAME,
-                    random_state=self.args.random_seed,
-                )
-                split_info = (
-                    "Detected a split column (with values 0 and 2) in the input CSV. "
-                    f"Used this column as a base and reassigned "
-                    f"{self.args.validation_size * 100:.1f}% "
-                    "of the training set (originally labeled 0) to validation (labeled 1)."
-                )
-                logger.info("Applied custom 0/2 split.")
-            elif unique.issubset({0, 1, 2}):
-                split_info = "Used user-defined split column from CSV."
-                logger.info("Using fixed split as-is.")
-            else:
-                raise ValueError(f"Unexpected split values: {unique}")
-
-            return df, {"type": "fixed", "column": SPLIT_COLUMN_NAME}, split_info
-
-        except Exception:
-            logger.error("Error processing fixed split", exc_info=True)
-            raise
-
-    def _cleanup_temp_dirs(self) -> None:
-        if self.temp_dir and self.temp_dir.exists():
-            logger.info(f"Cleaning up temp directory: {self.temp_dir}")
-            shutil.rmtree(self.temp_dir, ignore_errors=True)
-        self.temp_dir = None
-        self.image_extract_dir = None
-
-    def run(self) -> None:
-        """Execute the full workflow end-to-end."""
-        logger.info("Starting workflow...")
-        self.args.output_dir.mkdir(parents=True, exist_ok=True)
-
-        try:
-            self._create_temp_dirs()
-            self._extract_images()
-            csv_path, split_cfg, split_info = self._prepare_data()
-
-            use_pretrained = self.args.use_pretrained or self.args.fine_tune
-
-            backend_args = {
-                "model_name": self.args.model_name,
-                "fine_tune": self.args.fine_tune,
-                "use_pretrained": use_pretrained,
-                "epochs": self.args.epochs,
-                "batch_size": self.args.batch_size,
-                "preprocessing_num_processes": self.args.preprocessing_num_processes,
-                "split_probabilities": self.args.split_probabilities,
-                "learning_rate": self.args.learning_rate,
-                "random_seed": self.args.random_seed,
-                "early_stop": self.args.early_stop,
-                "label_column_data_path": csv_path,
-                "augmentation": self.args.augmentation,
-            }
-            yaml_str = self.backend.prepare_config(backend_args, split_cfg)
-
-            config_file = self.temp_dir / TEMP_CONFIG_FILENAME
-            config_file.write_text(yaml_str)
-            logger.info(f"Wrote backend config: {config_file}")
-
-            self.backend.run_experiment(
-                csv_path,
-                config_file,
-                self.args.output_dir,
-                self.args.random_seed,
-            )
-            logger.info("Workflow completed successfully.")
-            self.backend.generate_plots(self.args.output_dir)
-            report_file = self.backend.generate_html_report(
-                "Image Classification Results",
-                self.args.output_dir,
-                backend_args,
-                split_info,
-            )
-            logger.info(f"HTML report generated at: {report_file}")
-            self.backend.convert_parquet_to_csv(self.args.output_dir)
-            logger.info("Converted Parquet to CSV.")
-        except Exception:
-            logger.error("Workflow execution failed", exc_info=True)
-            raise
-        finally:
-            self._cleanup_temp_dirs()
-
-
-def parse_learning_rate(s):
-    try:
-        return float(s)
-    except (TypeError, ValueError):
-        return None
-
-
-def aug_parse(aug_string: str):
-    mapping = {
-        "random_horizontal_flip": {"type": "random_horizontal_flip"},
-        "random_vertical_flip": {"type": "random_vertical_flip"},
-        "random_rotate": {"type": "random_rotate", "degree": 10},
-        "random_blur": {"type": "random_blur", "kernel_size": 3},
-        "random_brightness": {"type": "random_brightness", "min": 0.5, "max": 2.0},
-        "random_contrast": {"type": "random_contrast", "min": 0.5, "max": 2.0},
-    }
-    aug_list = []
-    for tok in aug_string.split(","):
-        key = tok.strip()
-        if key not in mapping:
-            valid = ", ".join(mapping.keys())
-            raise ValueError(f"Unknown augmentation '{key}'. Valid choices: {valid}")
-        aug_list.append(mapping[key])
-    return aug_list
-
-
-class SplitProbAction(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
-        train, val, test = values
-        total = train + val + test
-        if abs(total - 1.0) > 1e-6:
-            parser.error(
-                f"--split-probabilities must sum to 1.0; "
-                f"got {train:.3f} + {val:.3f} + {test:.3f} = {total:.3f}"
-            )
-        setattr(namespace, self.dest, values)
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Image Classification Learner with Pluggable Backends",
-    )
-    parser.add_argument(
-        "--csv-file",
-        required=True,
-        type=Path,
-        help="Path to the input CSV",
-    )
-    parser.add_argument(
-        "--image-zip",
-        required=True,
-        type=Path,
-        help="Path to the images ZIP",
-    )
-    parser.add_argument(
-        "--model-name",
-        required=True,
-        choices=MODEL_ENCODER_TEMPLATES.keys(),
-        help="Which model template to use",
-    )
-    parser.add_argument(
-        "--use-pretrained",
-        action="store_true",
-        help="Use pretrained weights for the model",
-    )
-    parser.add_argument(
-        "--fine-tune",
-        action="store_true",
-        help="Enable fine-tuning",
-    )
-    parser.add_argument(
-        "--epochs",
-        type=int,
-        default=10,
-        help="Number of training epochs",
-    )
-    parser.add_argument(
-        "--early-stop",
-        type=int,
-        default=5,
-        help="Early stopping patience",
-    )
-    parser.add_argument(
-        "--batch-size",
-        type=int,
-        help="Batch size (None = auto)",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=Path,
-        default=Path("learner_output"),
-        help="Where to write outputs",
-    )
-    parser.add_argument(
-        "--validation-size",
-        type=float,
-        default=0.15,
-        help="Fraction for validation (0.0–1.0)",
-    )
-    parser.add_argument(
-        "--preprocessing-num-processes",
-        type=int,
-        default=max(1, os.cpu_count() // 2),
-        help="CPU processes for data prep",
-    )
-    parser.add_argument(
-        "--split-probabilities",
-        type=float,
-        nargs=3,
-        metavar=("train", "val", "test"),
-        action=SplitProbAction,
-        default=[0.7, 0.1, 0.2],
-        help=(
-            "Random split proportions (e.g., 0.7 0.1 0.2)."
-            "Only used if no split column."
-        ),
-    )
-    parser.add_argument(
-        "--random-seed",
-        type=int,
-        default=42,
-        help="Random seed used for dataset splitting (default: 42)",
-    )
-    parser.add_argument(
-        "--learning-rate",
-        type=parse_learning_rate,
-        default=None,
-        help="Learning rate. If not provided, Ludwig will auto-select it.",
-    )
-    parser.add_argument(
-        "--augmentation",
-        type=str,
-        default=None,
-        help=(
-            "Comma-separated list (in order) of any of: "
-            "random_horizontal_flip, random_vertical_flip, random_rotate, "
-            "random_blur, random_brightness, random_contrast. "
-            "E.g. --augmentation random_horizontal_flip,random_rotate"
-        ),
-    )
-
-    args = parser.parse_args()
-
-
-
-    if not 0.0 <= args.validation_size <= 1.0:
-        parser.error("validation-size must be between 0.0 and 1.0")
-    if not args.csv_file.is_file():
-        parser.error(f"CSV not found: {args.csv_file}")
-    if not args.image_zip.is_file():
-        parser.error(f"ZIP not found: {args.image_zip}")
-    if args.augmentation is not None:
-        try:
-            augmentation_setup = aug_parse(args.augmentation)
-            setattr(args, "augmentation", augmentation_setup)
-        except ValueError as e:
-            parser.error(str(e))
-
-    backend_instance = LudwigDirectBackend()
-    orchestrator = WorkflowOrchestrator(args, backend_instance)
-
-    exit_code = 0
-    try:
-        orchestrator.run()
-        logger.info("Main script finished successfully.")
-    except Exception as e:
-        logger.error(f"Main script failed.{e}")
-        exit_code = 1
-    finally:
+        # Clean up the temp directory
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
         sys.exit(exit_code)
 
 
