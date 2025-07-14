@@ -8,8 +8,9 @@
         <include path="constants.py" />
         <include path="image_learner_cli.py" />
         <include path="image_learner_cli_car.py" />
-        <include path="caformer_encoder.py" />
-        <include path="run_image_learner.sh" />
+        <include path="caformer_setup/caformer_encoder.py" />
+        <include path="caformer_setup/caformer_models.py" />
+        <include path="caformer_setup/caformer_stacked_cnn.py" />
     </required_files>
     <stdio>
         <exit_code range="137" level="fatal_oom" description="Out of Memory" />
@@ -18,75 +19,51 @@
     <command>
         <![CDATA[
             #import re
-
             #if $input_csv
-            #set $sanitized_input_csv = re.sub('[^\\w\\-_\\.]', '_', $input_csv.element_identifier.strip())
+            #set $sanitized_input_csv = re.sub('[^\w\-_\.]', '_', $input_csv.element_identifier.strip())
             ln -sf '$input_csv' "./${sanitized_input_csv}";
             #end if
 
-            echo "Checking dependencies for CAFormer support..." &&
-            python -c "import huggingface_hub; print('huggingface_hub already available')" 2>/dev/null || pip install huggingface_hub &&
-            python -c "import safetensors; print('safetensors already available')" 2>/dev/null || pip install safetensors &&
-            python -c "import pyarrow; print('pyarrow already available')" 2>/dev/null || pip install pyarrow &&
-            echo "Dependencies check completed." &&
-            
-            #set $use_pretrained_str = "true" if $scratch_fine_tune.use_pretrained == "true" else "false"
-            #set $fine_tune_str = "true" if $scratch_fine_tune.use_pretrained == "true" and $scratch_fine_tune.fine_tune == "true" else "false"
-            
-            #if $advanced_settings.customize_defaults == "true"
-                #set $epochs = $advanced_settings.epochs
-                #set $early_stop = $advanced_settings.early_stop
-                #set $train_split = $advanced_settings.train_split
-                #set $val_split = $advanced_settings.val_split
-                #set $test_split = $advanced_settings.test_split
-                
-                #if $advanced_settings.learning_rate_condition.learning_rate_define == "true"
-                    #set $learning_rate = $advanced_settings.learning_rate_condition.learning_rate
-                #else
-                    #set $learning_rate = "auto"
-                #end if
-                
-                #if $advanced_settings.batch_size_condition.batch_size_define == "true"
-                    #set $batch_size = $advanced_settings.batch_size_condition.batch_size
-                #else
-                    #set $batch_size = "auto"
-                #end if
+            #set caformer_models = ['caformer_s18', 'caformer_s36', 'caformer_m36', 'caformer_b36']
+            #if str($model_name) in caformer_models
+                python '$__tool_directory__/image_learner_cli_car.py'
             #else
-                #set $epochs = 10
-                #set $early_stop = 5
-                #set $train_split = 0.7
-                #set $val_split = 0.1
-                #set $test_split = 0.2
-                #set $learning_rate = "auto"
-                #set $batch_size = "auto"
+                python '$__tool_directory__/image_learner_cli.py'
             #end if
-            
-            python '$__tool_directory__/image_learner_cli_car.py' 
-                --csv-file "./${sanitized_input_csv}" 
-                --image-zip "$image_zip" 
-                --model-name "$model_name" 
-                #if $use_pretrained_str == "true"
-                    --use-pretrained 
+                --csv-file "./${sanitized_input_csv}"
+                --image-zip "$image_zip"
+                --model-name "$model_name"
+                #if $use_pretrained == "true"
+                    --use-pretrained
+                    #if $fine_tune == "true"
+                        --fine-tune
+                    #end if
                 #end if
-                #if $fine_tune_str == "true"
-                    --fine-tune 
-                #end if
-                --epochs $epochs 
-                --early-stop $early_stop 
-                --split-probabilities $train_split $val_split $test_split 
-                --random-seed $random_seed 
-                #if $learning_rate != "auto"
-                    --learning-rate $learning_rate 
-                #end if
-                #if $batch_size != "auto"
-                    --batch-size $batch_size 
+                #if $customize_defaults == "true"
+                    #if $epochs
+                        --epochs "$epochs"
+                    #end if
+                    #if $early_stop
+                        --early-stop "$early_stop"
+                    #end if
+                    #if $learning_rate_define == "true"
+                        --learning-rate "$learning_rate"
+                    #end if
+                    #if $batch_size_define == "true"
+                        --batch-size "$batch_size"
+                    #end if
+                    --split-probabilities "$train_split" "$val_split" "$test_split"
                 #end if
                 #if $augmentation
-                    --augmentation '#echo ",".join($augmentation)#'
+                    --augmentation "$augmentation"
                 #end if
+                --random-seed "$random_seed"
                 --output-dir "." &&
-            
-            echo "Tool execution completed."
+
+            mkdir -p '$output_model.extra_files_path' &&
+            cp -r experiment_run/model/*.json experiment_run/model/model_weights '$output_model.extra_files_path' &&
+
+            echo "Image Learner Classification Experiment is Done!"
         ]]>
     </command>
 
