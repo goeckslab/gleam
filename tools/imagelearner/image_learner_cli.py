@@ -1004,7 +1004,7 @@ class LudwigDirectBackend:
         tab3_content = (
             test_metrics_html
             + preds_section
-            + render_img_section("Test Visualizations", test_viz_dir, output_type)
+            + render_img_section("Test Visualizations", test_viz_dir, output_type or "")
         )
 
         # assemble the tabs and help modal
