@@ -17,6 +17,9 @@
                 --models '$regression_models'
             #end if
         #end if
+        #if $tune_model
+            --tune_model
+        #end if
         #if $customize_defaults == "true"
                 #if $train_size
                 --train_size '$train_size' 
@@ -58,9 +61,9 @@
     <inputs>
         <param name="input_file" type="data" format="csv,tabular" label="Tabular Input Dataset" />
         <param name="test_file" type="data" format="csv,tabular" optional="true" label="Tabular Test Dataset"
-        help="If a test dataset is not provided, 
-        the input dataset will be split into training, validation, and test sets. 
-        If a test set is provided, the input dataset will be split into training and validation sets. 
+        help="If a test dataset is not provided,
+        the input dataset will be split into training, validation, and test sets.
+        If a test set is provided, the input dataset will be split into training and validation sets.
         Cross-validation is applied by default during training." />
        <param name="target_feature" multiple="false" type="data_column" use_header_names="true" data_ref="input_file" label="Select the target column:" />
         <conditional name="model_selection">
@@ -120,6 +123,7 @@
                 </param>
             </when>
         </conditional>
+        <param name="tune_model" type="boolean" truevalue="True" falsevalue="False" label="Tune hyperparameters" help="Hyperparameter tuning on the best model" />
         <param name="random_seed" type="integer" value="42" label="Random Seed" help="Random seed for reproducibility." />
         <conditional name="advanced_settings">
             <param name="customize_defaults" type="select" label="Customize Default Settings?" help="Select yes if you want to customize the default settings of the experiment.">
