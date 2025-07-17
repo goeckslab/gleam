@@ -1,11 +1,12 @@
 import logging
 import types
 
+from typing import Dict
+
 from base_model_trainer import BaseModelTrainer
 from dashboard import generate_classifier_explainer_dashboard
 from plotly.graph_objects import Figure
 from pycaret.classification import ClassificationExperiment
-from typing import Dict
 from utils import predict_proba
 
 LOG = logging.getLogger(__name__)

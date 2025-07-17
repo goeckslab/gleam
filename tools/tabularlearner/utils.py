@@ -1,7 +1,9 @@
 import base64
 import logging
-import numpy as np
+
 from typing import Optional
+
+import numpy as np
 
 logging.basicConfig(level=logging.DEBUG)
 LOG = logging.getLogger(__name__)

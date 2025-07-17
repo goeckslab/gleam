@@ -11,12 +11,12 @@ from feature_help_modal import get_feature_metrics_help_modal
 from feature_importance import FeatureImportanceAnalyzer
 from sklearn.metrics import average_precision_score
 from utils import (
-    get_html_template,
-    build_tabbed_html,
-    get_html_closing,
-    encode_image_to_base64,
-    add_plot_to_html,
     add_hr_to_html,
+    add_plot_to_html,
+    build_tabbed_html,
+    encode_image_to_base64,
+    get_html_closing,
+    get_html_template
 )
 
 logging.basicConfig(level=logging.DEBUG)
