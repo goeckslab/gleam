@@ -1,15 +1,11 @@
-# Standard library imports
 import logging
 import types
 from typing import Dict
 
-# Third-party imports
-from plotly.graph_objects import Figure
-from pycaret.classification import ClassificationExperiment
-
-# Local application imports
 from base_model_trainer import BaseModelTrainer
 from dashboard import generate_classifier_explainer_dashboard
+from plotly.graph_objects import Figure
+from pycaret.classification import ClassificationExperiment
 from utils import predict_proba
 
 LOG = logging.getLogger(__name__)

@@ -8,8 +8,8 @@ import pandas as pd
 from pycaret.classification import ClassificationExperiment
 from pycaret.regression import RegressionExperiment
 from sklearn.metrics import average_precision_score
-
 from utils import encode_image_to_base64, get_html_closing, get_html_template
+
 
 LOG = logging.getLogger(__name__)
 
