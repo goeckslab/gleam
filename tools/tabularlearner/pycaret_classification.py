@@ -50,20 +50,20 @@ class ClassificationModelTrainer(BaseModelTrainer):
             )
 
         plots = [
-            "confusion_matrix",
-            "auc",
-            "threshold",
-            "pr",
-            "error",
-            "class_report",
-            "learning",
-            "calibration",
-            "vc",
-            "dimension",
-            "manifold",
-            "rfe",
-            "feature",
-            "feature_all",
+            'confusion_matrix',
+            'auc',
+            'threshold',
+            'pr',
+            'error',
+            'class_report',
+            'learning',
+            'calibration',
+            'vc',
+            'dimension',
+            'manifold',
+            'rfe',
+            'feature',
+            'feature_all',
         ]
         for plot_name in plots:
             try:

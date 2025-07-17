@@ -87,7 +87,8 @@ def get_feature_metrics_help_modal() -> str:
 
     </div>
   </div>
-</div>"""
+</div>
+"""
 
     modal_css = """
 <style>
