@@ -109,16 +109,24 @@ class FeatureImportanceAnalyzer:
         self.plots['tree_importance'] = plot_path
 
     def save_shap_values(self):
-        # Use existing best_model if available
         model = self.best_model or self.exp.get_config("best_model")
 
-        # Grab the exact transformed data the model was trained on
-        X_data = getattr(self.exp, "X_test_transformed", None)
-        if X_data is None:
-            X_data = getattr(self.exp, "X_train_transformed", None)
+        try:
+            X_data = self.exp.get_config("X_test_transformed")
+        except KeyError:
+            X_data = None
 
         if X_data is None:
-            raise RuntimeError("No transformed data found for computing SHAP values.")
+            try:
+                X_data = self.exp.get_config("X_train_transformed")
+            except KeyError:
+                X_data = None
+
+        if X_data is None:
+            raise RuntimeError(
+                "Could not find 'X_test_transformed' or 'X_train_transformed' in the experiment. "
+                "Make sure PyCaret setup/compare_models was run with feature_selection=True."
+            )
 
         tree_classes = (
             "LGBM",
@@ -129,29 +137,27 @@ class FeatureImportanceAnalyzer:
             "ExtraTrees",
             "HistGradientBoosting",
         )
-        model_class_name = model.__class__.__name__
-        self.shap_model_name = model_class_name
+        model_name = model.__class__.__name__
+        self.shap_model_name = model_name
 
-        if any(tc in model_class_name for tc in tree_classes):
+        if any(tc in model_name for tc in tree_classes):
             explainer = shap.TreeExplainer(model)
             shap_values = explainer.shap_values(X_data)
             plot_X = X_data
-            plot_title = f"SHAP Summary for {model_class_name} (TreeExplainer)"
+            title = f"SHAP Summary for {model_name} (TreeExplainer)"
         else:
-            # Use the same feature‐space for KernelExplainer sampling
-            sampled_X = X_data.sample(100, random_state=42)
-            explainer = shap.KernelExplainer(model.predict, sampled_X)
-            shap_values = explainer.shap_values(sampled_X)
-            plot_X = sampled_X
-            plot_title = f"SHAP Summary for {model_class_name} (KernelExplainer)"
+            bg = X_data.sample(100, random_state=42)
+            explainer = shap.KernelExplainer(model.predict, bg)
+            shap_values = explainer.shap_values(bg)
+            plot_X = bg
+            title = f"SHAP Summary for {model_name} (KernelExplainer)"
 
-        # Plot and save
         shap.summary_plot(shap_values, plot_X, show=False)
-        plt.title(plot_title)
-        plot_path = os.path.join(self.output_dir, "shap_summary.png")
-        plt.savefig(plot_path)
+        plt.title(title)
+        out = os.path.join(self.output_dir, "shap_summary.png")
+        plt.savefig(out)
         plt.close()
-        self.plots["shap_summary"] = plot_path
+        self.plots["shap_summary"] = out
 
     def generate_html_report(self):
         LOG.info("Generating HTML report")
