@@ -178,8 +178,8 @@
             <output name="model" file="expected_model_classification_customized.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
-                    <has_text text="Validation Result Summary" />
-                    <has_text text="Test Results" />
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
@@ -200,8 +200,8 @@
             <output name="model" file="expected_model_classification_customized_cross_off.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
-                    <has_text text="Validation Result Summary" />
-                    <has_text text="Test Results" />
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
@@ -215,8 +215,8 @@
             <output name="model" file="expected_model_classification.h5" compare="sim_size"/>
             <output name="comparison_result"> 
                 <assert_contents>
-                    <has_text text="Validation Result Summary" />
-                    <has_text text="Test Results" />
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
@@ -230,8 +230,8 @@
             <output name="model" file="expected_model_regression.h5" compare="sim_size" />
             <output name="comparison_result">
                 <assert_contents>
-                    <has_text text="Validation Result Summary" />
-                    <has_text text="Test Results" />
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
