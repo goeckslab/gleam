@@ -141,6 +141,11 @@ class FeatureImportanceAnalyzer:
         self.shap_model_name = model_name
 
         if any(tc in model_name for tc in tree_classes):
+            try:
+                used_features = model.booster_.feature_name()
+            except Exception:
+                used_features = getattr(model, "feature_name", X_data.columns)
+            X_data = X_data[used_features]
             explainer = shap.TreeExplainer(model)
             shap_values = explainer.shap_values(X_data)
             plot_X = X_data
