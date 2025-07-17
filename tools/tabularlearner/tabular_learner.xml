@@ -30,7 +30,7 @@
                 #if $feature_selection
                 --feature_selection
                 #end if
-                #if $enable_cross_validation == "true" 
+                #if $enable_cross_validation == "true"
                     --cross_validation
                     #if $cross_validation_folds
                         --cross_validation_folds '$cross_validation_folds'
