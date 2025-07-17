@@ -7,17 +7,12 @@ import h5py
 import joblib
 import numpy as np
 import pandas as pd
+from sklearn.metrics import average_precision_score
+
 from feature_help_modal import get_feature_metrics_help_modal
 from feature_importance import FeatureImportanceAnalyzer
-from sklearn.metrics import average_precision_score
-from utils import (
-    add_hr_to_html,
-    add_plot_to_html,
-    build_tabbed_html,
-    encode_image_to_base64,
-    get_html_closing,
-    get_html_template
-)
+from utils import add_hr_to_html, add_plot_to_html, build_tabbed_html, encode_image_to_base64, get_html_closing, get_html_template
+
 
 logging.basicConfig(level=logging.DEBUG)
 LOG = logging.getLogger(__name__)
