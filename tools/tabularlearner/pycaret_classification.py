@@ -1,6 +1,5 @@
 import logging
 import types
-
 from typing import Dict
 
 from base_model_trainer import BaseModelTrainer
