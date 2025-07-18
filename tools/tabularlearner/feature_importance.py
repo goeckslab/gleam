@@ -109,61 +109,64 @@ class FeatureImportanceAnalyzer:
         self.plots['tree_importance'] = plot_path
 
     def save_shap_values(self):
+
         model = self.best_model or self.exp.get_config("best_model")
 
-        try:
-            X_data = self.exp.get_config("X_test_transformed")
-        except KeyError:
-            X_data = None
-
-        if X_data is None:
+        X_data = None
+        for key in ("X_test_transformed", "X_train_transformed"):
             try:
-                X_data = self.exp.get_config("X_train_transformed")
+                X_data = self.exp.get_config(key)
+                break
             except KeyError:
-                X_data = None
-
+                continue
         if X_data is None:
             raise RuntimeError(
                 "Could not find 'X_test_transformed' or 'X_train_transformed' in the experiment. "
                 "Make sure PyCaret setup/compare_models was run with feature_selection=True."
             )
 
-        tree_classes = (
-            "LGBM",
-            "XGB",
-            "CatBoost",
-            "RandomForest",
-            "DecisionTree",
-            "ExtraTrees",
-            "HistGradientBoosting",
-        )
-        model_name = model.__class__.__name__
-        self.shap_model_name = model_name
+        try:
+            used_features = model.booster_.feature_name()
+        except Exception:
+            used_features = getattr(model, "feature_names_in_", X_data.columns.tolist())
+        X_data = X_data[used_features]
 
-        if any(tc in model_name for tc in tree_classes):
-            try:
-                used_features = model.booster_.feature_name()
-            except Exception:
-                used_features = getattr(model, "feature_name", X_data.columns)
-            X_data = X_data[used_features]
-            explainer = shap.TreeExplainer(model)
-            shap_values = explainer.shap_values(X_data)
-            plot_X = X_data
-            title = f"SHAP Summary for {model_name} (TreeExplainer)"
+        max_bg = min(len(X_data), 100)
+        bg = X_data.sample(max_bg, random_state=42)
+
+        predict_fn = model.predict_proba if hasattr(model, "predict_proba") else model.predict
+
+        explainer = shap.Explainer(predict_fn, bg)
+        self.shap_model_name = explainer.__class__.__name__
+
+        shap_values = explainer(X_data)
+
+        output_names = getattr(shap_values, "output_names", None)
+        if output_names is None and hasattr(model, "classes_"):
+            output_names = list(model.classes_)
+        if output_names is None:
+            n_out = shap_values.values.shape[-1]
+            output_names = list(map(str, range(n_out)))
+
+        values = shap_values.values
+        if values.ndim == 3:
+            for j, name in enumerate(output_names):
+                safe = name.replace(" ", "_").replace("/", "_")
+                out_path = os.path.join(self.output_dir, f"shap_summary_{safe}.png")
+                plt.figure()
+                shap.plots.beeswarm(shap_values[..., j], show=False)
+                plt.title(f"SHAP for {model.__class__.__name__} ⇒ {name}")
+                plt.savefig(out_path)
+                plt.close()
+                self.plots[f"shap_summary_{safe}"] = out_path
         else:
-            max_bg = min(len(X_data), 100)
-            bg = X_data.sample(max_bg, random_state=42)
-            explainer = shap.KernelExplainer(model.predict, bg)
-            shap_values = explainer.shap_values(bg)
-            plot_X = bg
-            title = f"SHAP Summary for {model_name} (KernelExplainer)"
-
-        shap.summary_plot(shap_values, plot_X, show=False)
-        plt.title(title)
-        out = os.path.join(self.output_dir, "shap_summary.png")
-        plt.savefig(out)
-        plt.close()
-        self.plots["shap_summary"] = out
+            plt.figure()
+            shap.plots.beeswarm(shap_values, show=False)
+            plt.title(f"SHAP Summary for {model.__class__.__name__}")
+            out_path = os.path.join(self.output_dir, "shap_summary.png")
+            plt.savefig(out_path)
+            plt.close()
+            self.plots["shap_summary"] = out_path
 
     def generate_html_report(self):
         LOG.info("Generating HTML report")
