@@ -136,10 +136,10 @@ class FeatureImportanceAnalyzer:
             # Convert to list if it's not already
             used_features = list(used_features)
             missing_features = set(used_features) - available_features
-        
+
         if missing_features:
             LOG.warning(f"Some model features not found in transformed data: {missing_features}")
-            LOG.warning(f"Using all available transformed features instead")
+            LOG.warning("Using all available transformed features instead")
             used_features = list(X_transformed.columns)
 
         if any(tc in model_class_name for tc in tree_classes):
