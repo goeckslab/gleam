@@ -126,6 +126,22 @@ class FeatureImportanceAnalyzer:
         else:
             used_features = X_transformed.columns
 
+        # Check if all used_features exist in X_transformed columns
+        # This handles cases where polynomial features create new column names
+        # that don't match the model's feature names
+        available_features = set(X_transformed.columns)
+        if isinstance(used_features, list):
+            missing_features = set(used_features) - available_features
+        else:
+            # Convert to list if it's not already
+            used_features = list(used_features)
+            missing_features = set(used_features) - available_features
+        
+        if missing_features:
+            LOG.warning(f"Some model features not found in transformed data: {missing_features}")
+            LOG.warning(f"Using all available transformed features instead")
+            used_features = list(X_transformed.columns)
+
         if any(tc in model_class_name for tc in tree_classes):
             explainer = shap.TreeExplainer(model)
             X_shap = X_transformed[used_features]
