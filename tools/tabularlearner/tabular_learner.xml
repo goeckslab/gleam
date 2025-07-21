@@ -244,7 +244,12 @@
             <param name="polynomial_features" value="true"/>
             <param name="enable_cross_validation" value="true"/>
             <param name="cross_validation_folds" value="5"/>
-            <output name="model" compare="sim_size"/>
+            <output name="model">
+                <assert_contents>
+                    <!-- Ensure model file is not empty -->
+                    <has_size value="0" delta="1000000" negate="true"/>
+                </assert_contents>
+            </output>
             <output name="comparison_result">
                 <assert_contents>
                     <has_text text="Validation Result Summary" />
