@@ -109,18 +109,15 @@ class FeatureImportanceAnalyzer:
     def save_shap_values(self):
         model = self.best_model or self.exp.get_config('best_model')
         try:
-            X_transformed = self.exp.get_config('X_train')
-        except KeyError:
             X_transformed = self.exp.get_config('X_transformed')
-
+        except KeyError:
+            X_transformed = self.exp.get_config('X_train')
         tree_classes = (
-            "LGBM", "XGB", "CatBoost", "RandomForest", "DecisionTree",
-            "ExtraTrees", "HistGradientBoosting"
+            "LGBM", "XGB", "CatBoost", "RandomForest",
+            "DecisionTree", "ExtraTrees", "HistGradientBoosting"
         )
         model_class_name = model.__class__.__name__
         self.shap_model_name = model_class_name
-
-        # Determine which feature names the model actually used
         if hasattr(model, "feature_name_"):
             used_features = model.feature_name_
         elif hasattr(model, "booster_") and hasattr(model.booster_, "feature_name"):
@@ -129,32 +126,25 @@ class FeatureImportanceAnalyzer:
             used_features = list(model.feature_names_in_)
         else:
             used_features = list(X_transformed.columns)
-
-        # Filter to only those features actually present
         common_feats = [f for f in used_features if f in X_transformed.columns]
         missing = set(used_features) - set(common_feats)
         if missing:
-            LOG.warning(f"Skipping {len(missing)} SHAP features not in X_train: {missing}")
+            LOG.warning(f"Skipping {len(missing)} SHAP features not in X_transformed: {missing}")
         X_shap = X_transformed[common_feats]
-
         if any(tc in model_class_name for tc in tree_classes):
-            # Tree models get the fast TreeExplainer
             explainer = shap.TreeExplainer(model)
             shap_values = explainer.shap_values(X_shap)
             plot_X = X_shap
             plot_title = f"SHAP Summary for {model_class_name} (TreeExplainer)"
         else:
-            # Otherwise use KernelExplainer on a safe sample of existing features
-            logging.warning(f"len(X_transformed) = {len(X_transformed)}")
-            X_valid = X_transformed[common_feats]
+            LOG.warning(f"len(X_transformed) = {len(X_transformed)}")
+            X_valid = X_shap
             sample_size = min(len(X_valid), 100)
             sampled_X = X_valid.sample(n=sample_size, replace=False, random_state=42)
             explainer = shap.KernelExplainer(model.predict, sampled_X)
             shap_values = explainer.shap_values(sampled_X)
             plot_X = sampled_X
             plot_title = f"SHAP Summary for {model_class_name} (KernelExplainer)"
-
-        # Generate and save the summary plot
         shap.summary_plot(shap_values, plot_X, show=False)
         plt.title(plot_title)
         plot_path = os.path.join(self.output_dir, "shap_summary.png")
