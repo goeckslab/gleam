@@ -105,7 +105,6 @@ class FeatureImportanceAnalyzer:
         plt.savefig(plot_path)
         plt.close()
         self.plots['tree_importance'] = plot_path
-
     
     def save_shap_values(self):
         model = self.best_model or self.exp.get_config('best_model')
@@ -162,7 +161,6 @@ class FeatureImportanceAnalyzer:
         plt.savefig(plot_path)
         plt.close()
         self.plots["shap_summary"] = plot_path
-
 
     def generate_html_report(self):
         LOG.info("Generating HTML report")
