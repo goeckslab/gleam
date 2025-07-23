@@ -188,6 +188,22 @@
             <param name="random_seed" value="42"/>
             <param name="customize_defaults" value="true"/>
             <param name="train_size" value="0.8"/>
+            <param name="polynomial_features" value="true"/>
+            <output name="comparison_result">
+                <assert_contents>
+                    <has_text text="Validation Result Summary" />
+                    <has_text text="Test Results" />
+                    <has_text text="Feature Importance" />
+                </assert_contents>
+            </output>
+        </test>
+        <test>
+            <param name="input_file" value="pcr.tsv"/>
+            <param name="target_feature" value="11"/> 
+            <param name="model_type" value="classification"/>
+            <param name="random_seed" value="42"/>
+            <param name="customize_defaults" value="true"/>
+            <param name="train_size" value="0.8"/>
             <param name="normalize" value="true"/>
             <param name="feature_selection" value="true"/>
             <param name="enable_cross_validation" value="false"/>

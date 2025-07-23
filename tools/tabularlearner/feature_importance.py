@@ -108,7 +108,10 @@ class FeatureImportanceAnalyzer:
 
     def save_shap_values(self):
         model = self.best_model or self.exp.get_config('best_model')
-        X_transformed = self.exp.get_config('X_transformed')
+        try:
+            X_transformed = self.exp.get_config('X_train')
+        except KeyError:
+            X_transformed = self.exp.get_config('X_transformed')
         tree_classes = (
             "LGBM", "XGB", "CatBoost", "RandomForest", "DecisionTree", "ExtraTrees", "HistGradientBoosting"
         )
@@ -126,9 +129,15 @@ class FeatureImportanceAnalyzer:
         else:
             used_features = X_transformed.columns
 
+        common_feats = [f for f in used_features if f in X_transformed.columns]
+        missing = set(used_features) - set(common_feats)
+        if missing:
+            LOG.warning(
+                f"Skipping {len(missing)} SHAP features not in X_train: {missing}"
+            )
+        X_shap = X_transformed[common_feats]
         if any(tc in model_class_name for tc in tree_classes):
             explainer = shap.TreeExplainer(model)
-            X_shap = X_transformed[used_features]
             shap_values = explainer.shap_values(X_shap)
             plot_X = X_shap
             plot_title = f"SHAP Summary for {model_class_name} (TreeExplainer)"
