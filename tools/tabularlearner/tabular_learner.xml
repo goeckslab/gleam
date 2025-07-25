@@ -212,6 +212,22 @@
             <param name="target_feature" value="11"/> 
             <param name="model_type" value="classification"/>
             <param name="random_seed" value="42"/>
+            <param name="tune_model" value="true"/>
+            <output name="model" file="expected_model_classification.h5" compare="sim_size"/>
+            <output name="comparison_result"> 
+                <assert_contents>
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
+                    <has_text text="Feature Importance" />
+                </assert_contents>
+            </output>
+            <output name="best_model_csv" value="expected_best_model_classification.csv" />
+        </test>
+        <test>
+            <param name="input_file" value="pcr.tsv"/>
+            <param name="target_feature" value="11"/> 
+            <param name="model_type" value="classification"/>
+            <param name="random_seed" value="42"/>
             <output name="model" file="expected_model_classification.h5" compare="sim_size"/>
             <output name="comparison_result"> 
                 <assert_contents>
