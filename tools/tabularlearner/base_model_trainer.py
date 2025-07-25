@@ -320,7 +320,7 @@ class BaseModelTrainer:
             "pr_auc": "Precision-Recall AUC",
             "roc_auc": "Receiver Operating Characteristic AUC",
             "residuals": "Residuals Distribution",
-            "eror": "Prediction Error Distribution",
+            "error": "Prediction Error Distribution",
         }
         val_df.drop(columns=["TT (Ec)", "TT (Sec)"], errors="ignore", inplace=True)
         summary_html = (
