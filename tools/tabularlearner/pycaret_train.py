@@ -62,6 +62,9 @@ def main():
                         help="Random seed for PyCaret setup")
     parser.add_argument("--test_file", type=str, default=None,
                         help="Path to the test data file")
+    parser.add_argument("--probability_threshold", type=float,
+                        default=None,
+                        help="Probability threshold for classification decision")
 
     args = parser.parse_args()
 
@@ -81,6 +84,7 @@ def main():
         "feature_interaction": args.feature_interaction,
         "feature_ratio": args.feature_ratio,
         "fix_imbalance": args.fix_imbalance,
+        "probability_threshold": args.probability_threshold
     }
     LOG.info(f"Model kwargs: {model_kwargs}")
 

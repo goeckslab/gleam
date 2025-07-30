@@ -19,39 +19,42 @@
         #end if
         #if $customize_defaults == "true"
                 #if $train_size
-                --train_size '$train_size' 
+                --train_size '$train_size'
                 #end if
                 #if $normalize
-                --normalize  
+                --normalize
                 #end if
                 #if $feature_selection
                 --feature_selection
                 #end if
-                #if $enable_cross_validation == "true" 
+                #if $enable_cross_validation == "true"
                     --cross_validation
                     #if $cross_validation_folds
                         --cross_validation_folds '$cross_validation_folds'
-                    #end if 
+                    #end if
                 #end if
                 #if $enable_cross_validation == "false"
                     --no_cross_validation
                 #end if
                 #if $remove_outliers
-                --remove_outliers  
+                --remove_outliers
                 #end if
                 #if $remove_multicollinearity
-                --remove_multicollinearity 
+                --remove_multicollinearity
                 #end if
                 #if $polynomial_features
-                --polynomial_features  
+                --polynomial_features
                 #end if
                 #if $fix_imbalance
-                --fix_imbalance 
+                --fix_imbalance
+                #end if
+                #if $probability_threshold
+                --probability_threshold '$probability_threshold'
                 #end if
         #end if
         #if $test_file
             --test_file '$test_file'
-        #end if 
+        #end if
         --model_type '$model_type'
         ]]>
     </command>
@@ -146,6 +149,7 @@
                 <param name="remove_multicollinearity" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Remove Multicollinearity" help="Whether to remove multicollinear features before training." />
                 <param name="polynomial_features" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Polynomial Features" help="Whether to create polynomial features before training." />
                 <param name="fix_imbalance" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Fix Imbalance" help="ONLY for classfication! Whether to use SMOTE or similar methods to fix imbalance in the input dataset." />
+                <param name="probability_threshold" type="float" min="0.0" max="1.0" value="0.5" label="Classification Probability Threshold" help="Only applies to classification. Probability above which a prediction is considered positive. Default is 0.5." />
             </when>
             <when value="false">
                 <!-- No additional parameters to show if the user selects 'No' -->

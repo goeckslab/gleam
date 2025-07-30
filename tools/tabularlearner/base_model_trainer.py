@@ -192,7 +192,12 @@ class BaseModelTrainer:
         if self.task_type == "classification":
             self.results.rename(columns={"AUC": "ROC-AUC"}, inplace=True)
 
-        _ = self.exp.predict_model(self.best_model)
+        prob_thresh = getattr(self, "probability_threshold", None)
+        if self.task_type == "classification" and prob_thresh is not None:
+            _ = self.exp.predict_model(self.best_model, probability_threshold=prob_thresh)
+        else:
+            _ = self.exp.predict_model(self.best_model)
+
         self.test_result_df = self.exp.pull()
         if self.task_type == "classification":
             self.test_result_df.rename(columns={"AUC": "ROC-AUC"}, inplace=True)
@@ -224,6 +229,8 @@ class BaseModelTrainer:
         filtered_setup_params = {
             k: v for k, v in self.setup_params.items() if k not in excluded_params
         }
+        if self.task_type == "classification" and hasattr(self, "probability_threshold"):
+            filtered_setup_params["probability_threshold"] = self.probability_threshold
         setup_params_table = pd.DataFrame(
             list(filtered_setup_params.items()), columns=["Parameter", "Value"]
         )
