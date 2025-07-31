@@ -179,6 +179,7 @@
             <param name="cross_validation_folds" value="5"/>
             <param name="remove_outliers" value="true"/>
             <param name="remove_multicollinearity" value="true"/>
+            <param name="probability_threshold" value="0.4" />
             <output name="model" file="expected_model_classification_customized.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
@@ -201,6 +202,7 @@
             <param name="enable_cross_validation" value="false"/>
             <param name="remove_outliers" value="true"/>
             <param name="remove_multicollinearity" value="true"/>
+            <param name="probability_threshold" value="0.6" />
             <output name="model" file="expected_model_classification_customized_cross_off.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
