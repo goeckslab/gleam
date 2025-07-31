@@ -76,7 +76,6 @@ def generate_classifier_explainer_dashboard(
         col.replace(".", "__").replace("{", "__").replace("}", "__")
         for col in X_test_df.columns
     ]
-
     explainer = ClassifierExplainer(
         estimator, X_test_df, exp.y_test_transformed, labels=labels_, **kwargs
     )
@@ -153,7 +152,11 @@ def generate_regression_explainer_dashboard(
         estimator, X_test_df, exp.y_test_transformed, **kwargs
     )
     return ExplainerDashboard(
-        explainer, mode=display_format, contributions=False,
-        whatif=False, shap_interaction=False, decision_trees=False,
-        **dashboard_kwargs
+        explainer,
+        mode=display_format,
+        contributions=False,
+        whatif=False,
+        shap_interaction=False,
+        decision_trees=False,
+        **dashboard_kwargs,
     )

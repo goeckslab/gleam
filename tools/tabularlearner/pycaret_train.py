@@ -126,7 +126,7 @@ def main():
     # Normalize cross-validation flags: --no_cross_validation overrides --cross_validation
     if args.no_cross_validation:
         args.cross_validation = False
-    # If --cross_validation was passed,  args.cross_validation is True
+    # If --cross_validation was passed, args.cross_validation is True
     # If neither was passed, args.cross_validation remains None
 
     # Build the model_kwargs dict from CLI args

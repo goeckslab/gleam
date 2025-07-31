@@ -204,7 +204,7 @@ def build_tabbed_html(
     # Tabs header
     tabs = [
         '<div class="tabs">',
-        '<div class="tab active" onclick="showTab(\'summary\')">Validation Summary & Config</div>',
+        '<div class="tab active" onclick="showTab(\'summary\')">Validation Summary and Config</div>',
         '<div class="tab" onclick="showTab(\'test\')">Test Summary</div>',
         '<div class="tab" onclick="showTab(\'feature\')">Feature Importance</div>',
     ]

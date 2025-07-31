@@ -167,14 +167,22 @@ class BaseModelTrainer:
 
         LOG.info(f"compare_models kwargs: {compare_kwargs}")
         self.best_model = self.exp.compare_models(**compare_kwargs)
-        self.results = self.exp.pull()
+        self.compare_results = self.exp.pull()  # Capture comparison results separately
+        self.results = self.compare_results.copy()  # Preserve for backward compatibility
+
         if getattr(self, "tune_model", False):
             LOG.info("Tuning hyperparameters of the best model")
             self.best_model = self.exp.tune_model(self.best_model)
-            self.results = self.exp.pull()
+            self.tune_results = self.exp.pull()  # Capture tuning results separately
+        else:
+            self.tune_results = None
 
+        # Rename columns for classification in relevant DataFrames
         if self.task_type == "classification":
+            self.compare_results.rename(columns={"AUC": "ROC-AUC"}, inplace=True)
             self.results.rename(columns={"AUC": "ROC-AUC"}, inplace=True)
+            if self.tune_results is not None:
+                self.tune_results.rename(columns={"AUC": "ROC-AUC"}, inplace=True)
 
         prob_thresh = getattr(self, "probability_threshold", None)
         if self.task_type == "classification" and prob_thresh is not None:
@@ -232,14 +240,14 @@ class BaseModelTrainer:
     def save_html_report(self):
         LOG.info("Saving HTML report")
 
-        # 1) Determine best model name
+        # 1) Determine best model name from comparison results
         try:
-            best_model_name = str(self.results.iloc[0]["Model"])
+            best_model_name = str(self.compare_results.iloc[0]["Model"])
         except Exception:
             best_model_name = type(self.best_model).__name__
         LOG.info(f"Best model determined as: {best_model_name}")
 
-    # 2) Compute training sample count
+        # 2) Compute training sample count
         try:
             n_train = self.exp.X_train.shape[0]
         except Exception:
@@ -250,7 +258,6 @@ class BaseModelTrainer:
         all_params = self.setup_params.copy()
         if self.task_type == "classification" and hasattr(self, "probability_threshold"):
             all_params["probability_threshold"] = self.probability_threshold
-
         display_keys = [
             "Target",
             "Session ID",
@@ -292,7 +299,7 @@ class BaseModelTrainer:
             elif key == "Models":
                 dv = ", ".join(map(str, v)) if isinstance(v, (list, tuple)) else "None"
             elif key == "Probability Threshold":
-                dv = v if v is not None else "None"
+                dv = f"{v:.2f}" if v is not None else "0.5"
             else:
                 dv = v if v is not None else "None"
             setup_rows.append([key, dv])
@@ -302,10 +309,14 @@ class BaseModelTrainer:
         df_setup = pd.DataFrame(setup_rows, columns=["Parameter", "Value"])
         df_setup.to_csv(Path(self.output_dir) / "setup_params.csv", index=False)
 
-        # 4) Persist CSVs
-        self.results.to_csv(
+        # 4) Persist CSVs (use compare_results for comparison CSV)
+        self.compare_results.to_csv(
             Path(self.output_dir) / "comparison_results.csv", index=False
         )
+        if self.tune_results is not None:
+            self.tune_results.to_csv(
+                Path(self.output_dir) / "tune_results.csv", index=False
+            )
         self.test_result_df.to_csv(
             Path(self.output_dir) / "test_results.csv", index=False
         )
@@ -317,24 +328,8 @@ class BaseModelTrainer:
         header = f"<h2>Best Model: {best_model_name}</h2>"
 
         # — Validation Summary & Configuration —
-        val_df = self.results.copy()
-        # mapping raw plot keys to user-friendly titles
-        plot_title_map = {
-            "learning": "Learning Curve",
-            "vc": "Validation Curve",
-            "calibration": "Calibration Curve",
-            "dimension": "Dimensionality Reduction",
-            "manifold": "Manifold Learning",
-            "rfe": "Recursive Feature Elimination",
-            "threshold": "Threshold Plot",
-            "percentage_above_below": "Percentage Above vs. Below Cutoff",
-            "class_report": "Classification Report",
-            "pr_auc": "Precision-Recall AUC",
-            "roc_auc": "Receiver Operating Characteristic AUC",
-            "residuals": "Residuals Distribution",
-            "error": "Prediction Error Distribution",
-        }
-        val_df.drop(columns=["TT (Ec)", "TT (Sec)"], errors="ignore", inplace=True)
+        val_df = self.compare_results.copy()
+        val_df.drop(columns=["TT (Sec)"], errors="ignore", inplace=True)
         summary_html = (
             header
             + "<h2>Train & Validation Summary</h2>"
@@ -354,6 +349,16 @@ class BaseModelTrainer:
             + "</div>"
         )
 
+        # New: Add the tuning table if tuning was performed
+        if self.tune_results is not None:
+            tune_df = self.tune_results.copy()
+            tune_df.drop(columns=["TT (Sec)"], errors="ignore", inplace=True)
+            tune_df.insert(0, "Model", best_model_name)
+            summary_html += "<h2>Model tuning</h2>"
+            summary_html += '<div class="table-wrapper">'
+            summary_html += tune_df.to_html(index=False, classes="table sortable")
+            summary_html += "</div>"
+
         # choose summary plots based on task type
         if self.task_type == "classification":
             summary_plots = [
@@ -368,6 +373,22 @@ class BaseModelTrainer:
             ]
         else:
             summary_plots = ["learning", "vc", "parameter", "residuals"]
+
+        plot_title_map = {
+            "learning": "Learning Curve",
+            "vc": "Validation Curve",
+            "calibration": "Calibration Curve",
+            "dimension": "Dimensionality Reduction",
+            "manifold": "Manifold Learning",
+            "rfe": "Recursive Feature Elimination",
+            "threshold": "Threshold Plot",
+            "percentage_above_below": "Percentage Above vs. Below Cutoff",
+            "class_report": "Classification Report",
+            "pr_auc": "Precision-Recall AUC",
+            "roc_auc": "Receiver Operating Characteristic AUC",
+            "residuals": "Residuals Distribution",
+            "error": "Prediction Error Distribution",
+        }
 
         for name in summary_plots:
             if name in self.plots:
