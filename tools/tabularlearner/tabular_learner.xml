@@ -17,6 +17,9 @@
                 --models '$regression_models'
             #end if
         #end if
+        #if $tune_model
+            --tune_model
+        #end if
         #if $customize_defaults == "true"
                 #if $train_size
                 --train_size '$train_size'
@@ -61,9 +64,9 @@
     <inputs>
         <param name="input_file" type="data" format="csv,tabular" label="Tabular Input Dataset" />
         <param name="test_file" type="data" format="csv,tabular" optional="true" label="Tabular Test Dataset"
-        help="If a test dataset is not provided, 
-        the input dataset will be split into training, validation, and test sets. 
-        If a test set is provided, the input dataset will be split into training and validation sets. 
+        help="If a test dataset is not provided,
+        the input dataset will be split into training, validation, and test sets.
+        If a test set is provided, the input dataset will be split into training and validation sets.
         Cross-validation is applied by default during training." />
        <param name="target_feature" multiple="false" type="data_column" use_header_names="true" data_ref="input_file" label="Select the target column:" />
         <conditional name="model_selection">
@@ -123,6 +126,7 @@
                 </param>
             </when>
         </conditional>
+        <param name="tune_model" type="boolean" truevalue="True" falsevalue="False" label="Tune hyperparameters" help="Hyperparameter tuning on the best model" />
         <param name="random_seed" type="integer" value="42" label="Random Seed" help="Random seed for reproducibility." />
         <conditional name="advanced_settings">
             <param name="customize_defaults" type="select" label="Customize Default Settings?" help="Select yes if you want to customize the default settings of the experiment.">
@@ -178,8 +182,8 @@
             <output name="model" file="expected_model_classification_customized.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
-                    <has_text text="Validation Result Summary" />
-                    <has_text text="Test Results" />
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
@@ -201,8 +205,8 @@
             <output name="model" file="expected_model_classification_customized_cross_off.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
-                    <has_text text="Validation Result Summary" />
-                    <has_text text="Test Results" />
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
@@ -213,11 +217,27 @@
             <param name="target_feature" value="11"/> 
             <param name="model_type" value="classification"/>
             <param name="random_seed" value="42"/>
+            <param name="tune_model" value="true"/>
             <output name="model" file="expected_model_classification.h5" compare="sim_size"/>
             <output name="comparison_result"> 
                 <assert_contents>
-                    <has_text text="Validation Result Summary" />
-                    <has_text text="Test Results" />
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
+                    <has_text text="Feature Importance" />
+                </assert_contents>
+            </output>
+            <output name="best_model_csv" value="expected_best_model_classification.csv" />
+        </test>
+        <test>
+            <param name="input_file" value="pcr.tsv"/>
+            <param name="target_feature" value="11"/> 
+            <param name="model_type" value="classification"/>
+            <param name="random_seed" value="42"/>
+            <output name="model" file="expected_model_classification.h5" compare="sim_size"/>
+            <output name="comparison_result"> 
+                <assert_contents>
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
@@ -231,8 +251,8 @@
             <output name="model" file="expected_model_regression.h5" compare="sim_size" />
             <output name="comparison_result">
                 <assert_contents>
-                    <has_text text="Validation Result Summary" />
-                    <has_text text="Test Results" />
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
