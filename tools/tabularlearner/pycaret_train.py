@@ -7,6 +7,7 @@ from pycaret_regression import RegressionModelTrainer
 logging.basicConfig(level=logging.DEBUG)
 LOG = logging.getLogger(__name__)
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_file", help="Path to the input file")
@@ -79,7 +80,7 @@ def main():
     )
     parser.add_argument(
         "--feature_ratio",
-        action="  store_true",
+        action="store_true",
         default=None,
         help="Generate feature ratios for PyCaret setup",
     )
@@ -186,3 +187,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
