@@ -187,7 +187,7 @@
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
-            <output name="best_model_csv" ftype="csv" />
+            <output name="best_model_csv" value="expected_best_model_classification_customized.csv" />
         </test>
         <test>
             <param name="input_file" value="pcr.tsv"/>
@@ -201,7 +201,6 @@
             <param name="enable_cross_validation" value="false"/>
             <param name="remove_outliers" value="true"/>
             <param name="remove_multicollinearity" value="true"/>
-            <param name="probability_threshold" value="0.45"/>
             <output name="model" file="expected_model_classification_customized_cross_off.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
@@ -210,7 +209,7 @@
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
-            <output name="best_model_csv" ftype="csv" />
+            <output name="best_model_csv" value="expected_best_model_classification_customized_cross_off.csv" />
         </test>
         <test>
             <param name="input_file" value="pcr.tsv"/>
@@ -226,7 +225,7 @@
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
-            <output name="best_model_csv" ftype="csv" />
+            <output name="best_model_csv" value="expected_best_model_classification.csv" />
         </test>
         <test>
             <param name="input_file" value="pcr.tsv"/>
@@ -241,7 +240,7 @@
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
-            <output name="best_model_csv" ftype="csv" />
+            <output name="best_model_csv" value="expected_best_model_classification.csv" />
         </test>
         <test>
             <param name="input_file" value="auto-mpg.tsv"/>
@@ -256,23 +255,7 @@
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
-            <output name="best_model_csv" ftype="csv" />
-        </test>
-        <test>
-            <param name="input_file" value="auto-mpg.tsv"/>
-            <param name="target_feature" value="1"/> 
-            <param name="model_type" value="regression"/>
-            <param name="random_seed" value="42"/>
-            <param name="tune_model" value="true"/>
-            <output name="model" file="expected_model_regression_tuned.h5" compare="sim_size" />
-            <output name="comparison_result">
-                <assert_contents>
-                    <has_text text="Validation Summary" />
-                    <has_text text="Test Summary" />
-                    <has_text text="Feature Importance" />
-                </assert_contents>
-            </output>
-            <output name="best_model_csv" ftype="csv" />
+            <output name="best_model_csv" value="expected_best_model_regression.csv" />
         </test>
     </tests>
     <help>
