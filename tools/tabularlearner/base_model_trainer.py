@@ -63,8 +63,9 @@ class BaseModelTrainer:
             )
 
         # Warn about irrelevant kwargs for the task type
-        if (self.task_type == "regression" and
-            "probability_threshold" in self.user_kwargs):
+        if self.task_type == "regression" and (
+            "probability_threshold" in self.user_kwargs
+        ):
             LOG.warning(
                 "probability_threshold is ignored for regression tasks."
             )
@@ -93,8 +94,9 @@ class BaseModelTrainer:
 
         # Conditional drop: only if 'prediction_label' exists and is not
         # the target
-        if ("prediction_label" in self.data.columns and
-            self.data.columns[target_index] != "prediction_label"):
+        if "prediction_label" in self.data.columns and (
+            self.data.columns[target_index] != "prediction_label"
+        ):
             LOG.info(
                 "Dropping 'prediction_label' column as it's not the target."
             )
@@ -232,8 +234,9 @@ class BaseModelTrainer:
             self.results.rename(columns={"AUC": "ROC-AUC"}, inplace=True)
 
         prob_thresh = getattr(self, "probability_threshold", None)
-        if (self.task_type == "classification" and
-            prob_thresh is not None):
+        if self.task_type == "classification" and (
+            prob_thresh is not None
+        ):
             _ = self.exp.predict_model(
                 self.best_model, probability_threshold=prob_thresh
             )
@@ -313,8 +316,9 @@ class BaseModelTrainer:
 
         # 3) Build setup parameters table
         all_params = self.setup_params.copy()
-        if (self.task_type == "classification" and
-            hasattr(self, "probability_threshold")):
+        if self.task_type == "classification" and (
+            hasattr(self, "probability_threshold")
+        ):
             all_params["probability_threshold"] = (
                 self.probability_threshold
             )
@@ -546,11 +550,13 @@ class BaseModelTrainer:
         for name, path in self.plots.items():
             # classification: include only the small extras, before
             # skipping anything
-            if (self.task_type == "classification" and name in {
-                "threshold",
-                "pr_auc",
-                "class_report",
-            }):
+            if self.task_type == "classification" and (
+                name in {
+                    "threshold",
+                    "pr_auc",
+                    "class_report",
+                }
+            ):
                 title = plot_title_map.get(
                     name, name.replace("_", " ").title()
                 )
@@ -567,8 +573,9 @@ class BaseModelTrainer:
 
             # regression: explicitly include the 'error' plot,
             # before skipping
-            if (self.task_type == "regression" and
-                name == "error"):
+            if self.task_type == "regression" and (
+                name == "error"
+            ):
                 title = plot_title_map.get(
                     "error", "Prediction Error Distribution"
                 )
