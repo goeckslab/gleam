@@ -2,14 +2,16 @@ import argparse
 import json
 import logging
 import os
-from pathlib import Path
 import shutil
 import sys
 import tempfile
-from typing import Any, Dict, Optional, Protocol, Tuple
 import zipfile
-import yaml
+from pathlib import Path
+from typing import Any, Dict, Optional, Protocol, Tuple
 
+import pandas as pd
+import pandas.api.types as ptypes
+import yaml
 from constants import (
     IMAGE_PATH_COLUMN_NAME,
     LABEL_COLUMN_NAME,
@@ -28,8 +30,6 @@ from ludwig.globals import (
 )
 from ludwig.utils.data_utils import get_split_path
 from ludwig.visualize import get_visualizations_registry
-import pandas as pd
-import pandas.api.types as ptypes
 from plotly_plots import build_classification_plots
 from sklearn.model_selection import train_test_split
 from utils import (
@@ -905,9 +905,9 @@ class LudwigDirectBackend:
             imgs = [
                 img for img in imgs
                 if not (
-                    img.name == "confusion_matrix.png" or
-                    img.name.startswith("confusion_matrix__label_top") or
-                    img.name == "roc_curves.png"
+                    img.name == "confusion_matrix.png"
+                    or img.name.startswith("confusion_matrix__label_top")
+                    or img.name == "roc_curves.png"
                 )
             ]
 
@@ -988,7 +988,7 @@ class LudwigDirectBackend:
 
                 # 2) load ground truth for the test split from prepared CSV
                 df_all = pd.read_csv(config["label_column_data_path"])
-                df_gt  = df_all[df_all[SPLIT_COLUMN_NAME] == 2][LABEL_COLUMN_NAME].reset_index(drop=True)
+                df_gt = df_all[df_all[SPLIT_COLUMN_NAME] == 2][LABEL_COLUMN_NAME].reset_index(drop=True)
 
                 # 3) concatenate side-by-side
                 df_table = pd.concat([df_gt, df_pred], axis=1)

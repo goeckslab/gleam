@@ -1,5 +1,5 @@
 import json
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import plotly.graph_objects as go
@@ -26,20 +26,6 @@ def build_classification_plots(
     with open(test_stats_path, "r") as f:
         test_stats = json.load(f)
     label_stats = test_stats["label"]
-
-    # --- Load test ROC-AUC from training_statistics.json if provided ---
-    test_aucs: List[float] = []
-    if training_stats_path:
-        try:
-            with open(training_stats_path, "r") as f:
-                stats = json.load(f)
-            test_aucs = (
-                stats.get("test", {})
-                     .get("label", {})
-                     .get("roc_auc", [])
-            )
-        except Exception:
-            test_aucs = []
 
     # common sizing
     cell = 40
@@ -113,55 +99,6 @@ def build_classification_plots(
             config=common_cfg
         )
     })
-
-#    # 1) ROC-AUC (Test data)
-#    if test_aucs:
-#        evals = list(range(1, len(test_aucs) + 1))
-#
-#        fig_auc = go.Figure()
-#
-#        # ROC-AUC curve
-#        fig_auc.add_trace(go.Scatter(
-#            x=evals,
-#            y=test_aucs,
-#            mode="lines+markers",
-#            name="ROC-AUC",
-#            line=dict(color="royalblue", width=3),
-#            marker=dict(size=8, color="royalblue"),
-#        ))
-#
-#        # Add random baseline
-#        fig_auc.add_trace(go.Scatter(
-#            x=[evals[0], evals[-1]],
-#            y=[0.5, 0.5],
-#            mode="lines",
-#            name="Chance level (0.5)",
-#            line=dict(color="gray", dash="dash"),
-#        ))
-#
-#        fig_auc.update_layout(
-#            title="<b>ROC-AUC Over Evaluation</b>",
-#            xaxis_title="<b>Evaluation</b>",
-#            yaxis_title="<b>True Positive Rate</b>",
-#            font=dict(size=14),
-#            legend=dict(x=0.01, y=0.99, bgcolor='rgba(255,255,255,0.8)', bordercolor='gray'),
-#            plot_bgcolor="white",
-#            width=side_px,
-#            height=side_px,
-#            margin=dict(t=80, l=80, r=80, b=80),
-#            xaxis=dict(showgrid=True, zeroline=False),
-#            yaxis=dict(showgrid=True, zeroline=False, range=[0, 1.05])
-#        )
-#
-#        plots.append({
-#            "title": "ROC-AUC",
-#            "html": pio.to_html(
-#                fig_auc,
-#                full_html=False,
-#                include_plotlyjs=False,
-#                config=common_cfg
-#            )
-#        })
 
     # 2) Classification Report Heatmap
     pcs = label_stats.get("per_class_stats", {})
