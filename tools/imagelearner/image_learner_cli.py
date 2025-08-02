@@ -2,16 +2,14 @@ import argparse
 import json
 import logging
 import os
+from pathlib import Path
 import shutil
 import sys
 import tempfile
-import zipfile
-from pathlib import Path
 from typing import Any, Dict, Optional, Protocol, Tuple
-
-import pandas as pd
-import pandas.api.types as ptypes
+import zipfile
 import yaml
+
 from constants import (
     IMAGE_PATH_COLUMN_NAME,
     LABEL_COLUMN_NAME,
@@ -30,6 +28,9 @@ from ludwig.globals import (
 )
 from ludwig.utils.data_utils import get_split_path
 from ludwig.visualize import get_visualizations_registry
+import pandas as pd
+import pandas.api.types as ptypes
+from plotly_plots import build_classification_plots
 from sklearn.model_selection import train_test_split
 from utils import (
     build_tabbed_html,
@@ -92,9 +93,6 @@ def format_config_table_html(
                         "<span style='font-size: 0.85em;'>"
                         "Based on model architecture and training setup "
                         "(e.g., fine-tuning).<br>"
-                        "See <a href='https://ludwig.ai/latest/configuration/trainer/"
-                        "#trainer-parameters' target='_blank'>"
-                        "Ludwig Trainer Parameters</a> for details."
                         "</span>"
                     )
                 else:
@@ -153,23 +151,27 @@ def format_config_table_html(
             f"</tr>"
         )
 
-    return (
-        "<h2 style='text-align: center;'>Training Setup</h2>"
-        "<div style='display: flex; justify-content: center;'>"
-        "<table style='border-collapse: collapse; width: 60%; table-layout: auto;'>"
-        "<thead><tr>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: left;'>"
-        "Parameter</th>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: center;'>"
-        "Value</th>"
-        "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div><br>"
-        "<p style='text-align: center; font-size: 0.9em;'>"
-        "Model trained using Ludwig.<br>"
-        "If want to learn more about Ludwig default settings,"
-        "please check their <a href='https://ludwig.ai' target='_blank'>"
-        "website(ludwig.ai)</a>."
-        "</p><hr>"
-    )
+    html = f"""
+        <h2 style="text-align: center;">Model and Training Summary</h2>
+        <div style="display: flex; justify-content: center;">
+          <table style="border-collapse: collapse; width: 100%; table-layout: fixed;">
+            <thead><tr>
+              <th style="padding: 10px; border: 1px solid #ccc; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Parameter</th>
+              <th style="padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Value</th>
+            </tr></thead>
+            <tbody>
+              {''.join(rows)}
+            </tbody>
+          </table>
+        </div><br>
+        <p style="text-align: center; font-size: 0.9em;">
+          Model trained using <a href="https://ludwig.ai/" target="_blank" rel="noopener noreferrer">Ludwig</a>.
+          <a href="https://ludwig.ai/latest/configuration/" target="_blank" rel="noopener noreferrer">
+            Ludwig documentation provides detailed information about default model and training parameters
+          </a>
+        </p><hr>
+        """
+    return html
 
 
 def detect_output_type(test_stats):
@@ -290,6 +292,9 @@ def generate_table_row(cells, styles):
     )
 
 
+# -----------------------------------------
+# 2) MODEL PERFORMANCE (Train/Val/Test) TABLE
+# -----------------------------------------
 def format_stats_table_html(train_stats: dict, test_stats: dict) -> str:
     """Formats a combined HTML table for training, validation, and test metrics."""
     output_type = detect_output_type(test_stats)
@@ -316,28 +321,26 @@ def format_stats_table_html(train_stats: dict, test_stats: dict) -> str:
     html = (
         "<h2 style='text-align: center;'>Model Performance Summary</h2>"
         "<div style='display: flex; justify-content: center;'>"
-        "<table style='border-collapse: collapse; table-layout: auto;'>"
+        "<table class='performance-summary' style='border-collapse: collapse;'>"
         "<thead><tr>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: left; "
-        "white-space: nowrap;'>Metric</th>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; "
-        "white-space: nowrap;'>Train</th>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; "
-        "white-space: nowrap;'>Validation</th>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; "
-        "white-space: nowrap;'>Test</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: left; white-space: nowrap;'>Metric</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Train</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Validation</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Test</th>"
         "</tr></thead><tbody>"
     )
     for row in rows:
         html += generate_table_row(
             row,
-            "padding: 10px; border: 1px solid #ccc; text-align: center; "
-            "white-space: nowrap;",
+            "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;"
         )
     html += "</tbody></table></div><br>"
     return html
 
 
+# -------------------------------------------
+# 3) TRAIN/VALIDATION PERFORMANCE SUMMARY TABLE
+# -------------------------------------------
 def format_train_val_stats_table_html(train_stats: dict, test_stats: dict) -> str:
     """Formats an HTML table for training and validation metrics."""
     output_type = detect_output_type(test_stats)
@@ -360,26 +363,25 @@ def format_train_val_stats_table_html(train_stats: dict, test_stats: dict) -> st
     html = (
         "<h2 style='text-align: center;'>Train/Validation Performance Summary</h2>"
         "<div style='display: flex; justify-content: center;'>"
-        "<table style='border-collapse: collapse; table-layout: auto;'>"
+        "<table class='performance-summary' style='border-collapse: collapse;'>"
         "<thead><tr>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: left; "
-        "white-space: nowrap;'>Metric</th>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; "
-        "white-space: nowrap;'>Train</th>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; "
-        "white-space: nowrap;'>Validation</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: left; white-space: nowrap;'>Metric</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Train</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Validation</th>"
         "</tr></thead><tbody>"
     )
     for row in rows:
         html += generate_table_row(
             row,
-            "padding: 10px; border: 1px solid #ccc; text-align: center; "
-            "white-space: nowrap;",
+            "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;"
         )
     html += "</tbody></table></div><br>"
     return html
 
 
+# -----------------------------------------
+# 4) TEST‐ONLY PERFORMANCE SUMMARY TABLE
+# -----------------------------------------
 def format_test_merged_stats_table_html(
     test_metrics: Dict[str, Optional[float]],
 ) -> str:
@@ -397,19 +399,16 @@ def format_test_merged_stats_table_html(
     html = (
         "<h2 style='text-align: center;'>Test Performance Summary</h2>"
         "<div style='display: flex; justify-content: center;'>"
-        "<table style='border-collapse: collapse; table-layout: auto;'>"
+        "<table class='performance-summary' style='border-collapse: collapse;'>"
         "<thead><tr>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: left; "
-        "white-space: nowrap;'>Metric</th>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; "
-        "white-space: nowrap;'>Test</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: left; white-space: nowrap;'>Metric</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Test</th>"
         "</tr></thead><tbody>"
     )
     for row in rows:
         html += generate_table_row(
             row,
-            "padding: 10px; border: 1px solid #ccc; text-align: center; "
-            "white-space: nowrap;",
+            "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;"
         )
     html += "</tbody></table></div><br>"
     return html
@@ -584,6 +583,8 @@ class LudwigDirectBackend:
             )
             output_type = "binary" if num_unique_labels == 2 else "category"
             output_feat = {"name": LABEL_COLUMN_NAME, "type": output_type}
+            if output_type == "binary" and config_params.get("threshold") is not None:
+                output_feat["threshold"] = float(config_params["threshold"])
             val_metric = None
 
         conf: Dict[str, Any] = {
@@ -885,92 +886,86 @@ class LudwigDirectBackend:
             if not dir_path.exists():
                 return f"<h2>{title}</h2><p><em>Directory not found.</em></p>"
 
+            # collect every PNG
             imgs = list(dir_path.glob("*.png"))
+
+            # --- EXCLUDE Ludwig's base confusion matrix and any top-N confusion_matrix files ---
+            imgs = [
+                img for img in imgs
+                if not (
+                    img.name == "confusion_matrix.png" or
+                    img.name.startswith("confusion_matrix__label_top") or
+                    img.name == "roc_curves.png"
+                )
+            ]
+
             if not imgs:
                 return f"<h2>{title}</h2><p><em>No plots found.</em></p>"
 
-            if title == "Test Visualizations" and output_type == "binary":
+            if output_type == "binary":
                 order = [
-                    "confusion_matrix__label_top2.png",
                     "roc_curves_from_prediction_statistics.png",
                     "compare_performance_label.png",
                     "confusion_matrix_entropy__label_top2.png",
+                    # ...you can tweak ordering as needed
                 ]
                 img_names = {img.name: img for img in imgs}
-                ordered_imgs = [
-                    img_names[fname] for fname in order if fname in img_names
-                ]
-                remaining = sorted(
-                    [
-                        img
-                        for img in imgs
-                        if img.name not in order and img.name != "roc_curves.png"
-                    ]
-                )
-                imgs = ordered_imgs + remaining
+                ordered = [img_names[n] for n in order if n in img_names]
+                others = sorted(img for img in imgs if img.name not in order)
+                imgs = ordered + others
 
-            elif title == "Test Visualizations" and output_type == "category":
+            elif output_type == "category":
                 unwanted = {
                     "compare_classifiers_multiclass_multimetric__label_best10.png",
                     "compare_classifiers_multiclass_multimetric__label_top10.png",
                     "compare_classifiers_multiclass_multimetric__label_worst10.png",
                 }
                 display_order = [
-                    "confusion_matrix__label_top10.png",
                     "roc_curves.png",
                     "compare_performance_label.png",
                     "compare_classifiers_performance_from_prob.png",
-                    "compare_classifiers_multiclass_multimetric__label_sorted.png",
                     "confusion_matrix_entropy__label_top10.png",
                 ]
-                img_names = {img.name: img for img in imgs if img.name not in unwanted}
-                ordered_imgs = [
-                    img_names[fname] for fname in display_order if fname in img_names
-                ]
-                remaining = sorted(
-                    [img for img in img_names.values() if img.name not in display_order]
-                )
-                imgs = ordered_imgs + remaining
+                # filter and order
+                valid_imgs = [img for img in imgs if img.name not in unwanted]
+                img_map = {img.name: img for img in valid_imgs}
+                ordered = [img_map[n] for n in display_order if n in img_map]
+                others = sorted(img for img in valid_imgs if img.name not in display_order)
+                imgs = ordered + others
 
             else:
-                if output_type == "category":
-                    unwanted = {
-                        "compare_classifiers_multiclass_multimetric__label_best10.png",
-                        "compare_classifiers_multiclass_multimetric__label_top10.png",
-                        "compare_classifiers_multiclass_multimetric__label_worst10.png",
-                    }
-                    imgs = sorted([img for img in imgs if img.name not in unwanted])
-                else:
-                    imgs = sorted(imgs)
+                # regression: just sort whatever's left
+                imgs = sorted(imgs)
 
-            section_html = f"<h2 style='text-align: center;'>{title}</h2><div>"
+            # render each remaining PNG
+            html = ""
             for img in imgs:
                 b64 = encode_image_to_base64(str(img))
-                section_html += (
+                img_title = img.stem.replace("_", " ").title()
+                html += (
+                    f"<h2 style='text-align: center;'>{img_title}</h2>"
                     f'<div class="plot" style="margin-bottom:20px;text-align:center;">'
-                    f"<h3>{img.stem.replace('_', ' ').title()}</h3>"
                     f'<img src="data:image/png;base64,{b64}" '
                     f'style="max-width:90%;max-height:600px;border:1px solid #ddd;" />'
                     f"</div>"
                 )
-            section_html += "</div>"
-            return section_html
+            return html
 
         tab1_content = config_html + metrics_html
 
         tab2_content = train_val_metrics_html + render_img_section(
-            "Training & Validation Visualizations", train_viz_dir
+            "Training and Validation Visualizations", train_viz_dir
         )
 
         # --- Predictions vs Ground Truth table ---
+
         preds_section = ""
         parquet_path = exp_dir / PREDICTIONS_PARQUET_FILE_NAME
-        if parquet_path.exists():
+        if output_type == "regression" and parquet_path.exists():
             try:
                 # 1) load predictions from Parquet
                 df_preds = pd.read_parquet(parquet_path).reset_index(drop=True)
                 # assume the column containing your model's prediction is named "prediction"
-                # or contains that substring:
                 pred_col = next(
                     (c for c in df_preds.columns if "prediction" in c.lower()),
                     None,
@@ -981,32 +976,56 @@ class LudwigDirectBackend:
 
                 # 2) load ground truth for the test split from prepared CSV
                 df_all = pd.read_csv(config["label_column_data_path"])
-                df_gt = df_all[df_all[SPLIT_COLUMN_NAME] == 2][
-                    LABEL_COLUMN_NAME
-                ].reset_index(drop=True)
+                df_gt  = df_all[df_all[SPLIT_COLUMN_NAME] == 2][LABEL_COLUMN_NAME].reset_index(drop=True)
 
-                # 3) concatenate side‐by‐side
+                # 3) concatenate side-by-side
                 df_table = pd.concat([df_gt, df_pred], axis=1)
                 df_table.columns = [LABEL_COLUMN_NAME, "prediction"]
 
                 # 4) render as HTML
                 preds_html = df_table.to_html(index=False, classes="predictions-table")
                 preds_section = (
-                    "<h2 style='text-align: center;'>Predictions vs. Ground Truth</h2>"
-                    "<div style='overflow-x:auto; margin-bottom:20px;'>"
+                    "<h2 style='text-align: center;'>Ground Truth vs. Predictions</h2>"
+                    "<div style='overflow-y:auto; max-height:400px; overflow-x:auto; margin-bottom:20px;'>"
                     + preds_html
                     + "</div>"
                 )
             except Exception as e:
                 logger.warning(f"Could not build Predictions vs GT table: {e}")
-        # Test tab = Metrics + Preds table + Visualizations
 
-        tab3_content = (
-            test_metrics_html
-            + preds_section
-            + render_img_section("Test Visualizations", test_viz_dir, output_type)
-        )
+        tab3_content = test_metrics_html + preds_section
 
+        if output_type in ("binary", "category"):
+            training_stats_path = exp_dir / "training_statistics.json"
+            interactive_plots = build_classification_plots(
+                str(test_stats_path),
+                str(training_stats_path),
+            )
+            for plot in interactive_plots:
+                # 2) inject the static "roc_curves_from_prediction_statistics.png"
+                if plot["title"] == "ROC-AUC":
+                    static_img = test_viz_dir / "roc_curves_from_prediction_statistics.png"
+                    if static_img.exists():
+                        b64 = encode_image_to_base64(str(static_img))
+                        tab3_content += (
+                            "<h2 style='text-align: center;'>"
+                            "Roc Curves From Prediction Statistics"
+                            "</h2>"
+                            f'<div class="plot" style="margin-bottom:20px;text-align:center;">'
+                            f'<img src="data:image/png;base64,{b64}" '
+                            f'style="max-width:90%;max-height:600px;border:1px solid #ddd;" />'
+                            "</div>"
+                        )
+                # always render the plotly panels exactly as before
+                tab3_content += (
+                    f"<h2 style='text-align: center;'>{plot['title']}</h2>"
+                    + plot["html"]
+                )
+            tab3_content += render_img_section(
+                "Test Visualizations",
+                test_viz_dir,
+                output_type
+            )
         # assemble the tabs and help modal
         tabbed_html = build_tabbed_html(tab1_content, tab2_content, tab3_content)
         modal_html = get_metrics_help_modal()
@@ -1186,6 +1205,7 @@ class WorkflowOrchestrator:
                 "early_stop": self.args.early_stop,
                 "label_column_data_path": csv_path,
                 "augmentation": self.args.augmentation,
+                "threshold": self.args.threshold,
             }
             yaml_str = self.backend.prepare_config(backend_args, split_cfg)
 
@@ -1240,8 +1260,6 @@ def aug_parse(aug_string: str):
     aug_list = []
     for tok in aug_string.split(","):
         key = tok.strip()
-        if not key:
-            continue
         if key not in mapping:
             valid = ", ".join(mapping.keys())
             raise ValueError(f"Unknown augmentation '{key}'. Valid choices: {valid}")
@@ -1362,6 +1380,15 @@ def main():
             "random_blur, random_brightness, random_contrast. "
             "E.g. --augmentation random_horizontal_flip,random_rotate"
         ),
+    )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        help=(
+            "Decision threshold for binary classification (0.0–1.0)."
+            "Overrides default 0.5."
+        )
     )
 
     args = parser.parse_args()
