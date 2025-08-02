@@ -218,7 +218,7 @@
                         label="Test split proportion (only works if no split column in the metadata csv)"
                         value="0.2"
                         help="Fraction of data for testing (e.g., 0.2) train split + val split + test split should = 1."/>
-                <param name="threshold" type="float" optional="true" label="Decision Threshold (binary only)" help="Set the decision threshold for binary classification (0.0–1.0). Only applies when task is binary; default is 0.5." />
+                <param name="threshold" type="float" value="0.5" min="0.0" max="1.0" optional="true" label="Decision Threshold (binary only)" help="Set the decision threshold for binary classification (0.0–1.0). Only applies when task is binary; default is 0.5." />
             </when>
             <when value="false">
                 <!-- No additional parameters to show if the user selects 'No' -->

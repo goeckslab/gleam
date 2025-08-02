@@ -52,6 +52,7 @@ def format_config_table_html(
     config: dict,
     split_info: Optional[str] = None,
     training_progress: dict = None,
+    output_type: Optional[str] = None,
 ) -> str:
     display_keys = [
         "task_type",
@@ -63,69 +64,87 @@ def format_config_table_html(
         "learning_rate",
         "random_seed",
         "early_stop",
+        "threshold",
     ]
 
     rows = []
 
     for key in display_keys:
-        val = config.get(key, "N/A")
-        if key == "task_type":
-            val = val.title() if isinstance(val, str) else val
-        if key == "batch_size":
-            if val is not None:
-                val = int(val)
-            else:
-                if training_progress:
-                    val = "Auto-selected batch size by Ludwig:<br>"
-                    resolved_val = training_progress.get("batch_size")
-                    val += f"<span style='font-size: 0.85em;'>{resolved_val}</span><br>"
+        val = config.get(key, None)
+        if key == "threshold":
+            if output_type != "binary":
+                continue
+            val = val if val is not None else 0.5
+            val_str = f"{val:.2f}"
+            if val == 0.5:
+                val_str += " (default)"
+        else:
+            if key == "task_type":
+                val_str = val.title() if isinstance(val, str) else "N/A"
+            elif key == "batch_size":
+                if val is not None:
+                    val_str = int(val)
                 else:
-                    val = "auto"
-        if key == "learning_rate":
-            resolved_val = None
-            if val is None or val == "auto":
-                if training_progress:
-                    resolved_val = training_progress.get("learning_rate")
-                    val = (
-                        "Auto-selected learning rate by Ludwig:<br>"
-                        f"<span style='font-size: 0.85em;'>"
-                        f"{resolved_val if resolved_val else val}</span><br>"
-                        "<span style='font-size: 0.85em;'>"
-                        "Based on model architecture and training setup "
-                        "(e.g., fine-tuning).<br>"
-                        "</span>"
-                    )
+                    if training_progress:
+                        resolved_val = training_progress.get("batch_size")
+                        val_str = (
+                            "Auto-selected batch size by Ludwig:<br>"
+                            f"<span style='font-size: 0.85em;'>{resolved_val}</span><br>"
+                        )
+                    else:
+                        val_str = "auto"
+            elif key == "learning_rate":
+                if val is not None and val != "auto":
+                    val_str = f"{val:.6f}"
                 else:
-                    val = (
-                        "Auto-selected by Ludwig<br>"
-                        "<span style='font-size: 0.85em;'>"
-                        "Automatically tuned based on architecture and dataset.<br>"
-                        "See <a href='https://ludwig.ai/latest/configuration/trainer/"
-                        "#trainer-parameters' target='_blank'>"
-                        "Ludwig Trainer Parameters</a> for details."
-                        "</span>"
-                    )
+                    if training_progress:
+                        resolved_val = training_progress.get("learning_rate")
+                        val_str = (
+                            "Auto-selected learning rate by Ludwig:<br>"
+                            f"<span style='font-size: 0.85em;'>"
+                            f"{resolved_val if resolved_val else 'auto'}</span><br>"
+                            "<span style='font-size: 0.85em;'>"
+                            "Based on model architecture and training setup "
+                            "(e.g., fine-tuning).<br>"
+                            "</span>"
+                        )
+                    else:
+                        val_str = (
+                            "Auto-selected by Ludwig<br>"
+                            "<span style='font-size: 0.85em;'>"
+                            "Automatically tuned based on architecture and dataset.<br>"
+                            "See <a href='https://ludwig.ai/latest/configuration/trainer/"
+                            "#trainer-parameters' target='_blank'>"
+                            "Ludwig Trainer Parameters</a> for details."
+                            "</span>"
+                        )
+            elif key == "epochs":
+                if val is None:
+                    val_str = "N/A"
+                else:
+                    if (
+                        training_progress
+                        and "epoch" in training_progress
+                        and val > training_progress["epoch"]
+                    ):
+                        val_str = (
+                            f"Because of early stopping: the training "
+                            f"stopped at epoch {training_progress['epoch']}"
+                        )
+                    else:
+                        val_str = val
             else:
-                val = f"{val:.6f}"
-        if key == "epochs":
-            if (
-                training_progress
-                and "epoch" in training_progress
-                and val > training_progress["epoch"]
-            ):
-                val = (
-                    f"Because of early stopping: the training "
-                    f"stopped at epoch {training_progress['epoch']}"
-                )
+                val_str = val if val is not None else "N/A"
 
-        if val is None:
-            continue
+            if val_str == "N/A" and key not in ["task_type"]:  # Skip if N/A for non-essential
+                continue
+
         rows.append(
             f"<tr>"
             f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: left;'>"
             f"{key.replace('_', ' ').title()}</td>"
             f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: center;'>"
-            f"{val}</td>"
+            f"{val_str}</td>"
             f"</tr>"
         )
 
@@ -134,21 +153,14 @@ def format_config_table_html(
         types = [str(a.get("type", "")) for a in aug_cfg]
         aug_val = ", ".join(types)
         rows.append(
-            "<tr>"
-            "<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: left;'>Augmentation</td>"
-            "<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: center;'>"
-            f"{aug_val}</td>"
-            "</tr>"
+            f"<tr><td style='padding: 6px 12px; border: 1px solid #ccc; text-align: left;'>Augmentation</td>"
+            f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: center;'>{aug_val}</td></tr>"
         )
 
     if split_info:
         rows.append(
-            f"<tr>"
-            f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: left;'>"
-            f"Data Split</td>"
-            f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: center;'>"
-            f"{split_info}</td>"
-            f"</tr>"
+            f"<tr><td style='padding: 6px 12px; border: 1px solid #ccc; text-align: left;'>Data Split</td>"
+            f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: center;'>{split_info}</td></tr>"
         )
 
     html = f"""
