@@ -46,6 +46,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ImageLearner")
 
+# --- CAFormer patching integration ---
+try:
+    from caformer_setup.caformer_stacked_cnn import patch_ludwig_stacked_cnn
+    patch_ludwig_stacked_cnn()
+    logger.info("CAFormer patching applied for Ludwig stacked_cnn encoder.")
+except ImportError as e:
+    logger.warning(f"CAFormer stacked CNN not available: {e}")
+
 
 def format_config_table_html(
     config: dict,
@@ -415,10 +423,82 @@ def format_test_merged_stats_table_html(
     return html
 
 
+def create_stratified_split(
+    df: pd.DataFrame,
+    split_probabilities: list,
+    label_column: str,
+    random_state: int = 42,
+) -> pd.DataFrame:
+    """Create stratified train/validation/test split and add split column to DataFrame."""
+    out = df.copy()
+    
+    # add split column
+    out[SPLIT_COLUMN_NAME] = 0
+    
+    # get unique labels for stratification
+    labels = out[label_column]
+    
+    # calculate split sizes
+    train_prob, val_prob, test_prob = split_probabilities
+    
+    try:
+        # first split: separate test set (stratified)
+        if test_prob > 0:
+            train_val_indices, test_indices = train_test_split(
+                range(len(out)),
+                test_size=test_prob,
+                random_state=random_state,
+                stratify=labels
+            )
+            out.loc[test_indices, SPLIT_COLUMN_NAME] = 2
+        else:
+            train_val_indices = list(range(len(out)))
+        
+        # second split: separate validation from remaining train data (stratified)
+        if val_prob > 0 and len(train_val_indices) > 1:
+            val_size_adjusted = val_prob / (train_prob + val_prob)
+            train_val_labels = labels.iloc[train_val_indices]
+            
+            train_indices, val_indices = train_test_split(
+                train_val_indices,
+                test_size=val_size_adjusted,
+                random_state=random_state,
+                stratify=train_val_labels
+            )
+            out.loc[val_indices, SPLIT_COLUMN_NAME] = 1
+            
+    except ValueError as e:
+        logger.warning(f"Stratified split failed ({e}); falling back to random split.")
+        # fall back to random split if stratification fails
+        indices = list(range(len(out)))
+        
+        if test_prob > 0:
+            train_val_indices, test_indices = train_test_split(
+                indices,
+                test_size=test_prob,
+                random_state=random_state
+            )
+            out.loc[test_indices, SPLIT_COLUMN_NAME] = 2
+        else:
+            train_val_indices = indices
+            
+        if val_prob > 0 and len(train_val_indices) > 1:
+            val_size_adjusted = val_prob / (train_prob + val_prob)
+            train_indices, val_indices = train_test_split(
+                train_val_indices,
+                test_size=val_size_adjusted,
+                random_state=random_state
+            )
+            out.loc[val_indices, SPLIT_COLUMN_NAME] = 1
+    
+    out[SPLIT_COLUMN_NAME] = out[SPLIT_COLUMN_NAME].astype(int)
+    return out
+
+
 def split_data_0_2(
     df: pd.DataFrame,
     split_column: str,
-    validation_size: float = 0.15,
+    validation_size: float = 0.1,
     random_state: int = 42,
     label_column: Optional[str] = None,
 ) -> pd.DataFrame:
@@ -434,11 +514,12 @@ def split_data_0_2(
     stratify_arr = None
     if label_column and label_column in out.columns:
         label_counts = out.loc[idx_train, label_column].value_counts()
-        if label_counts.size > 1 and (label_counts.min() * validation_size) >= 1:
+        if label_counts.size > 1:
             stratify_arr = out.loc[idx_train, label_column]
+            logger.info("Using stratified split for validation set creation.")
         else:
             logger.warning(
-                "Cannot stratify (too few labels); splitting without stratify."
+                "Cannot stratify (only one label class); splitting without stratify."
             )
     if validation_size <= 0:
         logger.info("validation_size <= 0; keeping all as train.")
@@ -524,7 +605,22 @@ class LudwigDirectBackend:
         learning_rate = config_params.get("learning_rate")
         learning_rate = "auto" if learning_rate is None else float(learning_rate)
         raw_encoder = MODEL_ENCODER_TEMPLATES.get(model_name, model_name)
-        if isinstance(raw_encoder, dict):
+
+        # --- CAFormer detection and config logic ---
+        if isinstance(raw_encoder, dict) and "custom_model" in raw_encoder:
+            custom_model = raw_encoder["custom_model"]
+            logger.info(f"DETECTED CAFormer model: {custom_model}")
+            encoder_config = {
+                "type": "stacked_cnn",
+                "height": 224,
+                "width": 224,
+                "num_channels": 3,
+                "output_size": 128,
+                "use_pretrained": use_pretrained,
+                "trainable": trainable,
+                "custom_model": custom_model,
+            }
+        elif isinstance(raw_encoder, dict):
             encoder_config = {
                 **raw_encoder,
                 "use_pretrained": use_pretrained,
@@ -1089,13 +1185,20 @@ class WorkflowOrchestrator:
         if SPLIT_COLUMN_NAME in df.columns:
             df, split_config, split_info = self._process_fixed_split(df)
         else:
-            logger.info("No split column; using random split")
+            logger.info("No split column; using stratified split")
+            # Create stratified split using the new function
+            df = create_stratified_split(
+                df,
+                self.args.split_probabilities,
+                LABEL_COLUMN_NAME,
+                random_state=self.args.random_seed
+            )
             split_config = {
-                "type": "random",
-                "probabilities": self.args.split_probabilities,
+                "type": "fixed",
+                "column": SPLIT_COLUMN_NAME,
             }
             split_info = (
-                f"No split column in CSV. Used random split: "
+                f"No split column in CSV. Used stratified split: "
                 f"{[int(p * 100) for p in self.args.split_probabilities]}% "
                 f"for train/val/test."
             )
@@ -1319,7 +1422,7 @@ def main():
     parser.add_argument(
         "--validation-size",
         type=float,
-        default=0.15,
+        default=0.1,
         help="Fraction for validation (0.0–1.0)",
     )
     parser.add_argument(
