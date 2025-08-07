@@ -150,7 +150,7 @@
             </param>
             <when value="true">
                 <param name="fine_tune" type="select" label="Fine tune the encoder?"
-                    help="Whether to fine tune the encoder(combiner and decoder will be fine-tued anyway)" >
+                    help="Whether to fine tune the encoder(combiner and decoder will be fine-tuned anyway)" >
                     <option value="false" >No</option>
                     <option value="true" selected="true">Yes</option>
                 </param>
