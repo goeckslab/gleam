@@ -1,7 +1,7 @@
 <tool id="image_learner" name="Image Learner for Classification" version="0.1.0" profile="22.05">
     <description>trains and evaluates a image classification model</description>
     <requirements>
-        <container type="docker">quay.io/your-org/galaxy-ludwig-gpu:0.10.1-plotly</container>
+        <container type="docker">quay.io/your-org/galaxy-ludwig-gpu:latest</container>
     </requirements>
     <required_files>
         <include path="utils.py" />
