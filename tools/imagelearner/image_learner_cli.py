@@ -8,7 +8,6 @@ import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Protocol, Tuple
-
 import numpy as np
 import pandas as pd
 import pandas.api.types as ptypes
@@ -31,6 +30,7 @@ from ludwig.globals import (
 )
 from ludwig.utils.data_utils import get_split_path
 from ludwig.visualize import get_visualizations_registry
+from plotly_plots import build_classification_plots
 from sklearn.model_selection import train_test_split
 from utils import (
     build_tabbed_html,
@@ -45,12 +45,11 @@ logging.basicConfig(
     format='%(asctime)s %(levelname)s %(name)s: %(message)s',
 )
 logger = logging.getLogger("ImageLearner")
-
-
 def format_config_table_html(
     config: dict,
     split_info: Optional[str] = None,
     training_progress: dict = None,
+    output_type: Optional[str] = None,
 ) -> str:
     display_keys = [
         "task_type",
@@ -62,67 +61,83 @@ def format_config_table_html(
         "learning_rate",
         "random_seed",
         "early_stop",
+        "threshold",
     ]
     rows = []
     for key in display_keys:
-        val = config.get(key, "N/A")
-        if key == "task_type":
-            val = val.title() if isinstance(val, str) else val
-        if key == "batch_size":
-            if val is not None:
-                val = int(val)
-            else:
-                if training_progress:
-                    val = "Auto-selected batch size by Ludwig:<br>"
-                    resolved_val = training_progress.get("batch_size")
-                    val += f"<span style='font-size: 0.85em;'>{resolved_val}</span><br>"
+        val = config.get(key, None)
+        if key == "threshold":
+            if output_type != "binary":
+                continue
+            val = val if val is not None else 0.5
+            val_str = f"{val:.2f}"
+            if val == 0.5:
+                val_str += " (default)"
+        else:
+            if key == "task_type":
+                val_str = val.title() if isinstance(val, str) else "N/A"
+            elif key == "batch_size":
+                if val is not None:
+                    val_str = int(val)
                 else:
-                    val = "auto"
-        if key == "learning_rate":
-            resolved_val = None
-            if val is None or val == "auto":
-                if training_progress:
-                    resolved_val = training_progress.get("learning_rate")
-                    val = (
-                        "Auto-selected learning rate by Ludwig:<br>"
-                        f"<span style='font-size: 0.85em;'>"
-                        f"{resolved_val if resolved_val else val}</span><br>"
-                        "<span style='font-size: 0.85em;'>"
-                        "Based on model architecture and training setup "
-                        "(e.g., fine-tuning).<br>"
-                        "See <a href='https://ludwig.ai/latest/configuration/trainer/#trainer-parameters' target='_blank'>"
-                        "Ludwig Trainer Parameters</a> for details."
-                        "</span>"
-                    )
+                    if training_progress:
+                        resolved_val = training_progress.get("batch_size")
+                        val_str = (
+                            "Auto-selected batch size by Ludwig:<br>"
+                            f"<span style='font-size: 0.85em;'>{resolved_val}</span><br>"
+                        )
+                    else:
+                        val_str = "auto"
+            elif key == "learning_rate":
+                if val is not None and val != "auto":
+                    val_str = f"{val:.6f}"
                 else:
-                    val = (
-                        "Auto-selected by Ludwig<br>"
-                        "<span style='font-size: 0.85em;'>"
-                        "Automatically tuned based on architecture and dataset.<br>"
-                        "See <a href='https://ludwig.ai/latest/configuration/trainer/#trainer-parameters' target='_blank'>"
-                        "Ludwig Trainer Parameters</a> for details."
-                        "</span>"
-                    )
+                    if training_progress:
+                        resolved_val = training_progress.get("learning_rate")
+                        val_str = (
+                            "Auto-selected learning rate by Ludwig:<br>"
+                            f"<span style='font-size: 0.85em;'>"
+                            f"{resolved_val if resolved_val else 'auto'}</span><br>"
+                            "<span style='font-size: 0.85em;'>"
+                            "Based on model architecture and training setup "
+                            "(e.g., fine-tuning).<br>"
+                            "</span>"
+                        )
+                    else:
+                        val_str = (
+                            "Auto-selected by Ludwig<br>"
+                            "<span style='font-size: 0.85em;'>"
+                            "Automatically tuned based on architecture and dataset.<br>"
+                            "See <a href='https://ludwig.ai/latest/configuration/trainer/"
+                            "#trainer-parameters' target='_blank'>"
+                            "Ludwig Trainer Parameters</a> for details."
+                            "</span>"
+                        )
+            elif key == "epochs":
+                if val is None:
+                    val_str = "N/A"
+                else:
+                    if (
+                        training_progress
+                        and "epoch" in training_progress
+                        and val > training_progress["epoch"]
+                    ):
+                        val_str = (
+                            f"Because of early stopping: the training "
+                            f"stopped at epoch {training_progress['epoch']}"
+                        )
+                    else:
+                        val_str = val
             else:
-                val = f"{val:.6f}"
-        if key == "epochs":
-            if (
-                training_progress
-                and "epoch" in training_progress
-                and val > training_progress["epoch"]
-            ):
-                val = (
-                    f"Because of early stopping: the training "
-                    f"stopped at epoch {training_progress['epoch']}"
-                )
-        if val is None:
-            continue
+                val_str = val if val is not None else "N/A"
+            if val_str == "N/A" and key not in ["task_type"]: # Skip if N/A for non-essential
+                continue
         rows.append(
             f"<tr>"
             f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: left;'>"
             f"{key.replace('_', ' ').title()}</td>"
             f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: center;'>"
-            f"{val}</td>"
+            f"{val_str}</td>"
             f"</tr>"
         )
     aug_cfg = config.get("augmentation")
@@ -130,40 +145,35 @@ def format_config_table_html(
         types = [str(a.get("type", "")) for a in aug_cfg]
         aug_val = ", ".join(types)
         rows.append(
-            "<tr>"
-            "<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: left;'>Augmentation</td>"
-            "<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: center;'>"
-            f"{aug_val}</td>"
-            "</tr>"
+            f"<tr><td style='padding: 6px 12px; border: 1px solid #ccc; text-align: left;'>Augmentation</td>"
+            f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: center;'>{aug_val}</td></tr>"
         )
     if split_info:
         rows.append(
-            f"<tr>"
-            f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: left;'>"
-            f"Data Split</td>"
-            f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: center;'>"
-            f"{split_info}</td>"
-            f"</tr>"
+            f"<tr><td style='padding: 6px 12px; border: 1px solid #ccc; text-align: left;'>Data Split</td>"
+            f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: center;'>{split_info}</td></tr>"
         )
-    return (
-        "<h2 style='text-align: center;'>Training Setup</h2>"
-        "<div style='display: flex; justify-content: center;'>"
-        "<table style='border-collapse: collapse; width: 60%; table-layout: auto;'>"
-        "<thead><tr>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: left;'>"
-        "Parameter</th>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: center;'>"
-        "Value</th>"
-        "</tr></thead><tbody>" + "".join(rows) + "</tbody></table></div><br>"
-        "<p style='text-align: center; font-size: 0.85em;'>"
-        "Model trained using Ludwig.<br>"
-        "If want to learn more about Ludwig default settings,"
-        "please check their <a href='https://ludwig.ai' target='_blank'>"
-        "website(ludwig.ai)</a>."
-        "</p><hr>"
-    )
-
-
+    html = f"""
+        <h2 style="text-align: center;">Model and Training Summary</h2>
+        <div style="display: flex; justify-content: center;">
+          <table style="border-collapse: collapse; width: 100%; table-layout: fixed;">
+            <thead><tr>
+              <th style="padding: 10px; border: 1px solid #ccc; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Parameter</th>
+              <th style="padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Value</th>
+            </tr></thead>
+            <tbody>
+              {''.join(rows)}
+            </tbody>
+          </table>
+        </div><br>
+        <p style="text-align: center; font-size: 0.9em;">
+          Model trained using <a href="https://ludwig.ai/" target="_blank" rel="noopener noreferrer">Ludwig</a>.
+          <a href="https://ludwig.ai/latest/configuration/" target="_blank" rel="noopener noreferrer">
+            Ludwig documentation provides detailed information about default model and training parameters
+          </a>
+        </p><hr>
+        """
+    return html
 def detect_output_type(test_stats):
     """Detects if the output type is 'binary' or 'category' based on test statistics."""
     label_stats = test_stats.get("label", {})
@@ -173,8 +183,6 @@ def detect_output_type(test_stats):
     if len(per_class) == 2:
         return "binary"
     return "category"
-
-
 def extract_metrics_from_json(
     train_stats: dict,
     test_stats: dict,
@@ -182,7 +190,6 @@ def extract_metrics_from_json(
 ) -> dict:
     """Extracts relevant metrics from training and test statistics based on the output type."""
     metrics = {"training": {}, "validation": {}, "test": {}}
-
     def get_last_value(stats, key):
         val = stats.get(key)
         if isinstance(val, list) and val:
@@ -190,7 +197,6 @@ def extract_metrics_from_json(
         elif isinstance(val, (int, float)):
             return val
         return None
-
     for split in ["training", "validation"]:
         split_stats = train_stats.get(split, {})
         if not split_stats:
@@ -264,8 +270,6 @@ def extract_metrics_from_json(
             test_metrics["loss"] = combined_stats["loss"]
         metrics["test"] = test_metrics
     return metrics
-
-
 def generate_table_row(cells, styles):
     """Helper function to generate an HTML table row."""
     return (
@@ -273,8 +277,9 @@ def generate_table_row(cells, styles):
         + "".join(f"<td style='{styles}'>{cell}</td>" for cell in cells)
         + "</tr>"
     )
-
-
+# -----------------------------------------
+# 2) MODEL PERFORMANCE (Train/Val/Test) TABLE
+# -----------------------------------------
 def format_stats_table_html(train_stats: dict, test_stats: dict) -> str:
     """Formats a combined HTML table for training, validation, and test metrics."""
     output_type = detect_output_type(test_stats)
@@ -299,28 +304,24 @@ def format_stats_table_html(train_stats: dict, test_stats: dict) -> str:
     html = (
         "<h2 style='text-align: center;'>Model Performance Summary</h2>"
         "<div style='display: flex; justify-content: center;'>"
-        "<table style='border-collapse: collapse; table-layout: auto;'>"
+        "<table class='performance-summary' style='border-collapse: collapse;'>"
         "<thead><tr>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: left; "
-        "white-space: nowrap;'>Metric</th>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; "
-        "white-space: nowrap;'>Train</th>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; "
-        "white-space: nowrap;'>Validation</th>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; "
-        "white-space: nowrap;'>Test</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: left; white-space: nowrap;'>Metric</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Train</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Validation</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Test</th>"
         "</tr></thead><tbody>"
     )
     for row in rows:
         html += generate_table_row(
             row,
-            "padding: 10px; border: 1px solid #ccc; text-align: center; "
-            "white-space: nowrap;",
+            "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;"
         )
     html += "</tbody></table></div><br>"
     return html
-
-
+# -------------------------------------------
+# 3) TRAIN/VALIDATION PERFORMANCE SUMMARY TABLE
+# -------------------------------------------
 def format_train_val_stats_table_html(train_stats: dict, test_stats: dict) -> str:
     """Formats an HTML table for training and validation metrics."""
     output_type = detect_output_type(test_stats)
@@ -341,26 +342,23 @@ def format_train_val_stats_table_html(train_stats: dict, test_stats: dict) -> st
     html = (
         "<h2 style='text-align: center;'>Train/Validation Performance Summary</h2>"
         "<div style='display: flex; justify-content: center;'>"
-        "<table style='border-collapse: collapse; table-layout: auto;'>"
+        "<table class='performance-summary' style='border-collapse: collapse;'>"
         "<thead><tr>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: left; "
-        "white-space: nowrap;'>Metric</th>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; "
-        "white-space: nowrap;'>Train</th>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; "
-        "white-space: nowrap;'>Validation</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: left; white-space: nowrap;'>Metric</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Train</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Validation</th>"
         "</tr></thead><tbody>"
     )
     for row in rows:
         html += generate_table_row(
             row,
-            "padding: 10px; border: 1px solid #ccc; text-align: center; "
-            "white-space: nowrap;",
+            "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;"
         )
     html += "</tbody></table></div><br>"
     return html
-
-
+# -----------------------------------------
+# 4) TEST‐ONLY PERFORMANCE SUMMARY TABLE
+# -----------------------------------------
 def format_test_merged_stats_table_html(
     test_metrics: Dict[str, Optional[float]],
 ) -> str:
@@ -376,24 +374,19 @@ def format_test_merged_stats_table_html(
     html = (
         "<h2 style='text-align: center;'>Test Performance Summary</h2>"
         "<div style='display: flex; justify-content: center;'>"
-        "<table style='border-collapse: collapse; table-layout: auto;'>"
+        "<table class='performance-summary' style='border-collapse: collapse;'>"
         "<thead><tr>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: left; "
-        "white-space: nowrap;'>Metric</th>"
-        "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; "
-        "white-space: nowrap;'>Test</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: left; white-space: nowrap;'>Metric</th>"
+        "<th class='sortable' style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Test</th>"
         "</tr></thead><tbody>"
     )
     for row in rows:
         html += generate_table_row(
             row,
-            "padding: 10px; border: 1px solid #ccc; text-align: center; "
-            "white-space: nowrap;",
+            "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;"
         )
     html += "</tbody></table></div><br>"
     return html
-
-
 def split_data_0_2(
     df: pd.DataFrame,
     split_column: str,
@@ -401,14 +394,13 @@ def split_data_0_2(
     random_state: int = 42,
     label_column: Optional[str] = None,
 ) -> pd.DataFrame:
-    """Given a DataFrame whose split_column only contains {0 or 2}, re-assign a portion of the 0s to become 1s (validation)."""
+    """Given a DataFrame whose split_column only contains {0,2}, re-assign a portion of the 0s to become 1s (validation)."""
     out = df.copy()
     out[split_column] = pd.to_numeric(out[split_column], errors="coerce").astype(int)
     idx_train = out.index[out[split_column] == 0].tolist()
     if not idx_train:
         logger.info("No rows with split=0; nothing to do.")
         return out
-
     # Always use stratify if possible
     stratify_arr = None
     if label_column and label_column in out.columns:
@@ -426,7 +418,6 @@ def split_data_0_2(
             logger.info("Using stratified split for validation set")
         else:
             logger.warning("Only one label class found; cannot stratify")
-
     if validation_size <= 0:
         logger.info("validation_size <= 0; keeping all as train.")
         return out
@@ -434,7 +425,6 @@ def split_data_0_2(
         logger.info("validation_size >= 1; moving all train → validation.")
         out.loc[idx_train, split_column] = 1
         return out
-
     # Always try stratified split first
     try:
         train_idx, val_idx = train_test_split(
@@ -452,13 +442,10 @@ def split_data_0_2(
             random_state=random_state,
             stratify=None,
         )
-
     out.loc[train_idx, split_column] = 0
     out.loc[val_idx, split_column] = 1
     out[split_column] = out[split_column].astype(int)
     return out
-
-
 def create_stratified_random_split(
     df: pd.DataFrame,
     split_column: str,
@@ -468,31 +455,24 @@ def create_stratified_random_split(
 ) -> pd.DataFrame:
     """Create a stratified random split when no split column exists."""
     out = df.copy()
-
     # initialize split column
     out[split_column] = 0
-
     if not label_column or label_column not in out.columns:
         logger.warning("No label column found; using random split without stratification")
         # fall back to simple random assignment
         indices = out.index.tolist()
         np.random.seed(random_state)
         np.random.shuffle(indices)
-
         n_total = len(indices)
         n_train = int(n_total * split_probabilities[0])
         n_val = int(n_total * split_probabilities[1])
-
         out.loc[indices[:n_train], split_column] = 0
         out.loc[indices[n_train:n_train + n_val], split_column] = 1
         out.loc[indices[n_train + n_val:], split_column] = 2
-
         return out.astype({split_column: int})
-
     # check if stratification is possible
     label_counts = out[label_column].value_counts()
     min_samples_per_class = label_counts.min()
-
     # ensure we have enough samples for stratification:
     # Each class must have at least as many samples as the number of splits,
     # so that each split can receive at least one sample per class.
@@ -505,19 +485,14 @@ def create_stratified_random_split(
         indices = out.index.tolist()
         np.random.seed(random_state)
         np.random.shuffle(indices)
-
         n_total = len(indices)
         n_train = int(n_total * split_probabilities[0])
         n_val = int(n_total * split_probabilities[1])
-
         out.loc[indices[:n_train], split_column] = 0
         out.loc[indices[n_train:n_train + n_val], split_column] = 1
         out.loc[indices[n_train + n_val:], split_column] = 2
-
         return out.astype({split_column: int})
-
     logger.info("Using stratified random split for train/validation/test sets")
-
     # first split: separate test set
     train_val_idx, test_idx = train_test_split(
         out.index.tolist(),
@@ -525,7 +500,6 @@ def create_stratified_random_split(
         random_state=random_state,
         stratify=out[label_column],
     )
-
     # second split: separate training and validation from remaining data
     val_size_adjusted = split_probabilities[1] / (split_probabilities[0] + split_probabilities[1])
     train_idx, val_idx = train_test_split(
@@ -534,18 +508,13 @@ def create_stratified_random_split(
         random_state=random_state,
         stratify=out.loc[train_val_idx, label_column],
     )
-
     # assign split values
     out.loc[train_idx, split_column] = 0
     out.loc[val_idx, split_column] = 1
     out.loc[test_idx, split_column] = 2
-
     logger.info("Successfully applied stratified random split")
     logger.info(f"Split counts: Train={len(train_idx)}, Val={len(val_idx)}, Test={len(test_idx)}")
-
     return out.astype({split_column: int})
-
-
 class Backend(Protocol):
     """Interface for a machine learning backend."""
     def prepare_config(
@@ -554,7 +523,6 @@ class Backend(Protocol):
         split_config: Dict[str, Any],
     ) -> str:
         ...
-
     def run_experiment(
         self,
         dataset_path: Path,
@@ -563,10 +531,8 @@ class Backend(Protocol):
         random_seed: int,
     ) -> None:
         ...
-
     def generate_plots(self, output_dir: Path) -> None:
         ...
-
     def generate_html_report(
         self,
         title: str,
@@ -575,8 +541,6 @@ class Backend(Protocol):
         split_info: str,
     ) -> Path:
         ...
-
-
 class LudwigDirectBackend:
     """Backend for running Ludwig experiments directly via the internal experiment_cli function."""
     def prepare_config(
@@ -652,6 +616,8 @@ class LudwigDirectBackend:
             )
             output_type = "binary" if num_unique_labels == 2 else "category"
             output_feat = {"name": LABEL_COLUMN_NAME, "type": output_type}
+            if output_type == "binary" and config_params.get("threshold") is not None:
+                output_feat["threshold"] = float(config_params["threshold"])
             val_metric = None
         conf: Dict[str, Any] = {
             "model_type": "ecd",
@@ -683,7 +649,6 @@ class LudwigDirectBackend:
                 exc_info=True,
             )
             raise
-
     def run_experiment(
         self,
         dataset_path: Path,
@@ -724,7 +689,6 @@ class LudwigDirectBackend:
                 exc_info=True,
             )
             raise
-
     def get_training_process(self, output_dir) -> Optional[Dict[str, Any]]:
         """Retrieve the learning rate used in the most recent Ludwig run."""
         output_dir = Path(output_dir)
@@ -750,7 +714,6 @@ class LudwigDirectBackend:
         except Exception as e:
             logger.warning(f"Failed to read training progress info: {e}")
             return {}
-
     def convert_parquet_to_csv(self, output_dir: Path):
         """Convert the predictions Parquet file to CSV."""
         output_dir = Path(output_dir)
@@ -770,7 +733,6 @@ class LudwigDirectBackend:
             logger.info(f"Converted Parquet to CSV: {csv_path}")
         except Exception as e:
             logger.error(f"Error converting Parquet to CSV: {e}")
-
     def generate_plots(self, output_dir: Path) -> None:
         """Generate all registered Ludwig visualizations for the latest experiment run."""
         logger.info("Generating all Ludwig visualizations…")
@@ -812,10 +774,8 @@ class LudwigDirectBackend:
         test_viz = viz_dir / "test"
         train_viz.mkdir(parents=True, exist_ok=True)
         test_viz.mkdir(parents=True, exist_ok=True)
-
         def _check(p: Path) -> Optional[str]:
             return str(p) if p.exists() else None
-
         training_stats = _check(exp_dir / "training_statistics.json")
         test_stats = _check(exp_dir / TEST_STATISTICS_FILE_NAME)
         probs_path = _check(exp_dir / PREDICTIONS_PARQUET_FILE_NAME)
@@ -866,7 +826,6 @@ class LudwigDirectBackend:
             except Exception as e:
                 logger.warning(f"✘ Skipped {viz_name}: {e}")
         logger.info(f"All visualizations written to {viz_dir}")
-
     def generate_html_report(
         self,
         title: str,
@@ -925,92 +884,81 @@ class LudwigDirectBackend:
             )
         except Exception as e:
             logger.warning(f"Could not load config for HTML report: {e}")
-
         def render_img_section(
             title: str, dir_path: Path, output_type: str = None
         ) -> str:
             if not dir_path.exists():
                 return f"<h2>{title}</h2><p><em>Directory not found.</em></p>"
+            # collect every PNG
             imgs = list(dir_path.glob("*.png"))
+            # --- EXCLUDE Ludwig's base confusion matrix and any top-N confusion_matrix files ---
+            imgs = [
+                img for img in imgs
+                if not (
+                    img.name == "confusion_matrix.png"
+                    or img.name.startswith("confusion_matrix__label_top")
+                    or img.name == "roc_curves.png"
+                )
+            ]
             if not imgs:
                 return f"<h2>{title}</h2><p><em>No plots found.</em></p>"
-            if title == "Test Visualizations" and output_type == "binary":
+            if output_type == "binary":
                 order = [
-                    "confusion_matrix__label_top2.png",
                     "roc_curves_from_prediction_statistics.png",
                     "compare_performance_label.png",
                     "confusion_matrix_entropy__label_top2.png",
+                    # ...you can tweak ordering as needed
                 ]
                 img_names = {img.name: img for img in imgs}
-                ordered_imgs = [
-                    img_names[fname] for fname in order if fname in img_names
-                ]
-                remaining = sorted(
-                    [
-                        img
-                        for img in imgs
-                        if img.name not in order and img.name != "roc_curves.png"
-                    ]
-                )
-                imgs = ordered_imgs + remaining
-            elif title == "Test Visualizations" and output_type == "category":
+                ordered = [img_names[n] for n in order if n in img_names]
+                others = sorted(img for img in imgs if img.name not in order)
+                imgs = ordered + others
+            elif output_type == "category":
                 unwanted = {
                     "compare_classifiers_multiclass_multimetric__label_best10.png",
                     "compare_classifiers_multiclass_multimetric__label_top10.png",
                     "compare_classifiers_multiclass_multimetric__label_worst10.png",
                 }
                 display_order = [
-                    "confusion_matrix__label_top10.png",
                     "roc_curves.png",
                     "compare_performance_label.png",
                     "compare_classifiers_performance_from_prob.png",
-                    "compare_classifiers_multiclass_multimetric__label_sorted.png",
                     "confusion_matrix_entropy__label_top10.png",
                 ]
-                img_names = {img.name: img for img in imgs if img.name not in unwanted}
-                ordered_imgs = [
-                    img_names[fname] for fname in display_order if fname in img_names
-                ]
-                remaining = sorted(
-                    [img for img in img_names.values() if img.name not in display_order]
-                )
-                imgs = ordered_imgs + remaining
+                # filter and order
+                valid_imgs = [img for img in imgs if img.name not in unwanted]
+                img_map = {img.name: img for img in valid_imgs}
+                ordered = [img_map[n] for n in display_order if n in img_map]
+                others = sorted(img for img in valid_imgs if img.name not in display_order)
+                imgs = ordered + others
             else:
-                if output_type == "category":
-                    unwanted = {
-                        "compare_classifiers_multiclass_multimetric__label_best10.png",
-                        "compare_classifiers_multiclass_multimetric__label_top10.png",
-                        "compare_classifiers_multiclass_multimetric__label_worst10.png",
-                    }
-                    imgs = sorted([img for img in imgs if img.name not in unwanted])
-                else:
-                    imgs = sorted(imgs)
-            section_html = f"<h2 style='text-align: center;'>{title}</h2><div>"
+                # regression: just sort whatever's left
+                imgs = sorted(imgs)
+            # render each remaining PNG
+            html = ""
             for img in imgs:
                 b64 = encode_image_to_base64(str(img))
-                section_html += (
+                img_title = img.stem.replace("_", " ").title()
+                html += (
+                    f"<h2 style='text-align: center;'>{img_title}</h2>"
                     f'<div class="plot" style="margin-bottom:20px;text-align:center;">'
-                    f"<h3>{img.stem.replace('_', ' ').title()}</h3>"
                     f'<img src="data:image/png;base64,{b64}" '
                     f'style="max-width:90%;max-height:600px;border:1px solid #ddd;" />'
                     f"</div>"
                 )
-            section_html += "</div>"
-            return section_html
-
+            return html
         tab1_content = config_html + metrics_html
         tab2_content = train_val_metrics_html + render_img_section(
-            "Training & Validation Visualizations", train_viz_dir
+            "Training and Validation Visualizations", train_viz_dir
         )
         # --- Predictions vs Ground Truth table ---
         preds_section = ""
         parquet_path = exp_dir / PREDICTIONS_PARQUET_FILE_NAME
-        if parquet_path.exists():
+        if output_type == "regression" and parquet_path.exists():
             try:
                 # 1) load predictions from Parquet
                 df_preds = pd.read_parquet(parquet_path).reset_index(drop=True)
                 # assume the column containing your model's prediction is named "prediction"
-                # or contains that substring:
                 pred_col = next(
                     (c for c in df_preds.columns if "prediction" in c.lower()),
                     None,
@@ -1020,28 +968,52 @@ class LudwigDirectBackend:
                 df_pred = df_preds[[pred_col]].rename(columns={pred_col: "prediction"})
                 # 2) load ground truth for the test split from prepared CSV
                 df_all = pd.read_csv(config["label_column_data_path"])
-                df_gt = df_all[df_all[SPLIT_COLUMN_NAME] == 2][
-                    LABEL_COLUMN_NAME
-                ].reset_index(drop=True)
+                df_gt = df_all[df_all[SPLIT_COLUMN_NAME] == 2][LABEL_COLUMN_NAME].reset_index(drop=True)
                 # 3) concatenate side-by-side
                 df_table = pd.concat([df_gt, df_pred], axis=1)
                 df_table.columns = [LABEL_COLUMN_NAME, "prediction"]
                 # 4) render as HTML
                 preds_html = df_table.to_html(index=False, classes="predictions-table")
                 preds_section = (
-                    "<h2 style='text-align: center;'>Predictions vs. Ground Truth</h2>"
-                    "<div style='overflow-x:auto; margin-bottom:20px;'>"
+                    "<h2 style='text-align: center;'>Ground Truth vs. Predictions</h2>"
+                    "<div style='overflow-y:auto; max-height:400px; overflow-x:auto; margin-bottom:20px;'>"
                     + preds_html
                     + "</div>"
                 )
             except Exception as e:
                 logger.warning(f"Could not build Predictions vs GT table: {e}")
-        # Test tab = Metrics + Preds table + Visualizations
-        tab3_content = (
-            test_metrics_html
-            + preds_section
-            + render_img_section("Test Visualizations", test_viz_dir, output_type)
-        )
+        tab3_content = test_metrics_html + preds_section
+        if output_type in ("binary", "category"):
+            training_stats_path = exp_dir / "training_statistics.json"
+            interactive_plots = build_classification_plots(
+                str(test_stats_path),
+                str(training_stats_path),
+            )
+            for plot in interactive_plots:
+                # 2) inject the static "roc_curves_from_prediction_statistics.png"
+                if plot["title"] == "ROC-AUC":
+                    static_img = test_viz_dir / "roc_curves_from_prediction_statistics.png"
+                    if static_img.exists():
+                        b64 = encode_image_to_base64(str(static_img))
+                        tab3_content += (
+                            "<h2 style='text-align: center;'>"
+                            "Roc Curves From Prediction Statistics"
+                            "</h2>"
+                            f'<div class="plot" style="margin-bottom:20px;text-align:center;">'
+                            f'<img src="data:image/png;base64,{b64}" '
+                            f'style="max-width:90%;max-height:600px;border:1px solid #ddd;" />'
+                            "</div>"
+                        )
+                # always render the plotly panels exactly as before
+                tab3_content += (
+                    f"<h2 style='text-align: center;'>{plot['title']}</h2>"
+                    + plot["html"]
+                )
+            tab3_content += render_img_section(
+                "Test Visualizations",
+                test_viz_dir,
+                output_type
+            )
         # assemble the tabs and help modal
         tabbed_html = build_tabbed_html(tab1_content, tab2_content, tab3_content)
         modal_html = get_metrics_help_modal()
@@ -1054,8 +1026,6 @@ class LudwigDirectBackend:
             logger.error(f"Failed to write HTML report: {e}")
             raise
         return report_path
-
-
 class WorkflowOrchestrator:
     """Manages the image-classification workflow."""
     def __init__(self, args: argparse.Namespace, backend: Backend):
@@ -1064,7 +1034,6 @@ class WorkflowOrchestrator:
         self.temp_dir: Optional[Path] = None
         self.image_extract_dir: Optional[Path] = None
         logger.info(f"Orchestrator initialized with backend: {type(backend).__name__}")
-
     def _create_temp_dirs(self) -> None:
         """Create temporary output and image extraction directories."""
         try:
@@ -1077,7 +1046,6 @@ class WorkflowOrchestrator:
         except Exception:
             logger.error("Failed to create temporary directories", exc_info=True)
             raise
-
     def _extract_images(self) -> None:
         """Extract images from ZIP into the temp image directory."""
         if self.image_extract_dir is None:
@@ -1092,7 +1060,6 @@ class WorkflowOrchestrator:
         except Exception:
             logger.error("Error extracting zip file", exc_info=True)
             raise
-
     def _prepare_data(self) -> Tuple[Path, Dict[str, Any], str]:
         """Load CSV, update image paths, handle splits, and write prepared CSV."""
         if not self.temp_dir or not self.image_extract_dir:
@@ -1142,7 +1109,6 @@ class WorkflowOrchestrator:
             logger.error("Error saving prepared CSV", exc_info=True)
             raise
         return final_csv, split_config, split_info
-
     def _process_fixed_split(
         self, df: pd.DataFrame
     ) -> Tuple[pd.DataFrame, Dict[str, Any], str]:
@@ -1181,14 +1147,12 @@ class WorkflowOrchestrator:
         except Exception:
             logger.error("Error processing fixed split", exc_info=True)
             raise
-
     def _cleanup_temp_dirs(self) -> None:
         if self.temp_dir and self.temp_dir.exists():
             logger.info(f"Cleaning up temp directory: {self.temp_dir}")
             shutil.rmtree(self.temp_dir, ignore_errors=True)
         self.temp_dir = None
         self.image_extract_dir = None
-
     def run(self) -> None:
         """Execute the full workflow end-to-end."""
         logger.info("Starting workflow...")
@@ -1211,6 +1175,7 @@ class WorkflowOrchestrator:
                 "early_stop": self.args.early_stop,
                 "label_column_data_path": csv_path,
                 "augmentation": self.args.augmentation,
+                "threshold": self.args.threshold,
             }
             yaml_str = self.backend.prepare_config(backend_args, split_cfg)
             config_file = self.temp_dir / TEMP_CONFIG_FILENAME
@@ -1238,15 +1203,11 @@ class WorkflowOrchestrator:
             raise
         finally:
             self._cleanup_temp_dirs()
-
-
 def parse_learning_rate(s):
     try:
         return float(s)
     except (TypeError, ValueError):
         return None
-
-
 def aug_parse(aug_string: str):
     """
     Parse comma-separated augmentation keys into Ludwig augmentation dicts.
@@ -1263,15 +1224,11 @@ def aug_parse(aug_string: str):
     aug_list = []
     for tok in aug_string.split(","):
         key = tok.strip()
-        if not key:
-            continue
         if key not in mapping:
             valid = ", ".join(mapping.keys())
             raise ValueError(f"Unknown augmentation '{key}'. Valid choices: {valid}")
         aug_list.append(mapping[key])
     return aug_list
-
-
 class SplitProbAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         train, val, test = values
@@ -1282,8 +1239,6 @@ class SplitProbAction(argparse.Action):
                 f"got {train:.3f} + {val:.3f} + {test:.3f} = {total:.3f}"
             )
         setattr(namespace, self.dest, values)
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Image Classification Learner with Pluggable Backends",
@@ -1342,7 +1297,7 @@ def main():
     parser.add_argument(
         "--validation-size",
         type=float,
-        default=0.1,
+        default=0.15,
         help="Fraction for validation (0.0–1.0)",
     )
     parser.add_argument(
@@ -1386,6 +1341,15 @@ def main():
             "E.g. --augmentation random_horizontal_flip,random_rotate"
         ),
     )
+    parser.add_argument(
+        "--threshold",
+        type=float,
+        default=None,
+        help=(
+            "Decision threshold for binary classification (0.0–1.0)."
+            "Overrides default 0.5."
+        )
+    )
     args = parser.parse_args()
     if not 0.0 <= args.validation_size <= 1.0:
         parser.error("validation-size must be between 0.0 and 1.0")
@@ -1410,8 +1374,6 @@ def main():
         exit_code = 1
     finally:
         sys.exit(exit_code)
-
-
 if __name__ == "__main__":
     try:
         import ludwig
