@@ -8,6 +8,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Protocol, Tuple
+
 import numpy as np
 import pandas as pd
 import pandas.api.types as ptypes
@@ -407,6 +408,7 @@ def split_data_0_2(
     if not idx_train:
         logger.info("No rows with split=0; nothing to do.")
         return out
+
     # Always use stratify if possible
     stratify_arr = None
     if label_column and label_column in out.columns:
@@ -424,6 +426,7 @@ def split_data_0_2(
             logger.info("Using stratified split for validation set")
         else:
             logger.warning("Only one label class found; cannot stratify")
+
     if validation_size <= 0:
         logger.info("validation_size <= 0; keeping all as train.")
         return out
@@ -431,6 +434,7 @@ def split_data_0_2(
         logger.info("validation_size >= 1; moving all train → validation.")
         out.loc[idx_train, split_column] = 1
         return out
+
     # Always try stratified split first
     try:
         train_idx, val_idx = train_test_split(
@@ -448,6 +452,7 @@ def split_data_0_2(
             random_state=random_state,
             stratify=None,
         )
+
     out.loc[train_idx, split_column] = 0
     out.loc[val_idx, split_column] = 1
     out[split_column] = out[split_column].astype(int)
@@ -463,24 +468,31 @@ def create_stratified_random_split(
 ) -> pd.DataFrame:
     """Create a stratified random split when no split column exists."""
     out = df.copy()
+
     # initialize split column
     out[split_column] = 0
+
     if not label_column or label_column not in out.columns:
         logger.warning("No label column found; using random split without stratification")
         # fall back to simple random assignment
         indices = out.index.tolist()
         np.random.seed(random_state)
         np.random.shuffle(indices)
+
         n_total = len(indices)
         n_train = int(n_total * split_probabilities[0])
         n_val = int(n_total * split_probabilities[1])
+
         out.loc[indices[:n_train], split_column] = 0
         out.loc[indices[n_train:n_train + n_val], split_column] = 1
         out.loc[indices[n_train + n_val:], split_column] = 2
+
         return out.astype({split_column: int})
+
     # check if stratification is possible
     label_counts = out[label_column].value_counts()
     min_samples_per_class = label_counts.min()
+
     # ensure we have enough samples for stratification:
     # Each class must have at least as many samples as the number of splits,
     # so that each split can receive at least one sample per class.
@@ -493,14 +505,19 @@ def create_stratified_random_split(
         indices = out.index.tolist()
         np.random.seed(random_state)
         np.random.shuffle(indices)
+
         n_total = len(indices)
         n_train = int(n_total * split_probabilities[0])
         n_val = int(n_total * split_probabilities[1])
+
         out.loc[indices[:n_train], split_column] = 0
         out.loc[indices[n_train:n_train + n_val], split_column] = 1
         out.loc[indices[n_train + n_val:], split_column] = 2
+
         return out.astype({split_column: int})
+
     logger.info("Using stratified random split for train/validation/test sets")
+
     # first split: separate test set
     train_val_idx, test_idx = train_test_split(
         out.index.tolist(),
@@ -508,6 +525,7 @@ def create_stratified_random_split(
         random_state=random_state,
         stratify=out[label_column],
     )
+
     # second split: separate training and validation from remaining data
     val_size_adjusted = split_probabilities[1] / (split_probabilities[0] + split_probabilities[1])
     train_idx, val_idx = train_test_split(
@@ -516,12 +534,15 @@ def create_stratified_random_split(
         random_state=random_state,
         stratify=out.loc[train_val_idx, label_column],
     )
+
     # assign split values
     out.loc[train_idx, split_column] = 0
     out.loc[val_idx, split_column] = 1
     out.loc[test_idx, split_column] = 2
+
     logger.info("Successfully applied stratified random split")
     logger.info(f"Split counts: Train={len(train_idx)}, Val={len(val_idx)}, Test={len(test_idx)}")
+
     return out.astype({split_column: int})
 
 
