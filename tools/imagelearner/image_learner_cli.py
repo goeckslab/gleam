@@ -45,6 +45,8 @@ logging.basicConfig(
     format='%(asctime)s %(levelname)s %(name)s: %(message)s',
 )
 logger = logging.getLogger("ImageLearner")
+
+
 def format_config_table_html(
     config: dict,
     split_info: Optional[str] = None,
@@ -130,7 +132,7 @@ def format_config_table_html(
                         val_str = val
             else:
                 val_str = val if val is not None else "N/A"
-            if val_str == "N/A" and key not in ["task_type"]: # Skip if N/A for non-essential
+            if val_str == "N/A" and key not in ["task_type"]:  # Skip if N/A for non-essential
                 continue
         rows.append(
             f"<tr>"
@@ -174,6 +176,8 @@ def format_config_table_html(
         </p><hr>
         """
     return html
+
+
 def detect_output_type(test_stats):
     """Detects if the output type is 'binary' or 'category' based on test statistics."""
     label_stats = test_stats.get("label", {})
@@ -183,6 +187,8 @@ def detect_output_type(test_stats):
     if len(per_class) == 2:
         return "binary"
     return "category"
+
+
 def extract_metrics_from_json(
     train_stats: dict,
     test_stats: dict,
@@ -190,6 +196,7 @@ def extract_metrics_from_json(
 ) -> dict:
     """Extracts relevant metrics from training and test statistics based on the output type."""
     metrics = {"training": {}, "validation": {}, "test": {}}
+
     def get_last_value(stats, key):
         val = stats.get(key)
         if isinstance(val, list) and val:
@@ -197,6 +204,7 @@ def extract_metrics_from_json(
         elif isinstance(val, (int, float)):
             return val
         return None
+
     for split in ["training", "validation"]:
         split_stats = train_stats.get(split, {})
         if not split_stats:
@@ -270,6 +278,8 @@ def extract_metrics_from_json(
             test_metrics["loss"] = combined_stats["loss"]
         metrics["test"] = test_metrics
     return metrics
+
+
 def generate_table_row(cells, styles):
     """Helper function to generate an HTML table row."""
     return (
@@ -277,9 +287,13 @@ def generate_table_row(cells, styles):
         + "".join(f"<td style='{styles}'>{cell}</td>" for cell in cells)
         + "</tr>"
     )
+
+
 # -----------------------------------------
 # 2) MODEL PERFORMANCE (Train/Val/Test) TABLE
 # -----------------------------------------
+
+
 def format_stats_table_html(train_stats: dict, test_stats: dict) -> str:
     """Formats a combined HTML table for training, validation, and test metrics."""
     output_type = detect_output_type(test_stats)
@@ -319,9 +333,13 @@ def format_stats_table_html(train_stats: dict, test_stats: dict) -> str:
         )
     html += "</tbody></table></div><br>"
     return html
+
+
 # -------------------------------------------
 # 3) TRAIN/VALIDATION PERFORMANCE SUMMARY TABLE
 # -------------------------------------------
+
+
 def format_train_val_stats_table_html(train_stats: dict, test_stats: dict) -> str:
     """Formats an HTML table for training and validation metrics."""
     output_type = detect_output_type(test_stats)
@@ -356,9 +374,13 @@ def format_train_val_stats_table_html(train_stats: dict, test_stats: dict) -> st
         )
     html += "</tbody></table></div><br>"
     return html
+
+
 # -----------------------------------------
 # 4) TEST‐ONLY PERFORMANCE SUMMARY TABLE
 # -----------------------------------------
+
+
 def format_test_merged_stats_table_html(
     test_metrics: Dict[str, Optional[float]],
 ) -> str:
@@ -387,6 +409,8 @@ def format_test_merged_stats_table_html(
         )
     html += "</tbody></table></div><br>"
     return html
+
+
 def split_data_0_2(
     df: pd.DataFrame,
     split_column: str,
@@ -446,6 +470,8 @@ def split_data_0_2(
     out.loc[val_idx, split_column] = 1
     out[split_column] = out[split_column].astype(int)
     return out
+
+
 def create_stratified_random_split(
     df: pd.DataFrame,
     split_column: str,
@@ -515,6 +541,8 @@ def create_stratified_random_split(
     logger.info("Successfully applied stratified random split")
     logger.info(f"Split counts: Train={len(train_idx)}, Val={len(val_idx)}, Test={len(test_idx)}")
     return out.astype({split_column: int})
+
+
 class Backend(Protocol):
     """Interface for a machine learning backend."""
     def prepare_config(
@@ -523,6 +551,7 @@ class Backend(Protocol):
         split_config: Dict[str, Any],
     ) -> str:
         ...
+
     def run_experiment(
         self,
         dataset_path: Path,
@@ -531,8 +560,10 @@ class Backend(Protocol):
         random_seed: int,
     ) -> None:
         ...
+
     def generate_plots(self, output_dir: Path) -> None:
         ...
+
     def generate_html_report(
         self,
         title: str,
@@ -541,6 +572,8 @@ class Backend(Protocol):
         split_info: str,
     ) -> Path:
         ...
+
+
 class LudwigDirectBackend:
     """Backend for running Ludwig experiments directly via the internal experiment_cli function."""
     def prepare_config(
@@ -649,6 +682,7 @@ class LudwigDirectBackend:
                 exc_info=True,
             )
             raise
+
     def run_experiment(
         self,
         dataset_path: Path,
@@ -689,6 +723,7 @@ class LudwigDirectBackend:
                 exc_info=True,
             )
             raise
+
     def get_training_process(self, output_dir) -> Optional[Dict[str, Any]]:
         """Retrieve the learning rate used in the most recent Ludwig run."""
         output_dir = Path(output_dir)
@@ -714,6 +749,7 @@ class LudwigDirectBackend:
         except Exception as e:
             logger.warning(f"Failed to read training progress info: {e}")
             return {}
+
     def convert_parquet_to_csv(self, output_dir: Path):
         """Convert the predictions Parquet file to CSV."""
         output_dir = Path(output_dir)
@@ -733,6 +769,7 @@ class LudwigDirectBackend:
             logger.info(f"Converted Parquet to CSV: {csv_path}")
         except Exception as e:
             logger.error(f"Error converting Parquet to CSV: {e}")
+
     def generate_plots(self, output_dir: Path) -> None:
         """Generate all registered Ludwig visualizations for the latest experiment run."""
         logger.info("Generating all Ludwig visualizations…")
@@ -774,8 +811,10 @@ class LudwigDirectBackend:
         test_viz = viz_dir / "test"
         train_viz.mkdir(parents=True, exist_ok=True)
         test_viz.mkdir(parents=True, exist_ok=True)
+
         def _check(p: Path) -> Optional[str]:
             return str(p) if p.exists() else None
+
         training_stats = _check(exp_dir / "training_statistics.json")
         test_stats = _check(exp_dir / TEST_STATISTICS_FILE_NAME)
         probs_path = _check(exp_dir / PREDICTIONS_PARQUET_FILE_NAME)
@@ -826,6 +865,7 @@ class LudwigDirectBackend:
             except Exception as e:
                 logger.warning(f"✘ Skipped {viz_name}: {e}")
         logger.info(f"All visualizations written to {viz_dir}")
+
     def generate_html_report(
         self,
         title: str,
@@ -884,6 +924,7 @@ class LudwigDirectBackend:
             )
         except Exception as e:
             logger.warning(f"Could not load config for HTML report: {e}")
+
         def render_img_section(
             title: str, dir_path: Path, output_type: str = None
         ) -> str:
@@ -947,6 +988,7 @@ class LudwigDirectBackend:
                     f"</div>"
                 )
             return html
+
         tab1_content = config_html + metrics_html
         tab2_content = train_val_metrics_html + render_img_section(
             "Training and Validation Visualizations", train_viz_dir
@@ -1026,6 +1068,8 @@ class LudwigDirectBackend:
             logger.error(f"Failed to write HTML report: {e}")
             raise
         return report_path
+
+
 class WorkflowOrchestrator:
     """Manages the image-classification workflow."""
     def __init__(self, args: argparse.Namespace, backend: Backend):
@@ -1034,6 +1078,7 @@ class WorkflowOrchestrator:
         self.temp_dir: Optional[Path] = None
         self.image_extract_dir: Optional[Path] = None
         logger.info(f"Orchestrator initialized with backend: {type(backend).__name__}")
+
     def _create_temp_dirs(self) -> None:
         """Create temporary output and image extraction directories."""
         try:
@@ -1046,6 +1091,7 @@ class WorkflowOrchestrator:
         except Exception:
             logger.error("Failed to create temporary directories", exc_info=True)
             raise
+
     def _extract_images(self) -> None:
         """Extract images from ZIP into the temp image directory."""
         if self.image_extract_dir is None:
@@ -1060,6 +1106,7 @@ class WorkflowOrchestrator:
         except Exception:
             logger.error("Error extracting zip file", exc_info=True)
             raise
+
     def _prepare_data(self) -> Tuple[Path, Dict[str, Any], str]:
         """Load CSV, update image paths, handle splits, and write prepared CSV."""
         if not self.temp_dir or not self.image_extract_dir:
@@ -1109,6 +1156,7 @@ class WorkflowOrchestrator:
             logger.error("Error saving prepared CSV", exc_info=True)
             raise
         return final_csv, split_config, split_info
+
     def _process_fixed_split(
         self, df: pd.DataFrame
     ) -> Tuple[pd.DataFrame, Dict[str, Any], str]:
@@ -1147,12 +1195,14 @@ class WorkflowOrchestrator:
         except Exception:
             logger.error("Error processing fixed split", exc_info=True)
             raise
+
     def _cleanup_temp_dirs(self) -> None:
         if self.temp_dir and self.temp_dir.exists():
             logger.info(f"Cleaning up temp directory: {self.temp_dir}")
             shutil.rmtree(self.temp_dir, ignore_errors=True)
         self.temp_dir = None
         self.image_extract_dir = None
+
     def run(self) -> None:
         """Execute the full workflow end-to-end."""
         logger.info("Starting workflow...")
@@ -1203,11 +1253,15 @@ class WorkflowOrchestrator:
             raise
         finally:
             self._cleanup_temp_dirs()
+
+
 def parse_learning_rate(s):
     try:
         return float(s)
     except (TypeError, ValueError):
         return None
+
+
 def aug_parse(aug_string: str):
     """
     Parse comma-separated augmentation keys into Ludwig augmentation dicts.
@@ -1229,6 +1283,8 @@ def aug_parse(aug_string: str):
             raise ValueError(f"Unknown augmentation '{key}'. Valid choices: {valid}")
         aug_list.append(mapping[key])
     return aug_list
+
+
 class SplitProbAction(argparse.Action):
     def __call__(self, parser, namespace, values, option_string=None):
         train, val, test = values
@@ -1239,6 +1295,8 @@ class SplitProbAction(argparse.Action):
                 f"got {train:.3f} + {val:.3f} + {test:.3f} = {total:.3f}"
             )
         setattr(namespace, self.dest, values)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Image Classification Learner with Pluggable Backends",
@@ -1374,6 +1432,8 @@ def main():
         exit_code = 1
     finally:
         sys.exit(exit_code)
+
+
 if __name__ == "__main__":
     try:
         import ludwig
