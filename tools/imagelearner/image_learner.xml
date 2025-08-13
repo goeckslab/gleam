@@ -1,7 +1,7 @@
-<tool id="image_learner" name="Image Learner for Classification" version="0.1.0" profile="22.05">
+<tool id="image_learner" name="Image Learner for Classification" version="0.1.2" profile="22.05">
     <description>trains and evaluates a image classification model</description>
     <requirements>
-        <container type="docker">quay.io/your-org/galaxy-ludwig-gpu:latest</container>
+        <container type="docker">quay.io/goeckslab/galaxy-ludwig-gpu:latest</container>
     </requirements>
     <required_files>
         <include path="utils.py" />
@@ -256,7 +256,69 @@
                 </element>
             </output_collection>
         </test>
-    </tests>
+         <test expect_num_outputs="3">
+            <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
+            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
+            <param name="model_name" value="vit_b_16" />
+            <output name="output_report">
+                <assert_contents>
+                    <has_text text="Results Summary" />
+                    <has_text text="Train/Validation Results" />
+                    <has_text text="Test Results" />
+                </assert_contents>
+            </output>
+
+            <output_collection name="output_pred_csv" type="list" >
+                <element name="predictions.csv" >
+                    <assert_contents>
+                        <has_n_columns n="1" />
+                    </assert_contents>
+                </element>
+            </output_collection>
+        </test>
+        <test expect_num_outputs="3">
+            <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
+            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
+            <param name="model_name" value="resnet18" />
+            <param name="augmentation" value="random_horizontal_flip,random_vertical_flip,random_rotate" />
+            <output name="output_report">
+                <assert_contents>
+                    <has_text text="Results Summary" />
+                    <has_text text="Train/Validation Results" />
+                    <has_text text="Test Results" />
+                </assert_contents>
+            </output>
+
+            <output_collection name="output_pred_csv" type="list" >
+                <element name="predictions.csv" >
+                    <assert_contents>
+                        <has_n_columns n="1" />
+                    </assert_contents>
+                </element>
+            </output_collection>
+        </test>
+        <test expect_num_outputs="3">
+            <param name="input_csv" value="utkface_labels.csv" ftype="csv" />
+            <param name="image_zip" value="age_regression.zip" ftype="zip" />
+            <param name="model_name" value="resnet18" />
+            <output name="output_report">
+                <assert_contents>
+                    <has_text text="Results Summary" />
+                    <has_text text="Train/Validation Results" />
+                    <has_text text="Test Results" />
+                </assert_contents>
+            </output>
+            <output name="output_report" file="expected_regression.html" compare="sim_size"/>
+
+            <output_collection name="output_pred_csv" type="list" >
+                <element name="predictions.csv" >
+                    <assert_contents>
+                        <has_n_columns n="1" />
+                    </assert_contents>
+                </element>
+            </output_collection>
+        </test>
+        </tests>
     <help>
         <![CDATA[
 **What it does**
