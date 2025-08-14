@@ -5,6 +5,7 @@
     </requirements>
     <required_files>
         <include path="utils.py" />
+        <include path="constants.py" />
         <include path="image_learner_cli.py" />
     </required_files>
     <stdio>
