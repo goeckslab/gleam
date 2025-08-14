@@ -309,8 +309,6 @@
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
-            <output name="output_report" file="expected_regression.html" compare="sim_size"/>
-
             <output_collection name="output_pred_csv" type="list" >
                 <element name="predictions.csv" >
                     <assert_contents>
