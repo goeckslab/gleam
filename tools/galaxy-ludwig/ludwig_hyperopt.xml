@@ -1,4 +1,4 @@
-<tool id="ludwig_hyperopt" name="Ludwig Hyperopt" version="@VERSION@" profile="@PROFILE@">
+<tool id="ludwig_hyperopt" name="Generic Learner Hyperopt" version="@VERSION@" profile="@PROFILE@">
     <description>searches for optimal Hyperparameters</description>
     <macros>
         <import>ludwig_macros.xml</import>

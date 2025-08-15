@@ -1,4 +1,4 @@
-<tool id="ludwig_predict" name="Ludwig Predict" version="@VERSION@" profile="@PROFILE@">
+<tool id="ludwig_predict" name="Generic Learner Ludwig Predict" version="@VERSION@" profile="@PROFILE@">
     <description>loads a pretrained model to do prediction</description>
     <macros>
         <import>ludwig_macros.xml</import>

@@ -1,4 +1,4 @@
-<tool id="ludwig_train" name="Ludwig Train" version="@VERSION@" profile="@PROFILE@">
+<tool id="ludwig_train" name="Generic Learner Train" version="@VERSION@" profile="@PROFILE@">
     <description>trains a deep learning model</description>
     <macros>
         <import>ludwig_macros.xml</import>

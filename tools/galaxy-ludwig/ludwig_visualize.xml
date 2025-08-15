@@ -1,4 +1,4 @@
-<tool id="ludwig_visualize" name="Ludwig Visualize" version="@VERSION@" profile="@PROFILE@">
+<tool id="ludwig_visualize" name="Generic Learner Visualize" version="@VERSION@" profile="@PROFILE@">
     <description>analyzes results and shows in plots</description>
     <macros>
         <import>ludwig_macros.xml</import>

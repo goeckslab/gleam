@@ -1,4 +1,4 @@
-<tool id="ludwig_config_generator" name="Ludwig Config Creator" version="@VERSION@" profile="@PROFILE@">
+<tool id="ludwig_config_generator" name="Generic Learner Ludwig Config Creator" version="@VERSION@" profile="@PROFILE@">
     <description>builds a Ludwig machine learning configuration file for a dataset</description>
     <macros>
         <import>ludwig_macros.xml</import>
