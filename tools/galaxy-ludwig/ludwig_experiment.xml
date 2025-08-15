@@ -151,7 +151,7 @@
     <help>
         <![CDATA[
 **What it does**
-Ludwig Experiment: train on one (portion of) dataset and evalue the model performance on another (portion of) dataset.
+Generic Learner Experiment: train on one (portion of) dataset and evalue the model performance on another (portion of) dataset.
 
 
 **Output**
