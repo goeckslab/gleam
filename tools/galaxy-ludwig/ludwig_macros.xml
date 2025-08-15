@@ -1,7 +1,7 @@
 <macros>
     <token name="@LUDWIG_VERSION@">0.10.1</token>
 
-    <token name="@SUFFIX@">1</token>
+    <token name="@SUFFIX@">2</token>
 
     <token name="@VERSION@">@LUDWIG_VERSION@+@SUFFIX@</token>
 
