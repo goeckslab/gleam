@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, Optional, Protocol, Tuple
 
+import numpy as np
 import pandas as pd
 import pandas.api.types as ptypes
 import yaml
@@ -66,9 +67,7 @@ def format_config_table_html(
         "early_stop",
         "threshold",
     ]
-
     rows = []
-
     for key in display_keys:
         val = config.get(key, None)
         if key == "threshold":
@@ -135,10 +134,8 @@ def format_config_table_html(
                         val_str = val
             else:
                 val_str = val if val is not None else "N/A"
-
             if val_str == "N/A" and key not in ["task_type"]:  # Skip if N/A for non-essential
                 continue
-
         rows.append(
             f"<tr>"
             f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: left;'>"
@@ -147,7 +144,6 @@ def format_config_table_html(
             f"{val_str}</td>"
             f"</tr>"
         )
-
     aug_cfg = config.get("augmentation")
     if aug_cfg:
         types = [str(a.get("type", "")) for a in aug_cfg]
@@ -156,13 +152,11 @@ def format_config_table_html(
             f"<tr><td style='padding: 6px 12px; border: 1px solid #ccc; text-align: left;'>Augmentation</td>"
             f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: center;'>{aug_val}</td></tr>"
         )
-
     if split_info:
         rows.append(
             f"<tr><td style='padding: 6px 12px; border: 1px solid #ccc; text-align: left;'>Data Split</td>"
             f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: center;'>{split_info}</td></tr>"
         )
-
     html = f"""
         <h2 style="text-align: center;">Model and Training Summary</h2>
         <div style="display: flex; justify-content: center;">
@@ -257,7 +251,6 @@ def extract_metrics_from_json(
                 "roc_auc": get_last_value(label_stats, "roc_auc"),
                 "hits_at_k": get_last_value(label_stats, "hits_at_k"),
             }
-
     # Test metrics: dynamic extraction according to exclusions
     test_label_stats = test_stats.get("label", {})
     if not test_label_stats:
@@ -265,13 +258,11 @@ def extract_metrics_from_json(
     else:
         combined_stats = test_stats.get("combined", {})
         overall_stats = test_label_stats.get("overall_stats", {})
-
         # Define exclusions
         if output_type == "binary":
             exclude = {"per_class_stats", "precision_recall_curve", "roc_curve"}
         else:
             exclude = {"per_class_stats", "confusion_matrix"}
-
         # 1. Get all scalar test_label_stats not excluded
         test_metrics = {}
         for k, v in test_label_stats.items():
@@ -281,17 +272,13 @@ def extract_metrics_from_json(
                 continue
             if isinstance(v, (int, float, str, bool)):
                 test_metrics[k] = v
-
         # 2. Add overall_stats (flattened)
         for k, v in overall_stats.items():
             test_metrics[k] = v
-
         # 3. Optionally include combined/loss if present and not already
         if "loss" in combined_stats and "loss" not in test_metrics:
             test_metrics["loss"] = combined_stats["loss"]
-
         metrics["test"] = test_metrics
-
     return metrics
 
 
@@ -307,6 +294,8 @@ def generate_table_row(cells, styles):
 # -----------------------------------------
 # 2) MODEL PERFORMANCE (Train/Val/Test) TABLE
 # -----------------------------------------
+
+
 def format_stats_table_html(train_stats: dict, test_stats: dict) -> str:
     """Formats a combined HTML table for training, validation, and test metrics."""
     output_type = detect_output_type(test_stats)
@@ -326,10 +315,8 @@ def format_stats_table_html(train_stats: dict, test_stats: dict) -> str:
             te = all_metrics["test"].get(metric_key)
             if all(x is not None for x in [t, v, te]):
                 rows.append([display_name, f"{t:.4f}", f"{v:.4f}", f"{te:.4f}"])
-
     if not rows:
         return "<table><tr><td>No metric values found.</td></tr></table>"
-
     html = (
         "<h2 style='text-align: center;'>Model Performance Summary</h2>"
         "<div style='display: flex; justify-content: center;'>"
@@ -353,6 +340,8 @@ def format_stats_table_html(train_stats: dict, test_stats: dict) -> str:
 # -------------------------------------------
 # 3) TRAIN/VALIDATION PERFORMANCE SUMMARY TABLE
 # -------------------------------------------
+
+
 def format_train_val_stats_table_html(train_stats: dict, test_stats: dict) -> str:
     """Formats an HTML table for training and validation metrics."""
     output_type = detect_output_type(test_stats)
@@ -368,10 +357,8 @@ def format_train_val_stats_table_html(train_stats: dict, test_stats: dict) -> st
             v = all_metrics["validation"].get(metric_key)
             if t is not None and v is not None:
                 rows.append([display_name, f"{t:.4f}", f"{v:.4f}"])
-
     if not rows:
         return "<table><tr><td>No metric values found for Train/Validation.</td></tr></table>"
-
     html = (
         "<h2 style='text-align: center;'>Train/Validation Performance Summary</h2>"
         "<div style='display: flex; justify-content: center;'>"
@@ -394,6 +381,8 @@ def format_train_val_stats_table_html(train_stats: dict, test_stats: dict) -> st
 # -----------------------------------------
 # 4) TEST‐ONLY PERFORMANCE SUMMARY TABLE
 # -----------------------------------------
+
+
 def format_test_merged_stats_table_html(
     test_metrics: Dict[str, Optional[float]],
 ) -> str:
@@ -404,10 +393,8 @@ def format_test_merged_stats_table_html(
         value = test_metrics[key]
         if value is not None:
             rows.append([display_name, f"{value:.4f}"])
-
     if not rows:
         return "<table><tr><td>No test metric values found.</td></tr></table>"
-
     html = (
         "<h2 style='text-align: center;'>Test Performance Summary</h2>"
         "<div style='display: flex; justify-content: center;'>"
@@ -429,28 +416,34 @@ def format_test_merged_stats_table_html(
 def split_data_0_2(
     df: pd.DataFrame,
     split_column: str,
-    validation_size: float = 0.15,
+    validation_size: float = 0.1,
     random_state: int = 42,
     label_column: Optional[str] = None,
 ) -> pd.DataFrame:
     """Given a DataFrame whose split_column only contains {0,2}, re-assign a portion of the 0s to become 1s (validation)."""
     out = df.copy()
     out[split_column] = pd.to_numeric(out[split_column], errors="coerce").astype(int)
-
     idx_train = out.index[out[split_column] == 0].tolist()
-
     if not idx_train:
         logger.info("No rows with split=0; nothing to do.")
         return out
+    # Always use stratify if possible
     stratify_arr = None
     if label_column and label_column in out.columns:
         label_counts = out.loc[idx_train, label_column].value_counts()
-        if label_counts.size > 1 and (label_counts.min() * validation_size) >= 1:
+        if label_counts.size > 1:
+            # Force stratify even with fewer samples - adjust validation_size if needed
+            min_samples_per_class = label_counts.min()
+            if min_samples_per_class * validation_size < 1:
+                # Adjust validation_size to ensure at least 1 sample per class, but do not exceed original validation_size
+                adjusted_validation_size = min(validation_size, 1.0 / min_samples_per_class)
+                if adjusted_validation_size != validation_size:
+                    validation_size = adjusted_validation_size
+                    logger.info(f"Adjusted validation_size to {validation_size:.3f} to ensure at least one sample per class in validation")
             stratify_arr = out.loc[idx_train, label_column]
+            logger.info("Using stratified split for validation set")
         else:
-            logger.warning(
-                "Cannot stratify (too few labels); splitting without stratify."
-            )
+            logger.warning("Only one label class found; cannot stratify")
     if validation_size <= 0:
         logger.info("validation_size <= 0; keeping all as train.")
         return out
@@ -458,6 +451,7 @@ def split_data_0_2(
         logger.info("validation_size >= 1; moving all train → validation.")
         out.loc[idx_train, split_column] = 1
         return out
+    # Always try stratified split first
     try:
         train_idx, val_idx = train_test_split(
             idx_train,
@@ -465,8 +459,9 @@ def split_data_0_2(
             random_state=random_state,
             stratify=stratify_arr,
         )
+        logger.info("Successfully applied stratified split")
     except ValueError as e:
-        logger.warning(f"Stratified split failed ({e}); retrying without stratify.")
+        logger.warning(f"Stratified split failed ({e}); falling back to random split.")
         train_idx, val_idx = train_test_split(
             idx_train,
             test_size=validation_size,
@@ -479,9 +474,79 @@ def split_data_0_2(
     return out
 
 
+def create_stratified_random_split(
+    df: pd.DataFrame,
+    split_column: str,
+    split_probabilities: list = [0.7, 0.1, 0.2],
+    random_state: int = 42,
+    label_column: Optional[str] = None,
+) -> pd.DataFrame:
+    """Create a stratified random split when no split column exists."""
+    out = df.copy()
+    # initialize split column
+    out[split_column] = 0
+    if not label_column or label_column not in out.columns:
+        logger.warning("No label column found; using random split without stratification")
+        # fall back to simple random assignment
+        indices = out.index.tolist()
+        np.random.seed(random_state)
+        np.random.shuffle(indices)
+        n_total = len(indices)
+        n_train = int(n_total * split_probabilities[0])
+        n_val = int(n_total * split_probabilities[1])
+        out.loc[indices[:n_train], split_column] = 0
+        out.loc[indices[n_train:n_train + n_val], split_column] = 1
+        out.loc[indices[n_train + n_val:], split_column] = 2
+        return out.astype({split_column: int})
+    # check if stratification is possible
+    label_counts = out[label_column].value_counts()
+    min_samples_per_class = label_counts.min()
+    # ensure we have enough samples for stratification:
+    # Each class must have at least as many samples as the number of splits,
+    # so that each split can receive at least one sample per class.
+    min_samples_required = len(split_probabilities)
+    if min_samples_per_class < min_samples_required:
+        logger.warning(
+            f"Insufficient samples per class for stratification (min: {min_samples_per_class}, required: {min_samples_required}); using random split"
+        )
+        # fall back to simple random assignment
+        indices = out.index.tolist()
+        np.random.seed(random_state)
+        np.random.shuffle(indices)
+        n_total = len(indices)
+        n_train = int(n_total * split_probabilities[0])
+        n_val = int(n_total * split_probabilities[1])
+        out.loc[indices[:n_train], split_column] = 0
+        out.loc[indices[n_train:n_train + n_val], split_column] = 1
+        out.loc[indices[n_train + n_val:], split_column] = 2
+        return out.astype({split_column: int})
+    logger.info("Using stratified random split for train/validation/test sets")
+    # first split: separate test set
+    train_val_idx, test_idx = train_test_split(
+        out.index.tolist(),
+        test_size=split_probabilities[2],
+        random_state=random_state,
+        stratify=out[label_column],
+    )
+    # second split: separate training and validation from remaining data
+    val_size_adjusted = split_probabilities[1] / (split_probabilities[0] + split_probabilities[1])
+    train_idx, val_idx = train_test_split(
+        train_val_idx,
+        test_size=val_size_adjusted,
+        random_state=random_state,
+        stratify=out.loc[train_val_idx, label_column],
+    )
+    # assign split values
+    out.loc[train_idx, split_column] = 0
+    out.loc[val_idx, split_column] = 1
+    out.loc[test_idx, split_column] = 2
+    logger.info("Successfully applied stratified random split")
+    logger.info(f"Split counts: Train={len(train_idx)}, Val={len(val_idx)}, Test={len(test_idx)}")
+    return out.astype({split_column: int})
+
+
 class Backend(Protocol):
     """Interface for a machine learning backend."""
-
     def prepare_config(
         self,
         config_params: Dict[str, Any],
@@ -513,14 +578,12 @@ class Backend(Protocol):
 
 class LudwigDirectBackend:
     """Backend for running Ludwig experiments directly via the internal experiment_cli function."""
-
     def prepare_config(
         self,
         config_params: Dict[str, Any],
         split_config: Dict[str, Any],
     ) -> str:
         logger.info("LudwigDirectBackend: Preparing YAML configuration.")
-
         model_name = config_params.get("model_name", "resnet18")
         use_pretrained = config_params.get("use_pretrained", False)
         fine_tune = config_params.get("fine_tune", False)
@@ -543,9 +606,7 @@ class LudwigDirectBackend:
             }
         else:
             encoder_config = {"type": raw_encoder}
-
         batch_size_cfg = batch_size or "auto"
-
         label_column_path = config_params.get("label_column_data_path")
         label_series = None
         if label_column_path is not None and Path(label_column_path).exists():
@@ -553,7 +614,6 @@ class LudwigDirectBackend:
                 label_series = pd.read_csv(label_column_path)[LABEL_COLUMN_NAME]
             except Exception as e:
                 logger.warning(f"Could not read label column for task detection: {e}")
-
         if (
             label_series is not None
             and ptypes.is_numeric_dtype(label_series.dtype)
@@ -562,9 +622,7 @@ class LudwigDirectBackend:
             task_type = "regression"
         else:
             task_type = "classification"
-
         config_params["task_type"] = task_type
-
         image_feat: Dict[str, Any] = {
             "name": IMAGE_PATH_COLUMN_NAME,
             "type": "image",
@@ -572,7 +630,6 @@ class LudwigDirectBackend:
         }
         if config_params.get("augmentation") is not None:
             image_feat["augmentation"] = config_params["augmentation"]
-
         if task_type == "regression":
             output_feat = {
                 "name": LABEL_COLUMN_NAME,
@@ -588,7 +645,6 @@ class LudwigDirectBackend:
                 },
             }
             val_metric = config_params.get("validation_metric", "mean_squared_error")
-
         else:
             num_unique_labels = (
                 label_series.nunique() if label_series is not None else 2
@@ -598,7 +654,6 @@ class LudwigDirectBackend:
             if output_type == "binary" and config_params.get("threshold") is not None:
                 output_feat["threshold"] = float(config_params["threshold"])
             val_metric = None
-
         conf: Dict[str, Any] = {
             "model_type": "ecd",
             "input_features": [image_feat],
@@ -618,7 +673,6 @@ class LudwigDirectBackend:
                 "in_memory": False,
             },
         }
-
         logger.debug("LudwigDirectBackend: Config dict built.")
         try:
             yaml_str = yaml.dump(conf, sort_keys=False, indent=2)
@@ -640,7 +694,6 @@ class LudwigDirectBackend:
     ) -> None:
         """Invoke Ludwig's internal experiment_cli function to run the experiment."""
         logger.info("LudwigDirectBackend: Starting experiment execution.")
-
         try:
             from ludwig.experiment import experiment_cli
         except ImportError as e:
@@ -649,9 +702,7 @@ class LudwigDirectBackend:
                 exc_info=True,
             )
             raise RuntimeError("Ludwig import failed.") from e
-
         output_dir.mkdir(parents=True, exist_ok=True)
-
         try:
             experiment_cli(
                 dataset=str(dataset_path),
@@ -682,16 +733,13 @@ class LudwigDirectBackend:
             output_dir.glob("experiment_run*"),
             key=lambda p: p.stat().st_mtime,
         )
-
         if not exp_dirs:
             logger.warning(f"No experiment run directories found in {output_dir}")
             return None
-
         progress_file = exp_dirs[-1] / "model" / "training_progress.json"
         if not progress_file.exists():
             logger.warning(f"No training_progress.json found in {progress_file}")
             return None
-
         try:
             with progress_file.open("r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -727,7 +775,6 @@ class LudwigDirectBackend:
     def generate_plots(self, output_dir: Path) -> None:
         """Generate all registered Ludwig visualizations for the latest experiment run."""
         logger.info("Generating all Ludwig visualizations…")
-
         test_plots = {
             "compare_performance",
             "compare_classifiers_performance_from_prob",
@@ -751,7 +798,6 @@ class LudwigDirectBackend:
             "learning_curves",
             "compare_classifiers_performance_subset",
         }
-
         output_dir = Path(output_dir)
         exp_dirs = sorted(
             output_dir.glob("experiment_run*"),
@@ -761,7 +807,6 @@ class LudwigDirectBackend:
             logger.warning(f"No experiment run dirs found in {output_dir}")
             return
         exp_dir = exp_dirs[-1]
-
         viz_dir = exp_dir / "visualizations"
         viz_dir.mkdir(exist_ok=True)
         train_viz = viz_dir / "train"
@@ -776,7 +821,6 @@ class LudwigDirectBackend:
         test_stats = _check(exp_dir / TEST_STATISTICS_FILE_NAME)
         probs_path = _check(exp_dir / PREDICTIONS_PARQUET_FILE_NAME)
         gt_metadata = _check(exp_dir / "model" / TRAIN_SET_METADATA_FILE_NAME)
-
         dataset_path = None
         split_file = None
         desc = exp_dir / DESCRIPTION_FILE_NAME
@@ -785,7 +829,6 @@ class LudwigDirectBackend:
                 cfg = json.load(f)
             dataset_path = _check(Path(cfg.get("dataset", "")))
             split_file = _check(Path(get_split_path(cfg.get("dataset", ""))))
-
         output_feature = ""
         if desc.exists():
             try:
@@ -796,7 +839,6 @@ class LudwigDirectBackend:
             with open(test_stats, "r") as f:
                 stats = json.load(f)
             output_feature = next(iter(stats.keys()), "")
-
         viz_registry = get_visualizations_registry()
         for viz_name, viz_func in viz_registry.items():
             if viz_name in train_plots:
@@ -805,7 +847,6 @@ class LudwigDirectBackend:
                 viz_dir_plot = test_viz
             else:
                 continue
-
             try:
                 viz_func(
                     training_statistics=[training_stats] if training_stats else [],
@@ -825,7 +866,6 @@ class LudwigDirectBackend:
                 logger.info(f"✔ Generated {viz_name}")
             except Exception as e:
                 logger.warning(f"✘ Skipped {viz_name}: {e}")
-
         logger.info(f"All visualizations written to {viz_dir}")
 
     def generate_html_report(
@@ -841,7 +881,6 @@ class LudwigDirectBackend:
         report_path = cwd / report_name
         output_dir = Path(output_dir)
         output_type = None
-
         exp_dirs = sorted(
             output_dir.glob("experiment_run*"),
             key=lambda p: p.stat().st_mtime,
@@ -849,14 +888,11 @@ class LudwigDirectBackend:
         if not exp_dirs:
             raise RuntimeError(f"No 'experiment*' dirs found in {output_dir}")
         exp_dir = exp_dirs[-1]
-
         base_viz_dir = exp_dir / "visualizations"
         train_viz_dir = base_viz_dir / "train"
         test_viz_dir = base_viz_dir / "test"
-
         html = get_html_template()
         html += f"<h1>{title}</h1>"
-
         metrics_html = ""
         train_val_metrics_html = ""
         test_metrics_html = ""
@@ -882,7 +918,6 @@ class LudwigDirectBackend:
             logger.warning(
                 f"Could not load stats for HTML report: {type(e).__name__}: {e}"
             )
-
         config_html = ""
         training_progress = self.get_training_process(output_dir)
         try:
@@ -897,10 +932,8 @@ class LudwigDirectBackend:
         ) -> str:
             if not dir_path.exists():
                 return f"<h2>{title}</h2><p><em>Directory not found.</em></p>"
-
             # collect every PNG
             imgs = list(dir_path.glob("*.png"))
-
             # --- EXCLUDE Ludwig's base confusion matrix and any top-N confusion_matrix files ---
             imgs = [
                 img for img in imgs
@@ -910,10 +943,8 @@ class LudwigDirectBackend:
                     or img.name == "roc_curves.png"
                 )
             ]
-
             if not imgs:
                 return f"<h2>{title}</h2><p><em>No plots found.</em></p>"
-
             if output_type == "binary":
                 order = [
                     "roc_curves_from_prediction_statistics.png",
@@ -925,7 +956,6 @@ class LudwigDirectBackend:
                 ordered = [img_names[n] for n in order if n in img_names]
                 others = sorted(img for img in imgs if img.name not in order)
                 imgs = ordered + others
-
             elif output_type == "category":
                 unwanted = {
                     "compare_classifiers_multiclass_multimetric__label_best10.png",
@@ -944,11 +974,9 @@ class LudwigDirectBackend:
                 ordered = [img_map[n] for n in display_order if n in img_map]
                 others = sorted(img for img in valid_imgs if img.name not in display_order)
                 imgs = ordered + others
-
             else:
                 # regression: just sort whatever's left
                 imgs = sorted(imgs)
-
             # render each remaining PNG
             html = ""
             for img in imgs:
@@ -964,13 +992,10 @@ class LudwigDirectBackend:
             return html
 
         tab1_content = config_html + metrics_html
-
         tab2_content = train_val_metrics_html + render_img_section(
             "Training and Validation Visualizations", train_viz_dir
         )
-
         # --- Predictions vs Ground Truth table ---
-
         preds_section = ""
         parquet_path = exp_dir / PREDICTIONS_PARQUET_FILE_NAME
         if output_type == "regression" and parquet_path.exists():
@@ -985,15 +1010,12 @@ class LudwigDirectBackend:
                 if pred_col is None:
                     raise ValueError("No prediction column found in Parquet output")
                 df_pred = df_preds[[pred_col]].rename(columns={pred_col: "prediction"})
-
                 # 2) load ground truth for the test split from prepared CSV
                 df_all = pd.read_csv(config["label_column_data_path"])
                 df_gt = df_all[df_all[SPLIT_COLUMN_NAME] == 2][LABEL_COLUMN_NAME].reset_index(drop=True)
-
                 # 3) concatenate side-by-side
                 df_table = pd.concat([df_gt, df_pred], axis=1)
                 df_table.columns = [LABEL_COLUMN_NAME, "prediction"]
-
                 # 4) render as HTML
                 preds_html = df_table.to_html(index=False, classes="predictions-table")
                 preds_section = (
@@ -1004,9 +1026,7 @@ class LudwigDirectBackend:
                 )
             except Exception as e:
                 logger.warning(f"Could not build Predictions vs GT table: {e}")
-
         tab3_content = test_metrics_html + preds_section
-
         if output_type in ("binary", "category"):
             training_stats_path = exp_dir / "training_statistics.json"
             interactive_plots = build_classification_plots(
@@ -1042,7 +1062,6 @@ class LudwigDirectBackend:
         tabbed_html = build_tabbed_html(tab1_content, tab2_content, tab3_content)
         modal_html = get_metrics_help_modal()
         html += tabbed_html + modal_html + get_html_closing()
-
         try:
             with open(report_path, "w") as f:
                 f.write(html)
@@ -1050,13 +1069,11 @@ class LudwigDirectBackend:
         except Exception as e:
             logger.error(f"Failed to write HTML report: {e}")
             raise
-
         return report_path
 
 
 class WorkflowOrchestrator:
     """Manages the image-classification workflow."""
-
     def __init__(self, args: argparse.Namespace, backend: Backend):
         self.args = args
         self.backend = backend
@@ -1096,19 +1113,16 @@ class WorkflowOrchestrator:
         """Load CSV, update image paths, handle splits, and write prepared CSV."""
         if not self.temp_dir or not self.image_extract_dir:
             raise RuntimeError("Temp dirs not initialized before data prep.")
-
         try:
             df = pd.read_csv(self.args.csv_file)
             logger.info(f"Loaded CSV: {self.args.csv_file}")
         except Exception:
             logger.error("Error loading CSV file", exc_info=True)
             raise
-
         required = {IMAGE_PATH_COLUMN_NAME, LABEL_COLUMN_NAME}
         missing = required - set(df.columns)
         if missing:
             raise ValueError(f"Missing CSV columns: {', '.join(missing)}")
-
         try:
             df[IMAGE_PATH_COLUMN_NAME] = df[IMAGE_PATH_COLUMN_NAME].apply(
                 lambda p: str((self.image_extract_dir / p).resolve())
@@ -1116,30 +1130,33 @@ class WorkflowOrchestrator:
         except Exception:
             logger.error("Error updating image paths", exc_info=True)
             raise
-
         if SPLIT_COLUMN_NAME in df.columns:
             df, split_config, split_info = self._process_fixed_split(df)
         else:
-            logger.info("No split column; using random split")
+            logger.info("No split column; creating stratified random split")
+            df = create_stratified_random_split(
+                df=df,
+                split_column=SPLIT_COLUMN_NAME,
+                split_probabilities=self.args.split_probabilities,
+                random_state=self.args.random_seed,
+                label_column=LABEL_COLUMN_NAME,
+            )
             split_config = {
-                "type": "random",
-                "probabilities": self.args.split_probabilities,
+                "type": "fixed",
+                "column": SPLIT_COLUMN_NAME,
             }
             split_info = (
-                f"No split column in CSV. Used random split: "
+                f"No split column in CSV. Created stratified random split: "
                 f"{[int(p * 100) for p in self.args.split_probabilities]}% "
-                f"for train/val/test."
+                f"for train/val/test with balanced label distribution."
             )
-
         final_csv = self.temp_dir / TEMP_CSV_FILENAME
         try:
-
             df.to_csv(final_csv, index=False)
             logger.info(f"Saved prepared data to {final_csv}")
         except Exception:
             logger.error("Error saving prepared CSV", exc_info=True)
             raise
-
         return final_csv, split_config, split_info
 
     def _process_fixed_split(
@@ -1154,10 +1171,8 @@ class WorkflowOrchestrator:
             )
             if df[SPLIT_COLUMN_NAME].isna().any():
                 logger.warning("Split column contains non-numeric/missing values.")
-
             unique = set(df[SPLIT_COLUMN_NAME].dropna().unique())
             logger.info(f"Unique split values: {unique}")
-
             if unique == {0, 2}:
                 df = split_data_0_2(
                     df,
@@ -1170,7 +1185,7 @@ class WorkflowOrchestrator:
                     "Detected a split column (with values 0 and 2) in the input CSV. "
                     f"Used this column as a base and reassigned "
                     f"{self.args.validation_size * 100:.1f}% "
-                    "of the training set (originally labeled 0) to validation (labeled 1)."
+                    "of the training set (originally labeled 0) to validation (labeled 1) using stratified sampling."
                 )
                 logger.info("Applied custom 0/2 split.")
             elif unique.issubset({0, 1, 2}):
@@ -1178,9 +1193,7 @@ class WorkflowOrchestrator:
                 logger.info("Using fixed split as-is.")
             else:
                 raise ValueError(f"Unexpected split values: {unique}")
-
             return df, {"type": "fixed", "column": SPLIT_COLUMN_NAME}, split_info
-
         except Exception:
             logger.error("Error processing fixed split", exc_info=True)
             raise
@@ -1196,14 +1209,11 @@ class WorkflowOrchestrator:
         """Execute the full workflow end-to-end."""
         logger.info("Starting workflow...")
         self.args.output_dir.mkdir(parents=True, exist_ok=True)
-
         try:
             self._create_temp_dirs()
             self._extract_images()
             csv_path, split_cfg, split_info = self._prepare_data()
-
             use_pretrained = self.args.use_pretrained or self.args.fine_tune
-
             backend_args = {
                 "model_name": self.args.model_name,
                 "fine_tune": self.args.fine_tune,
@@ -1220,11 +1230,9 @@ class WorkflowOrchestrator:
                 "threshold": self.args.threshold,
             }
             yaml_str = self.backend.prepare_config(backend_args, split_cfg)
-
             config_file = self.temp_dir / TEMP_CONFIG_FILENAME
             config_file.write_text(yaml_str)
             logger.info(f"Wrote backend config: {config_file}")
-
             self.backend.run_experiment(
                 csv_path,
                 config_file,
@@ -1402,9 +1410,7 @@ def main():
             "Overrides default 0.5."
         )
     )
-
     args = parser.parse_args()
-
     if not 0.0 <= args.validation_size <= 1.0:
         parser.error("validation-size must be between 0.0 and 1.0")
     if not args.csv_file.is_file():
@@ -1417,10 +1423,8 @@ def main():
             setattr(args, "augmentation", augmentation_setup)
         except ValueError as e:
             parser.error(str(e))
-
     backend_instance = LudwigDirectBackend()
     orchestrator = WorkflowOrchestrator(args, backend_instance)
-
     exit_code = 0
     try:
         orchestrator.run()
@@ -1435,7 +1439,6 @@ def main():
 if __name__ == "__main__":
     try:
         import ludwig
-
         logger.debug(f"Found Ludwig version: {ludwig.globals.LUDWIG_VERSION}")
     except ImportError:
         logger.error(
@@ -1443,5 +1446,4 @@ if __name__ == "__main__":
             "('pip install ludwig[image]')"
         )
         sys.exit(1)
-
     main()
