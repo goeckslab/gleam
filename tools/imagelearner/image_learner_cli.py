@@ -21,7 +21,7 @@ from constants import (
     SPLIT_COLUMN_NAME,
     TEMP_CONFIG_FILENAME,
     TEMP_CSV_FILENAME,
-    TEMP_DIR_PREFIX
+    TEMP_DIR_PREFIX,
 )
 from ludwig.globals import (
     DESCRIPTION_FILE_NAME,
@@ -38,13 +38,13 @@ from utils import (
     encode_image_to_base64,
     get_html_closing,
     get_html_template,
-    get_metrics_help_modal
+    get_metrics_help_modal,
 )
 
 # --- Logging Setup ---
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s %(levelname)s %(name)s: %(message)s',
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger("ImageLearner")
 
@@ -134,7 +134,9 @@ def format_config_table_html(
                         val_str = val
             else:
                 val_str = val if val is not None else "N/A"
-            if val_str == "N/A" and key not in ["task_type"]:  # Skip if N/A for non-essential
+            if val_str == "N/A" and key not in [
+                "task_type"
+            ]:  # Skip if N/A for non-essential
                 continue
         rows.append(
             f"<tr>"
@@ -166,7 +168,7 @@ def format_config_table_html(
               <th style="padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Value</th>
             </tr></thead>
             <tbody>
-              {''.join(rows)}
+              {"".join(rows)}
             </tbody>
           </table>
         </div><br>
@@ -331,7 +333,7 @@ def format_stats_table_html(train_stats: dict, test_stats: dict) -> str:
     for row in rows:
         html += generate_table_row(
             row,
-            "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;"
+            "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;",
         )
     html += "</tbody></table></div><br>"
     return html
@@ -372,7 +374,7 @@ def format_train_val_stats_table_html(train_stats: dict, test_stats: dict) -> st
     for row in rows:
         html += generate_table_row(
             row,
-            "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;"
+            "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;",
         )
     html += "</tbody></table></div><br>"
     return html
@@ -407,7 +409,7 @@ def format_test_merged_stats_table_html(
     for row in rows:
         html += generate_table_row(
             row,
-            "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;"
+            "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;",
         )
     html += "</tbody></table></div><br>"
     return html
@@ -436,10 +438,14 @@ def split_data_0_2(
             min_samples_per_class = label_counts.min()
             if min_samples_per_class * validation_size < 1:
                 # Adjust validation_size to ensure at least 1 sample per class, but do not exceed original validation_size
-                adjusted_validation_size = min(validation_size, 1.0 / min_samples_per_class)
+                adjusted_validation_size = min(
+                    validation_size, 1.0 / min_samples_per_class
+                )
                 if adjusted_validation_size != validation_size:
                     validation_size = adjusted_validation_size
-                    logger.info(f"Adjusted validation_size to {validation_size:.3f} to ensure at least one sample per class in validation")
+                    logger.info(
+                        f"Adjusted validation_size to {validation_size:.3f} to ensure at least one sample per class in validation"
+                    )
             stratify_arr = out.loc[idx_train, label_column]
             logger.info("Using stratified split for validation set")
         else:
@@ -486,7 +492,9 @@ def create_stratified_random_split(
     # initialize split column
     out[split_column] = 0
     if not label_column or label_column not in out.columns:
-        logger.warning("No label column found; using random split without stratification")
+        logger.warning(
+            "No label column found; using random split without stratification"
+        )
         # fall back to simple random assignment
         indices = out.index.tolist()
         np.random.seed(random_state)
@@ -495,8 +503,8 @@ def create_stratified_random_split(
         n_train = int(n_total * split_probabilities[0])
         n_val = int(n_total * split_probabilities[1])
         out.loc[indices[:n_train], split_column] = 0
-        out.loc[indices[n_train:n_train + n_val], split_column] = 1
-        out.loc[indices[n_train + n_val:], split_column] = 2
+        out.loc[indices[n_train : n_train + n_val], split_column] = 1
+        out.loc[indices[n_train + n_val :], split_column] = 2
         return out.astype({split_column: int})
     # check if stratification is possible
     label_counts = out[label_column].value_counts()
@@ -517,8 +525,8 @@ def create_stratified_random_split(
         n_train = int(n_total * split_probabilities[0])
         n_val = int(n_total * split_probabilities[1])
         out.loc[indices[:n_train], split_column] = 0
-        out.loc[indices[n_train:n_train + n_val], split_column] = 1
-        out.loc[indices[n_train + n_val:], split_column] = 2
+        out.loc[indices[n_train : n_train + n_val], split_column] = 1
+        out.loc[indices[n_train + n_val :], split_column] = 2
         return out.astype({split_column: int})
     logger.info("Using stratified random split for train/validation/test sets")
     # first split: separate test set
@@ -529,7 +537,9 @@ def create_stratified_random_split(
         stratify=out[label_column],
     )
     # second split: separate training and validation from remaining data
-    val_size_adjusted = split_probabilities[1] / (split_probabilities[0] + split_probabilities[1])
+    val_size_adjusted = split_probabilities[1] / (
+        split_probabilities[0] + split_probabilities[1]
+    )
     train_idx, val_idx = train_test_split(
         train_val_idx,
         test_size=val_size_adjusted,
@@ -541,18 +551,20 @@ def create_stratified_random_split(
     out.loc[val_idx, split_column] = 1
     out.loc[test_idx, split_column] = 2
     logger.info("Successfully applied stratified random split")
-    logger.info(f"Split counts: Train={len(train_idx)}, Val={len(val_idx)}, Test={len(test_idx)}")
+    logger.info(
+        f"Split counts: Train={len(train_idx)}, Val={len(val_idx)}, Test={len(test_idx)}"
+    )
     return out.astype({split_column: int})
 
 
 class Backend(Protocol):
     """Interface for a machine learning backend."""
+
     def prepare_config(
         self,
         config_params: Dict[str, Any],
         split_config: Dict[str, Any],
-    ) -> str:
-        ...
+    ) -> str: ...
 
     def run_experiment(
         self,
@@ -560,11 +572,9 @@ class Backend(Protocol):
         config_path: Path,
         output_dir: Path,
         random_seed: int,
-    ) -> None:
-        ...
+    ) -> None: ...
 
-    def generate_plots(self, output_dir: Path) -> None:
-        ...
+    def generate_plots(self, output_dir: Path) -> None: ...
 
     def generate_html_report(
         self,
@@ -572,12 +582,12 @@ class Backend(Protocol):
         output_dir: str,
         config: Dict[str, Any],
         split_info: str,
-    ) -> Path:
-        ...
+    ) -> Path: ...
 
 
 class LudwigDirectBackend:
     """Backend for running Ludwig experiments directly via the internal experiment_cli function."""
+
     def prepare_config(
         self,
         config_params: Dict[str, Any],
@@ -922,7 +932,7 @@ class LudwigDirectBackend:
         training_progress = self.get_training_process(output_dir)
         try:
             config_html = format_config_table_html(
-                config, split_info, training_progress
+                config, split_info, training_progress, output_type
             )
         except Exception as e:
             logger.warning(f"Could not load config for HTML report: {e}")
@@ -936,7 +946,8 @@ class LudwigDirectBackend:
             imgs = list(dir_path.glob("*.png"))
             # --- EXCLUDE Ludwig's base confusion matrix and any top-N confusion_matrix files ---
             imgs = [
-                img for img in imgs
+                img
+                for img in imgs
                 if not (
                     img.name == "confusion_matrix.png"
                     or img.name.startswith("confusion_matrix__label_top")
@@ -972,7 +983,9 @@ class LudwigDirectBackend:
                 valid_imgs = [img for img in imgs if img.name not in unwanted]
                 img_map = {img.name: img for img in valid_imgs}
                 ordered = [img_map[n] for n in display_order if n in img_map]
-                others = sorted(img for img in valid_imgs if img.name not in display_order)
+                others = sorted(
+                    img for img in valid_imgs if img.name not in display_order
+                )
                 imgs = ordered + others
             else:
                 # regression: just sort whatever's left
@@ -1012,7 +1025,9 @@ class LudwigDirectBackend:
                 df_pred = df_preds[[pred_col]].rename(columns={pred_col: "prediction"})
                 # 2) load ground truth for the test split from prepared CSV
                 df_all = pd.read_csv(config["label_column_data_path"])
-                df_gt = df_all[df_all[SPLIT_COLUMN_NAME] == 2][LABEL_COLUMN_NAME].reset_index(drop=True)
+                df_gt = df_all[df_all[SPLIT_COLUMN_NAME] == 2][
+                    LABEL_COLUMN_NAME
+                ].reset_index(drop=True)
                 # 3) concatenate side-by-side
                 df_table = pd.concat([df_gt, df_pred], axis=1)
                 df_table.columns = [LABEL_COLUMN_NAME, "prediction"]
@@ -1036,7 +1051,9 @@ class LudwigDirectBackend:
             for plot in interactive_plots:
                 # 2) inject the static "roc_curves_from_prediction_statistics.png"
                 if plot["title"] == "ROC-AUC":
-                    static_img = test_viz_dir / "roc_curves_from_prediction_statistics.png"
+                    static_img = (
+                        test_viz_dir / "roc_curves_from_prediction_statistics.png"
+                    )
                     if static_img.exists():
                         b64 = encode_image_to_base64(str(static_img))
                         tab3_content += (
@@ -1054,9 +1071,7 @@ class LudwigDirectBackend:
                     + plot["html"]
                 )
             tab3_content += render_img_section(
-                "Test Visualizations",
-                test_viz_dir,
-                output_type
+                "Test Visualizations", test_viz_dir, output_type
             )
         # assemble the tabs and help modal
         tabbed_html = build_tabbed_html(tab1_content, tab2_content, tab3_content)
@@ -1074,6 +1089,7 @@ class LudwigDirectBackend:
 
 class WorkflowOrchestrator:
     """Manages the image-classification workflow."""
+
     def __init__(self, args: argparse.Namespace, backend: Backend):
         self.args = args
         self.backend = backend
@@ -1374,8 +1390,7 @@ def main():
         action=SplitProbAction,
         default=[0.7, 0.1, 0.2],
         help=(
-            "Random split proportions (e.g., 0.7 0.1 0.2)."
-            "Only used if no split column."
+            "Random split proportions (e.g., 0.7 0.1 0.2).Only used if no split column."
         ),
     )
     parser.add_argument(
@@ -1408,7 +1423,7 @@ def main():
         help=(
             "Decision threshold for binary classification (0.0–1.0)."
             "Overrides default 0.5."
-        )
+        ),
     )
     args = parser.parse_args()
     if not 0.0 <= args.validation_size <= 1.0:
@@ -1439,6 +1454,7 @@ def main():
 if __name__ == "__main__":
     try:
         import ludwig
+
         logger.debug(f"Found Ludwig version: {ludwig.globals.LUDWIG_VERSION}")
     except ImportError:
         logger.error(
