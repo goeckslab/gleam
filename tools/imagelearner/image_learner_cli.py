@@ -577,7 +577,7 @@ class Backend(Protocol):
         self,
         config_params: Dict[str, Any],
         split_config: Dict[str, Any],
-    ) -> str: 
+    ) -> str:
         ...
 
     def run_experiment(
@@ -586,10 +586,10 @@ class Backend(Protocol):
         config_path: Path,
         output_dir: Path,
         random_seed: int,
-    ) -> None: 
+    ) -> None:
         ...
 
-    def generate_plots(self, output_dir: Path) -> None: 
+    def generate_plots(self, output_dir: Path) -> None:
         ...
 
     def generate_html_report(
@@ -598,7 +598,7 @@ class Backend(Protocol):
         output_dir: str,
         config: Dict[str, Any],
         split_info: str,
-    ) -> Path: 
+    ) -> Path:
         ...
 
 
