@@ -516,8 +516,8 @@ def create_stratified_random_split(
         n_train = int(n_total * split_probabilities[0])
         n_val = int(n_total * split_probabilities[1])
         out.loc[indices[:n_train], split_column] = 0
-        out.loc[indices[n_train : n_train + n_val], split_column] = 1
-        out.loc[indices[n_train + n_val :], split_column] = 2
+        out.loc[indices[n_train:n_train + n_val], split_column] = 1
+        out.loc[indices[n_train + n_val:], split_column] = 2
         return out.astype({split_column: int})
     # check if stratification is possible
     label_counts = out[label_column].value_counts()
@@ -538,8 +538,8 @@ def create_stratified_random_split(
         n_train = int(n_total * split_probabilities[0])
         n_val = int(n_total * split_probabilities[1])
         out.loc[indices[:n_train], split_column] = 0
-        out.loc[indices[n_train : n_train + n_val], split_column] = 1
-        out.loc[indices[n_train + n_val :], split_column] = 2
+        out.loc[indices[n_train:n_train + n_val], split_column] = 1
+        out.loc[indices[n_train + n_val:], split_column] = 2
         return out.astype({split_column: int})
     logger.info("Using stratified random split for train/validation/test sets")
     # first split: separate test set
@@ -577,7 +577,8 @@ class Backend(Protocol):
         self,
         config_params: Dict[str, Any],
         split_config: Dict[str, Any],
-    ) -> str: ...
+    ) -> str: 
+        ...
 
     def run_experiment(
         self,
@@ -585,9 +586,11 @@ class Backend(Protocol):
         config_path: Path,
         output_dir: Path,
         random_seed: int,
-    ) -> None: ...
+    ) -> None: 
+        ...
 
-    def generate_plots(self, output_dir: Path) -> None: ...
+    def generate_plots(self, output_dir: Path) -> None: 
+        ...
 
     def generate_html_report(
         self,
@@ -595,7 +598,8 @@ class Backend(Protocol):
         output_dir: str,
         config: Dict[str, Any],
         split_info: str,
-    ) -> Path: ...
+    ) -> Path: 
+        ...
 
 
 class LudwigDirectBackend:
