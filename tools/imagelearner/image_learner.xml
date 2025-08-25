@@ -46,6 +46,9 @@
                         --batch-size "$batch_size"
                     #end if
                     --split-probabilities "$train_split" "$val_split" "$test_split"
+                    #if $threshold
+                        --threshold "$threshold"
+                    #end if
                 #end if
                 #if $augmentation
                     --augmentation "$augmentation"

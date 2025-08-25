@@ -67,9 +67,7 @@ def format_config_table_html(
         "early_stop",
         "threshold",
     ]
-
     rows = []
-
     for key in display_keys:
         val = config.get(key, None)
         if key == "threshold":
@@ -255,7 +253,6 @@ def extract_metrics_from_json(
                 "roc_auc": get_last_value(label_stats, "roc_auc"),
                 "hits_at_k": get_last_value(label_stats, "hits_at_k"),
             }
-
     # Test metrics: dynamic extraction according to exclusions
     test_label_stats = test_stats.get("label", {})
     if not test_label_stats:
@@ -263,13 +260,11 @@ def extract_metrics_from_json(
     else:
         combined_stats = test_stats.get("combined", {})
         overall_stats = test_label_stats.get("overall_stats", {})
-
         # Define exclusions
         if output_type == "binary":
             exclude = {"per_class_stats", "precision_recall_curve", "roc_curve"}
         else:
             exclude = {"per_class_stats", "confusion_matrix"}
-
         # 1. Get all scalar test_label_stats not excluded
         test_metrics = {}
         for k, v in test_label_stats.items():
@@ -279,11 +274,9 @@ def extract_metrics_from_json(
                 continue
             if isinstance(v, (int, float, str, bool)):
                 test_metrics[k] = v
-
         # 2. Add overall_stats (flattened)
         for k, v in overall_stats.items():
             test_metrics[k] = v
-
         # 3. Optionally include combined/loss if present and not already
         if "loss" in combined_stats and "loss" not in test_metrics:
             test_metrics["loss"] = combined_stats["loss"]
@@ -324,10 +317,8 @@ def format_stats_table_html(train_stats: dict, test_stats: dict) -> str:
             te = all_metrics["test"].get(metric_key)
             if all(x is not None for x in [t, v, te]):
                 rows.append([display_name, f"{t:.4f}", f"{v:.4f}", f"{te:.4f}"])
-
     if not rows:
         return "<table><tr><td>No metric values found.</td></tr></table>"
-
     html = (
         "<h2 style='text-align: center;'>Model Performance Summary</h2>"
         "<div style='display: flex; justify-content: center;'>"
@@ -368,10 +359,8 @@ def format_train_val_stats_table_html(train_stats: dict, test_stats: dict) -> st
             v = all_metrics["validation"].get(metric_key)
             if t is not None and v is not None:
                 rows.append([display_name, f"{t:.4f}", f"{v:.4f}"])
-
     if not rows:
         return "<table><tr><td>No metric values found for Train/Validation.</td></tr></table>"
-
     html = (
         "<h2 style='text-align: center;'>Train/Validation Performance Summary</h2>"
         "<div style='display: flex; justify-content: center;'>"
@@ -406,10 +395,8 @@ def format_test_merged_stats_table_html(
         value = test_metrics[key]
         if value is not None:
             rows.append([display_name, f"{value:.4f}"])
-
     if not rows:
         return "<table><tr><td>No test metric values found.</td></tr></table>"
-
     html = (
         "<h2 style='text-align: center;'>Test Performance Summary</h2>"
         "<div style='display: flex; justify-content: center;'>"
@@ -607,7 +594,6 @@ class LudwigDirectBackend:
         split_config: Dict[str, Any],
     ) -> str:
         logger.info("LudwigDirectBackend: Preparing YAML configuration.")
-
         model_name = config_params.get("model_name", "resnet18")
         use_pretrained = config_params.get("use_pretrained", False)
         fine_tune = config_params.get("fine_tune", False)
@@ -630,9 +616,7 @@ class LudwigDirectBackend:
             }
         else:
             encoder_config = {"type": raw_encoder}
-
         batch_size_cfg = batch_size or "auto"
-
         label_column_path = config_params.get("label_column_data_path")
         label_series = None
         if label_column_path is not None and Path(label_column_path).exists():
@@ -640,7 +624,6 @@ class LudwigDirectBackend:
                 label_series = pd.read_csv(label_column_path)[LABEL_COLUMN_NAME]
             except Exception as e:
                 logger.warning(f"Could not read label column for task detection: {e}")
-
         if (
             label_series is not None
             and ptypes.is_numeric_dtype(label_series.dtype)
@@ -649,9 +632,7 @@ class LudwigDirectBackend:
             task_type = "regression"
         else:
             task_type = "classification"
-
         config_params["task_type"] = task_type
-
         image_feat: Dict[str, Any] = {
             "name": IMAGE_PATH_COLUMN_NAME,
             "type": "image",
@@ -659,7 +640,6 @@ class LudwigDirectBackend:
         }
         if config_params.get("augmentation") is not None:
             image_feat["augmentation"] = config_params["augmentation"]
-
         if task_type == "regression":
             output_feat = {
                 "name": LABEL_COLUMN_NAME,
@@ -675,7 +655,6 @@ class LudwigDirectBackend:
                 },
             }
             val_metric = config_params.get("validation_metric", "mean_squared_error")
-
         else:
             num_unique_labels = (
                 label_series.nunique() if label_series is not None else 2
@@ -685,7 +664,6 @@ class LudwigDirectBackend:
             if output_type == "binary" and config_params.get("threshold") is not None:
                 output_feat["threshold"] = float(config_params["threshold"])
             val_metric = None
-
         conf: Dict[str, Any] = {
             "model_type": "ecd",
             "input_features": [image_feat],
@@ -705,7 +683,6 @@ class LudwigDirectBackend:
                 "in_memory": False,
             },
         }
-
         logger.debug("LudwigDirectBackend: Config dict built.")
         try:
             yaml_str = yaml.dump(conf, sort_keys=False, indent=2)
@@ -727,7 +704,6 @@ class LudwigDirectBackend:
     ) -> None:
         """Invoke Ludwig's internal experiment_cli function to run the experiment."""
         logger.info("LudwigDirectBackend: Starting experiment execution.")
-
         try:
             from ludwig.experiment import experiment_cli
         except ImportError as e:
@@ -736,9 +712,7 @@ class LudwigDirectBackend:
                 exc_info=True,
             )
             raise RuntimeError("Ludwig import failed.") from e
-
         output_dir.mkdir(parents=True, exist_ok=True)
-
         try:
             experiment_cli(
                 dataset=str(dataset_path),
@@ -769,16 +743,13 @@ class LudwigDirectBackend:
             output_dir.glob("experiment_run*"),
             key=lambda p: p.stat().st_mtime,
         )
-
         if not exp_dirs:
             logger.warning(f"No experiment run directories found in {output_dir}")
             return None
-
         progress_file = exp_dirs[-1] / "model" / "training_progress.json"
         if not progress_file.exists():
             logger.warning(f"No training_progress.json found in {progress_file}")
             return None
-
         try:
             with progress_file.open("r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -814,7 +785,6 @@ class LudwigDirectBackend:
     def generate_plots(self, output_dir: Path) -> None:
         """Generate all registered Ludwig visualizations for the latest experiment run."""
         logger.info("Generating all Ludwig visualizations…")
-
         test_plots = {
             "compare_performance",
             "compare_classifiers_performance_from_prob",
@@ -838,7 +808,6 @@ class LudwigDirectBackend:
             "learning_curves",
             "compare_classifiers_performance_subset",
         }
-
         output_dir = Path(output_dir)
         exp_dirs = sorted(
             output_dir.glob("experiment_run*"),
@@ -848,7 +817,6 @@ class LudwigDirectBackend:
             logger.warning(f"No experiment run dirs found in {output_dir}")
             return
         exp_dir = exp_dirs[-1]
-
         viz_dir = exp_dir / "visualizations"
         viz_dir.mkdir(exist_ok=True)
         train_viz = viz_dir / "train"
@@ -863,7 +831,6 @@ class LudwigDirectBackend:
         test_stats = _check(exp_dir / TEST_STATISTICS_FILE_NAME)
         probs_path = _check(exp_dir / PREDICTIONS_PARQUET_FILE_NAME)
         gt_metadata = _check(exp_dir / "model" / TRAIN_SET_METADATA_FILE_NAME)
-
         dataset_path = None
         split_file = None
         desc = exp_dir / DESCRIPTION_FILE_NAME
@@ -872,7 +839,6 @@ class LudwigDirectBackend:
                 cfg = json.load(f)
             dataset_path = _check(Path(cfg.get("dataset", "")))
             split_file = _check(Path(get_split_path(cfg.get("dataset", ""))))
-
         output_feature = ""
         if desc.exists():
             try:
@@ -883,7 +849,6 @@ class LudwigDirectBackend:
             with open(test_stats, "r") as f:
                 stats = json.load(f)
             output_feature = next(iter(stats.keys()), "")
-
         viz_registry = get_visualizations_registry()
         for viz_name, viz_func in viz_registry.items():
             if viz_name in train_plots:
@@ -892,7 +857,6 @@ class LudwigDirectBackend:
                 viz_dir_plot = test_viz
             else:
                 continue
-
             try:
                 viz_func(
                     training_statistics=[training_stats] if training_stats else [],
@@ -912,7 +876,6 @@ class LudwigDirectBackend:
                 logger.info(f"✔ Generated {viz_name}")
             except Exception as e:
                 logger.warning(f"✘ Skipped {viz_name}: {e}")
-
         logger.info(f"All visualizations written to {viz_dir}")
 
     def generate_html_report(
@@ -928,7 +891,6 @@ class LudwigDirectBackend:
         report_path = cwd / report_name
         output_dir = Path(output_dir)
         output_type = None
-
         exp_dirs = sorted(
             output_dir.glob("experiment_run*"),
             key=lambda p: p.stat().st_mtime,
@@ -936,14 +898,11 @@ class LudwigDirectBackend:
         if not exp_dirs:
             raise RuntimeError(f"No 'experiment*' dirs found in {output_dir}")
         exp_dir = exp_dirs[-1]
-
         base_viz_dir = exp_dir / "visualizations"
         train_viz_dir = base_viz_dir / "train"
         test_viz_dir = base_viz_dir / "test"
-
         html = get_html_template()
         html += f"<h1>{title}</h1>"
-
         metrics_html = ""
         train_val_metrics_html = ""
         test_metrics_html = ""
@@ -969,12 +928,11 @@ class LudwigDirectBackend:
             logger.warning(
                 f"Could not load stats for HTML report: {type(e).__name__}: {e}"
             )
-
         config_html = ""
         training_progress = self.get_training_process(output_dir)
         try:
             config_html = format_config_table_html(
-                config, split_info, training_progress
+                config, split_info, training_progress, output_type
             )
         except Exception as e:
             logger.warning(f"Could not load config for HTML report: {e}")
@@ -1119,7 +1077,6 @@ class LudwigDirectBackend:
         tabbed_html = build_tabbed_html(tab1_content, tab2_content, tab3_content)
         modal_html = get_metrics_help_modal()
         html += tabbed_html + modal_html + get_html_closing()
-
         try:
             with open(report_path, "w") as f:
                 f.write(html)
@@ -1127,7 +1084,6 @@ class LudwigDirectBackend:
         except Exception as e:
             logger.error(f"Failed to write HTML report: {e}")
             raise
-
         return report_path
 
 
@@ -1173,19 +1129,16 @@ class WorkflowOrchestrator:
         """Load CSV, update image paths, handle splits, and write prepared CSV."""
         if not self.temp_dir or not self.image_extract_dir:
             raise RuntimeError("Temp dirs not initialized before data prep.")
-
         try:
             df = pd.read_csv(self.args.csv_file)
             logger.info(f"Loaded CSV: {self.args.csv_file}")
         except Exception:
             logger.error("Error loading CSV file", exc_info=True)
             raise
-
         required = {IMAGE_PATH_COLUMN_NAME, LABEL_COLUMN_NAME}
         missing = required - set(df.columns)
         if missing:
             raise ValueError(f"Missing CSV columns: {', '.join(missing)}")
-
         try:
             df[IMAGE_PATH_COLUMN_NAME] = df[IMAGE_PATH_COLUMN_NAME].apply(
                 lambda p: str((self.image_extract_dir / p).resolve())
@@ -1213,7 +1166,6 @@ class WorkflowOrchestrator:
                 f"{[int(p * 100) for p in self.args.split_probabilities]}% "
                 f"for train/val/test with balanced label distribution."
             )
-
         final_csv = self.temp_dir / TEMP_CSV_FILENAME
 
         try:
@@ -1222,7 +1174,6 @@ class WorkflowOrchestrator:
         except Exception:
             logger.error("Error saving prepared CSV", exc_info=True)
             raise
-
         return final_csv, split_config, split_info
 
     def _process_fixed_split(
@@ -1237,7 +1188,6 @@ class WorkflowOrchestrator:
             )
             if df[SPLIT_COLUMN_NAME].isna().any():
                 logger.warning("Split column contains non-numeric/missing values.")
-
             unique = set(df[SPLIT_COLUMN_NAME].dropna().unique())
             logger.info(f"Unique split values: {unique}")
             if unique == {0, 2}:
@@ -1260,9 +1210,7 @@ class WorkflowOrchestrator:
                 logger.info("Using fixed split as-is.")
             else:
                 raise ValueError(f"Unexpected split values: {unique}")
-
             return df, {"type": "fixed", "column": SPLIT_COLUMN_NAME}, split_info
-
         except Exception:
             logger.error("Error processing fixed split", exc_info=True)
             raise
@@ -1278,14 +1226,11 @@ class WorkflowOrchestrator:
         """Execute the full workflow end-to-end."""
         logger.info("Starting workflow...")
         self.args.output_dir.mkdir(parents=True, exist_ok=True)
-
         try:
             self._create_temp_dirs()
             self._extract_images()
             csv_path, split_cfg, split_info = self._prepare_data()
-
             use_pretrained = self.args.use_pretrained or self.args.fine_tune
-
             backend_args = {
                 "model_name": self.args.model_name,
                 "fine_tune": self.args.fine_tune,
@@ -1302,11 +1247,9 @@ class WorkflowOrchestrator:
                 "threshold": self.args.threshold,
             }
             yaml_str = self.backend.prepare_config(backend_args, split_cfg)
-
             config_file = self.temp_dir / TEMP_CONFIG_FILENAME
             config_file.write_text(yaml_str)
             logger.info(f"Wrote backend config: {config_file}")
-
             self.backend.run_experiment(
                 csv_path,
                 config_file,
@@ -1484,7 +1427,6 @@ def main():
         ),
     )
     args = parser.parse_args()
-
     if not 0.0 <= args.validation_size <= 1.0:
         parser.error("validation-size must be between 0.0 and 1.0")
     if not args.csv_file.is_file():
@@ -1497,10 +1439,8 @@ def main():
             setattr(args, "augmentation", augmentation_setup)
         except ValueError as e:
             parser.error(str(e))
-
     backend_instance = LudwigDirectBackend()
     orchestrator = WorkflowOrchestrator(args, backend_instance)
-
     exit_code = 0
     try:
         orchestrator.run()
@@ -1523,5 +1463,4 @@ if __name__ == "__main__":
             "('pip install ludwig[image]')"
         )
         sys.exit(1)
-
     main()
