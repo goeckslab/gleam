@@ -8,6 +8,8 @@ def get_html_template():
     <head>
         <meta charset="UTF-8">
         <title>Galaxy-Ludwig Report</title>
+
+        <!-- your existing styles -->
         <style>
           body {
               font-family: Arial, sans-serif;

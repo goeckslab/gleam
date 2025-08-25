@@ -136,10 +136,15 @@ class FeatureImportanceAnalyzer:
 
         predict_fn = model.predict_proba if hasattr(model, "predict_proba") else model.predict
 
-        explainer = shap.Explainer(predict_fn, bg)
-        self.shap_model_name = explainer.__class__.__name__
+        try:
+            explainer = shap.Explainer(predict_fn, bg)
+            self.shap_model_name = explainer.__class__.__name__
 
-        shap_values = explainer(X_data)
+            shap_values = explainer(X_data)
+        except Exception as e:
+            LOG.error(f"SHAP computation failed: {e}")
+            self.shap_model_name = None
+            return
 
         output_names = getattr(shap_values, "output_names", None)
         if output_names is None and hasattr(model, "classes_"):

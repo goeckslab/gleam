@@ -147,7 +147,8 @@
         <conditional name="scratch_fine_tune">
             <param name="use_pretrained" type="select"
                 label="Use pretrained weights?"
-                help="If select no, the encoder, combiner, and decoder will all be initialized and trained from scratch. (e.g. when your images are very different from ImageNet or no suitable pretrained model exists.)">
+                help="If select no, the encoder, combiner, and decoder will all be initialized and trained from scratch.  
+               (e.g. when your images are very different from ImageNet or no suitable pretrained model exists.)">
                 <option value="false">No</option>
                 <option value="true" selected="true">Yes</option>
             </param>
@@ -319,7 +320,7 @@
                 </element>
             </output_collection>
         </test>
-    </tests>
+        </tests>
     <help>
         <![CDATA[
 **What it does**
