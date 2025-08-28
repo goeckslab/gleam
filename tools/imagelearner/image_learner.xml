@@ -1,12 +1,16 @@
-<tool id="image_learner" name="Image Learner" version="0.1.1" profile="22.05">
+<tool id="image_learner" name="Image Learner" version="0.1.2" profile="22.05">
     <description>trains and evaluates an image classification/regression model</description>
     <requirements>
-        <container type="docker">quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1</container>
+        <container type="docker">quay.io/goeckslab/galaxy-ludwig-gpu:latest</container>
     </requirements>
     <required_files>
         <include path="utils.py" />
         <include path="constants.py" />
         <include path="image_learner_cli.py" />
+
+        <include path="MetaFormer/metaformer_models.py" />
+        <include path="MetaFormer/metaformer_stacked_cnn.py" />
+        <include path="MetaFormer/__init__.py" />
     </required_files>
     <stdio>
         <exit_code range="137" level="fatal_oom" description="Out of Memory" />
@@ -15,9 +19,7 @@
     <command>
         <![CDATA[
             #import re
-
             #if $input_csv
-
             #set $sanitized_input_csv = re.sub('[^\w\-_\.]', '_', $input_csv.element_identifier.strip())
             ln -sf '$input_csv' "./${sanitized_input_csv}";
             #end if
@@ -46,9 +48,15 @@
                         --batch-size "$batch_size"
                     #end if
                     --split-probabilities "$train_split" "$val_split" "$test_split"
+                    #if $threshold
+                        --threshold "$threshold"
+                    #end if
                 #end if
                 #if $augmentation
                     --augmentation "$augmentation"
+                #end if
+                #if $image_resize != "original"
+                    --image-resize "$image_resize"
                 #end if
                 --random-seed "$random_seed"
                 --output-dir "." &&
@@ -61,7 +69,7 @@
     </command>
 
     <inputs>
-        <param argument="input_csv" type="data" format="csv" optional="false" label="the metadata csv containing image_path column, label column and optional split column" />
+        <param name="input_csv" argument="input_csv" type="data" format="csv" optional="false" label="the metadata csv containing image_path column, label column and optional split column" />
         <param name="image_zip" type="data" format="zip" optional="false" label="Image zip" help="Image zip file containing your image data"/>
         <param name="model_name" type="select" optional="false" label="Select a model for your experiment" >
 
@@ -139,6 +147,62 @@
             <option value="mobilenet_v2">Mobilenet_v2</option>
             <option value="mobilenet_v3_large">Mobilenet_v3_large</option>
             <option value="mobilenet_v3_small">Mobilenet_v3_small</option>
+            <!-- MetaFormer Models -->
+            <option value="identityformer_s12">IdentityFormer S12</option>
+            <option value="identityformer_s24">IdentityFormer S24</option>
+            <option value="identityformer_s36">IdentityFormer S36</option>
+            <option value="identityformer_m36">IdentityFormer M36</option>
+            <option value="identityformer_m48">IdentityFormer M48</option>
+            <option value="randformer_s12">RandFormer S12</option>
+            <option value="randformer_s24">RandFormer S24</option>
+            <option value="randformer_s36">RandFormer S36</option>
+            <option value="randformer_m36">RandFormer M36</option>
+            <option value="randformer_m48">RandFormer M48</option>
+            <option value="poolformerv2_s12">PoolFormerV2 S12</option>
+            <option value="poolformerv2_s24">PoolFormerV2 S24</option>
+            <option value="poolformerv2_s36">PoolFormerV2 S36</option>
+            <option value="poolformerv2_m36">PoolFormerV2 M36</option>
+            <option value="poolformerv2_m48">PoolFormerV2 M48</option>
+            <option value="convformer_s18">ConvFormer S18</option>
+            <option value="convformer_s18_384">ConvFormer S18 384</option>
+            <option value="convformer_s18_in21ft1k">ConvFormer S18 ImageNet21k</option>
+            <option value="convformer_s18_384_in21ft1k">ConvFormer S18 384 ImageNet21k</option>
+            <option value="convformer_s18_in21k">ConvFormer S18 ImageNet21k Pretrained</option>
+            <option value="convformer_s36">ConvFormer S36</option>
+            <option value="convformer_s36_384">ConvFormer S36 384</option>
+            <option value="convformer_s36_in21ft1k">ConvFormer S36 ImageNet21k</option>
+            <option value="convformer_s36_384_in21ft1k">ConvFormer S36 384 ImageNet21k</option>
+            <option value="convformer_s36_in21k">ConvFormer S36 ImageNet21k Pretrained</option>
+            <option value="convformer_m36">ConvFormer M36</option>
+            <option value="convformer_m36_384">ConvFormer M36 384</option>
+            <option value="convformer_m36_in21ft1k">ConvFormer M36 ImageNet21k</option>
+            <option value="convformer_m36_384_in21ft1k">ConvFormer M36 384 ImageNet21k</option>
+            <option value="convformer_m36_in21k">ConvFormer M36 ImageNet21k Pretrained</option>
+            <option value="convformer_b36">ConvFormer B36</option>
+            <option value="convformer_b36_384">ConvFormer B36 384</option>
+            <option value="convformer_b36_in21ft1k">ConvFormer B36 ImageNet21k</option>
+            <option value="convformer_b36_384_in21ft1k">ConvFormer B36 384 ImageNet21k</option>
+            <option value="convformer_b36_in21k">ConvFormer B36 ImageNet21k Pretrained</option>
+            <option value="caformer_s18">CAFormer S18</option>
+            <option value="caformer_s18_384">CAFormer S18 384</option>
+            <option value="caformer_s18_in21ft1k">CAFormer S18 ImageNet21k</option>
+            <option value="caformer_s18_384_in21ft1k">CAFormer S18 384 ImageNet21k</option>
+            <option value="caformer_s18_in21k">CAFormer S18 ImageNet21k Pretrained</option>
+            <option value="caformer_s36">CAFormer S36</option>
+            <option value="caformer_s36_384">CAFormer S36 384</option>
+            <option value="caformer_s36_in21ft1k">CAFormer S36 ImageNet21k</option>
+            <option value="caformer_s36_384_in21ft1k">CAFormer S36 384 ImageNet21k</option>
+            <option value="caformer_s36_in21k">CAFormer S36 ImageNet21k Pretrained</option>
+            <option value="caformer_m36">CAFormer M36</option>
+            <option value="caformer_m36_384">CAFormer M36 384</option>
+            <option value="caformer_m36_in21ft1k">CAFormer M36 ImageNet21k</option>
+            <option value="caformer_m36_384_in21ft1k">CAFormer M36 384 ImageNet21k</option>
+            <option value="caformer_m36_in21k">CAFormer M36 ImageNet21k Pretrained</option>
+            <option value="caformer_b36">CAFormer B36</option>
+            <option value="caformer_b36_384">CAFormer B36 384</option>
+            <option value="caformer_b36_in21ft1k">CAFormer B36 ImageNet21k</option>
+            <option value="caformer_b36_384_in21ft1k">CAFormer B36 384 ImageNet21k</option>
+            <option value="caformer_b36_in21k">CAFormer B36 ImageNet21k Pretrained</option>
         </param>
 
         <conditional name="scratch_fine_tune">
@@ -150,7 +214,7 @@
             </param>
             <when value="true">
                 <param name="fine_tune" type="select" label="Fine tune the encoder?"
-                    help="Whether to fine tune the encoder(combiner and decoder will be fine-tued anyway)" >
+                    help="Whether to fine tune the encoder(combiner and decoder will be fine-tuned anyway)" >
                     <option value="false" >No</option>
                     <option value="true" selected="true">Yes</option>
                 </param>
@@ -159,6 +223,25 @@
                 <!-- No additional parameters to show if the user selects 'No' -->
             </when>
         </conditional>
+        <param argument="image_resize"
+               name="image_resize"
+               type="select"
+               label="Image Resize"
+               help="Select the size to resize images to. Original size keeps images as-is, while other options resize all images to the specified dimensions.">
+            <option value="original" selected="true">Original Size (No Resize)</option>
+            <option value="96x96">96x96</option>
+            <option value="128x128">128x128</option>
+            <option value="160x160">160x160</option>
+            <option value="192x192">192x192</option>
+            <option value="220x220">220x220</option>
+            <option value="224x224">224x224</option>
+            <option value="256x256">256x256</option>
+            <option value="299x299">299x299</option>
+            <option value="320x320">320x320</option>
+            <option value="384x384">384x384</option>
+            <option value="448x448">448x448</option>
+            <option value="512x512">512x512</option>
+        </param>
         <param argument="augmentation"
                name="augmentation"
                type="select"
@@ -217,8 +300,9 @@
                 <param name="test_split"  type="float"
                         label="Test split proportion (only works if no split column in the metadata csv)"
                         value="0.2"
-                        help="Fraction of data for testing (e.g., 0.2) train split + val split + test split should = 1."/>
-            </when>
+                                                help="Fraction of data for testing (e.g., 0.2) train split + val split + test split should = 1."/>
+                <param name="threshold" type="float" value="0.5" min="0.0" max="1.0" optional="true" label="Decision Threshold (binary only)" help="Set the decision threshold for binary classification (0.0-1.0). Only applies when task is binary; default is 0.5." />
+                </when>
             <when value="false">
                 <!-- No additional parameters to show if the user selects 'No' -->
             </when>
@@ -317,11 +401,52 @@
                 </element>
             </output_collection>
         </test>
-    </tests>
+        <test expect_num_outputs="3">
+            <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
+            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
+            <param name="model_name" value="caformer_s18" />
+            <output name="output_report">
+                <assert_contents>
+                    <has_text text="Results Summary" />
+                    <has_text text="Train/Validation Results" />
+                    <has_text text="Test Results" />
+                </assert_contents>
+            </output>
+
+            <output_collection name="output_pred_csv" type="list" >
+                <element name="predictions.csv" >
+                    <assert_contents>
+                        <has_n_columns n="1" />
+                    </assert_contents>
+                </element>
+            </output_collection>
+        </test>
+        <test expect_num_outputs="3">
+            <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
+            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
+            <param name="model_name" value="poolformerv2_s24" />
+            <output name="output_report">
+                <assert_contents>
+                    <has_text text="Results Summary" />
+                    <has_text text="Train/Validation Results" />
+                    <has_text text="Test Results" />
+                </assert_contents>
+            </output>
+
+            <output_collection name="output_pred_csv" type="list" >
+                <element name="predictions.csv" >
+                    <assert_contents>
+                        <has_n_columns n="1" />
+                    </assert_contents>
+                </element>
+            </output_collection>
+        </test>
+
+        </tests>
     <help>
         <![CDATA[
 **What it does**
-Image Learner for Classification/regression: trains and evaluates a image classification/regression model. 
+Image Learner for Classification/regression: trains and evaluates an image classification/regression model.
 It uses the metadata csv to find the image paths and labels. 
 The metadata csv should contain a column with the name 'image_path' and a column with the name 'label'.
 Optionally, you can also add a column with the name 'split' to specify which split each row belongs to (train, val, test). 
@@ -329,12 +454,9 @@ If you do not provide a split column, the tool will automatically split the data
 
 **If the selected label column has more than 10 unique values, the tool will automatically treat the task as a regression problem and apply appropriate metrics (e.g., MSE, RMSE, R²).**
 
-
 **Outputs**
-The tool will output a trained model in the form of a ludwig_model file,
-a report in the form of an HTML file, and a collection of CSV/json/png files containing the predictions, experiment stats and visualizations.
-The html report will contain metrics&experiment setup parameters, train&val plots and test plots.
-
+The tool outputs a trained model as a ludwig_model dataset (directory with weights and config). You can use it for inference, e.g.: `ludwig predict --dataset your.csv --model_path experiment_run/model`.
+ 
         ]]>
     </help>
     <citations>
