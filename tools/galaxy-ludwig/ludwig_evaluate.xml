@@ -1,4 +1,4 @@
-<tool id="ludwig_evaluate" name="Generic Learner Ludwig Evaluate" version="@VERSION@" profile="@PROFILE@">
+<tool id="ludwig_evaluate" name="Generic Learner Evaluate" version="@VERSION@" profile="@PROFILE@">
     <description>loads a pretrained model and evaluates its performance by comparing its predictions with ground truth</description>
     <macros>
         <import>ludwig_macros.xml</import>

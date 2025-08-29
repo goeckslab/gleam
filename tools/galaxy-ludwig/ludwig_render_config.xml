@@ -1,4 +1,4 @@
-<tool id="ludwig_render_config" name="Generic Learner Ludwig Render Config" version="@VERSION@" profile="@PROFILE@">
+<tool id="ludwig_render_config" name="Generic Learner Render Config" version="@VERSION@" profile="@PROFILE@">
     <description>renders thefull config based on user input</description>
     <macros>
         <import>ludwig_macros.xml</import>
