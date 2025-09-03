@@ -1,0 +1,25 @@
+name: autogluon-env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - gcc_linux-64
+  - gxx_linux-64
+  - make
+  - openblas
+  - blas
+  - libgomp
+  - unzip
+  - pkgconfig
+  - freetype
+  - libpng
+  - qhull
+  - pip:
+    - setuptools<81.0.0
+    - pip
+    - wheel
+    - autogluon==1.2.0
+    - pyarrow==20.0.0
+    - matplotlib
+    - seaborn

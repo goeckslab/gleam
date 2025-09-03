@@ -1,0 +1,108 @@
+<tool id="autogluon_multimodal_learner" name="AutoGluon Multimodal Learner" version="0.1.0">
+  <description>Train and evaluate an AutoGluon MultiModal model</description>
+  <requirements>
+    <container type="docker">autogluon:latest</container>
+    <requirement type="package" version="1.4.0">autogluon.multimodal</requirement>
+    <requirement type="package" version="2.3.1">pandas</requirement>
+    <requirement type="package" version="2.3.2">numpy</requirement>
+    <requirement type="package" version="2.7.1">torch</requirement>
+    <requirement type="package" version="1.7.1">scikit-learn</requirement>
+    <requirement type="package" version="3.10.5">matplotlib</requirement>
+    <requirement type="package" version="0.13.2">seaborn</requirement>
+  </requirements>
+  <command detect_errors="exit_code"><![CDATA[
+  python "$__tool_directory__/multimodal_learner.py"
+  --input_csv_train '$input_csv_train'
+  #if $input_csv_test:
+  --input_csv_test '$input_csv_test'
+  #end if
+  --target_column '$target_column'
+  #if str($use_images_conditional.use_images) == "yes":
+    #if $use_images_conditional.image_column:
+    --image_column '$use_images_conditional.image_column'
+    #end if
+    #if $use_images_conditional.images_zip:
+    --images_zip '$use_images_conditional.images_zip'
+    #end if
+  #end if
+  --random_seed $random_seed
+  #if $time_limit:
+  --time_limit $time_limit
+  #end if
+  --output_csv '$output_csv'
+  --output_json '$output_json'
+  --output_html '$output_html'
+    ]]>
+  </command>
+  <inputs>
+    <param name="input_csv_train" type="data" format="csv" label="Training CSV" help="CSV file containing training data"/>
+    <param name="input_csv_test" type="data" format="csv" label="Test CSV" optional="true" help="Optional test CSV. If not provided, will split from training data"/>
+    <param name="target_column" type="data_column" data_ref="input_csv_train" use_header_names="true" numerical="false" label="Target Column" help="Column to predict"/>
+    
+    <conditional name="use_images_conditional">
+      <param name="use_images" type="boolean" label="Use Images?" truevalue="yes" falsevalue="no" checked="false" help="Enable image processing"/>
+      <when value="yes">
+        <param name="image_column" type="data_column" data_ref="input_csv_train" use_header_names="true" numerical="false" label="Image Column" help="Column containing image file paths"/>
+        <param name="images_zip" type="data" format="zip" label="Images ZIP" optional="true" help="ZIP file containing images"/>
+      </when>
+      <when value="no">
+        <!-- No additional parameters when images are not used -->
+      </when>
+    </conditional>
+    
+    <param name="random_seed" type="integer" value="42" label="Random Seed" help="For reproducible results"/>
+    <param name="time_limit" type="integer" optional="true" label="Time Limit (seconds)" help="Maximum training time"/>
+  </inputs>
+  <outputs>
+    <data name="output_csv" format="csv" label="${tool.name} - Metrics CSV"/>
+    <data name="output_json" format="json" label="${tool.name} - Results JSON"/>
+    <data name="output_html" format="html" label="${tool.name} - HTML Report"/>
+  </outputs>
+  <tests>
+    <test>
+      <param name="input_csv_train" value="test_train.csv"/>
+      <param name="target_column" value="target"/>
+      <param name="use_images" value="no"/>
+      <output name="output_csv" file="expected_metrics.csv"/>
+      <output name="output_json" file="expected_results.json"/>
+      <output name="output_html" file="expected_report.html"/>
+    </test>
+  </tests>
+  <help><![CDATA[
+**AutoGluon Multimodal Learner**
+
+This tool trains and evaluates an AutoGluon MultiModal model using tabular and optionally image data.
+
+**What this tool does:**
+
+1. Load training and test CSVs (with optional image paths)
+2. Split training data into training/validation (80/20 stratified)
+3. Train AutoGluon MultiModal model
+4. Evaluate on train, validation, and test sets
+5. Generate comprehensive outputs
+
+**Inputs:**
+
+- **Training CSV**: Input training data with features and target column
+- **Test CSV**: Optional test data. If not provided, will split from training data
+- **Target Column**: The column you want to predict
+- **Use Images**: Enable if your data includes images
+- **Image Column**: Column containing image file paths (only if using images)
+- **Images ZIP**: ZIP file containing the actual image files (only if using images)
+- **Random Seed**: For reproducible results (default: 42)
+- **Time Limit**: Optional maximum training time in seconds
+
+**Outputs:**
+
+- **Metrics CSV**: Summary metrics for train/validation/test phases
+- **Results JSON**: Complete evaluation details and model fit summary
+- **HTML Report**: Interactive visual report with plots and analysis
+
+**Notes:**
+
+- For image data, the image column should contain relative paths that match files in the ZIP
+- The tool automatically detects problem type (binary, multiclass, or regression)
+- Training uses GPU if available, otherwise falls back to CPU
+- SHAP explanations are generated for tabular-only models
+  ]]></help>
+</tool>

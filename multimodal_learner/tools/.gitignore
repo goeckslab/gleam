@@ -1,0 +1,7 @@
+# Directories to ignore
+ag_multimodal_tutorial/
+AutogluonModels/
+__pycache__/
+
+# Data files to ignore
+*.csv
