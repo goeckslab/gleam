@@ -304,3 +304,4 @@ class ClassificationModelTrainer(BaseModelTrainer):
                 return _plot
 
             self.explainer_plots[f"pdp__{feat}"] = make_pdp_plotter(feat)
+
