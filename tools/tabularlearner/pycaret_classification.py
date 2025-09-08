@@ -64,7 +64,6 @@ class ClassificationModelTrainer(BaseModelTrainer):
             )
 
         plots = [
-            # "confusion_matrix",  # keep disabled to avoid conflicting 0.5-CM
             "auc",
             "threshold",
             "pr",
