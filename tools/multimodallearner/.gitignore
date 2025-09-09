@@ -1,0 +1,16 @@
+.env
+env
+.venv
+*.log
+*.png
+*.txt
+*.pkl
+*.ipynb
+__pycache__
+.DS_Store
+tool_test_output.html
+tool_test_output.json
+test_custom_metric.py
+prototype.py
+!tools/tabularlearner/test-data/*
+tools/test-data/.DS_Store

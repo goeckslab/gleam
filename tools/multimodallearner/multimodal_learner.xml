@@ -1,0 +1,129 @@
+<tool id='multimodal_learner' name='Multimodal Learner' version='0.1.0'>
+  <description>Train and evaluate an AutoGluon Multimodal model</description>
+
+  <requirements>
+    <container type='docker'>autogluon:latest</container>
+  </requirements>
+
+  <required_files>
+    <include path='utils.py'/>
+    <include path='multimodal_learner.py'/>
+  </required_files>
+
+  <stdio>
+    <exit_code range='137' level='fatal_oom' description='Out of Memory'/>
+    <exit_code range='1:' level='fatal' description='Error occurred. Please check Tool Standard Error'/>
+  </stdio>
+
+  <command><![CDATA[
+    #import re
+    #if $input_csv
+      #set $sanitized_input_csv = re.sub('[^\\w\\-_\\.]','_', $input_csv.element_identifier.strip())
+      ln -sf '$input_csv' "./${sanitized_input_csv}";
+    #end if
+    #if $input_test
+      #set $sanitized_test_csv = re.sub('[^\\w\\-_\\.]','_', $input_test.element_identifier.strip())
+      ln -sf '$input_test' "./${sanitized_test_csv}";
+    #end if
+
+    python '$__tool_directory__/multimodal_learner.py'
+      --input_csv_train "./${sanitized_input_csv}"
+      #if $input_test:
+      --input_csv_test "./${sanitized_test_csv}"
+      #end if
+      --target_column '$target_column'
+      #if str($use_images_conditional.use_images) == 'yes':
+        #if $use_images_conditional.image_column:
+          --image_column '$use_images_conditional.image_column'
+        #end if
+        #if $use_images_conditional.images_zip:
+          --images_zip '$use_images_conditional.images_zip'
+        #end if
+      #end if
+      --random_seed $random_seed
+      #if $time_limit:
+      --time_limit $time_limit
+      #end if
+      #if $validation_size is not None:
+      --validation_size $validation_size
+      #end if
+      #if $split_probabilities:
+      --split_probabilities ${",".join([p.strip() for p in $split_probabilities.split(",")])}
+      #end if
+      #if $val_size_with_test is not None:
+      --val_size_with_test $val_size_with_test
+      #end if
+      --output_csv '$output_csv'
+      --output_json '$output_json'
+      --output_html '$output_html' &&
+
+    mkdir -p '$output_model.extra_files_path' &&
+
+    MODEL_DIR_FILE='predictor_path.txt'
+    if [ -f "$MODEL_DIR_FILE" ]; then
+      MODEL_DIR="$(cat "$MODEL_DIR_FILE" | tr -d '\r\n')"
+    else
+      MODEL_DIR=''
+    fi
+
+    if [ -n "$MODEL_DIR" ] && [ -d "$MODEL_DIR" ]; then
+      cp -r "$MODEL_DIR"/* "$output_model.extra_files_path"/
+    else
+      if [ -d 'AutogluonModels' ]; then
+        cp -r AutogluonModels "$output_model.extra_files_path"/AutogluonModels
+      fi
+      if [ -d 'experiment_run/model' ]; then
+        cp -r experiment_run/model "$output_model.extra_files_path"/ 2>/dev/null || true
+      fi
+      ls *.pkl *.ckpt *.json *.yaml *.yml *.log *.txt >/dev/null 2>&1 && \
+        cp -r *.pkl *.ckpt *.json *.yaml *.yml *.log *.txt "$output_model.extra_files_path" 2>/dev/null || true
+    fi &&
+
+    echo 'Multimodal Learner experiment is done!'
+  ]]></command>
+
+  <inputs>
+    <param name='input_csv' type='data' format='csv' label='Multimodal input dataset' help='CSV with features (and optional image paths)'/>
+    <param name='input_test' type='data' format='csv' label='Multimodal Test dataset' optional='true' help='If omitted, a split is created from the input dataset'/>
+    <param name='target_column' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Target Column' help='Column to predict'/>
+
+    <conditional name='use_images_conditional'>
+      <param name='use_images' type='boolean' label='Use Images?' truevalue='yes' falsevalue='no' checked='false' help='Enable image processing'/>
+      <when value='yes'>
+        <param name='image_column' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image Column' help='Column containing image file paths'/>
+        <param name='images_zip' type='data' format='zip' label='Images ZIP' optional='true' help='ZIP file containing images'/>
+      </when>
+      <when value='no'/>
+    </conditional>
+
+    <param name='validation_size' type='float' value='0.125' label='Validation size (when split has {0,2})'/>
+    <param name='split_probabilities' type='text' value='0.7,0.1,0.2' label='Random split proportions (train,val,test)'/>
+    <param name='val_size_with_test' type='float' value='0.2' label='Validation fraction (when test CSV is provided)'/>
+
+    <param name='random_seed' type='integer' value='42' label='Random Seed' help='For reproducible results'/>
+    <param name='time_limit' type='integer' optional='true' label='Time Limit (seconds)' help='Maximum training time'/>
+  </inputs>
+
+  <outputs>
+    <data name='output_csv' format='csv' label='${tool.name} - Metrics CSV'/>
+    <data name='output_json' format='json' label='${tool.name} - Results JSON'/>
+    <data name='output_html' format='html' label='${tool.name} - HTML Report'/>
+    <data name='output_model' format='zip' label='${tool.name} model files'/>
+  </outputs>
+
+  <tests>
+    <test>
+      <param name='input_csv' value='test_train.csv'/>
+      <param name='target_column' value='target'/>
+      <param name='use_images_conditional|use_images' value='no'/>
+      <output name='output_csv' file='expected_metrics.csv'/>
+      <output name='output_json' file='expected_results.json'/>
+      <output name='output_html' file='expected_report.html'/>
+    </test>
+  </tests>
+
+  <help><![CDATA[
+  **AutoGluon Multimodal Learner**
+  Trains and evaluates an AutoGluon MultiModal model using tabular data and, optionally, images.
+  ]]></help>
+</tool>
