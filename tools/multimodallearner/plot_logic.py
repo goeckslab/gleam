@@ -19,7 +19,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import learning_curve as skl_learning_curve
 from sklearn.preprocessing import label_binarize
 from utils import (
-    get_htmltemplate,
+    get_html_template,
     get_html_closing,
     build_tabbed_html,
 )
@@ -645,12 +645,18 @@ def evaluate_all(
 ) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
     """
     Run predictor.evaluate on train/val/test and normalize the result dicts to floats.
+    Compatible with both TabularPredictor (supports `silent`) and MultiModalPredictor (no `silent`).
     """
-    train_scores = _safe_floatify(predictor.evaluate(df_train, silent=True))
-    val_scores   = _safe_floatify(predictor.evaluate(df_val,   silent=True))
-    test_scores  = _safe_floatify(predictor.evaluate(df_test,  silent=True))
-    return train_scores, val_scores, test_scores
+    def _evaluate(df):
+        try:
+            return predictor.evaluate(df, silent=True)  # TabularPredictor path
+        except TypeError:
+            return predictor.evaluate(df)               # MultiModalPredictor path
 
+    train_scores = _safe_floatify(_evaluate(df_train))
+    val_scores   = _safe_floatify(_evaluate(df_val))
+    test_scores  = _safe_floatify(_evaluate(df_test))
+    return train_scores, val_scores, test_scores
 
 def build_summary_html(
     predictor,
