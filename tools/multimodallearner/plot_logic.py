@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from typing import Iterable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Iterable, List, Mapping, Optional, Sequence, Tuple, Union, Dict, Any
 
 import numpy as np
 import pandas as pd
@@ -18,6 +18,11 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import learning_curve as skl_learning_curve
 from sklearn.preprocessing import label_binarize
+from utils import (
+    get_htmltemplate,
+    get_html_closing,
+    build_tabbed_html,
+)
 
 # Matplotlib / SHAP only where interactivity is limited or APIs are tight
 import matplotlib.pyplot as plt
@@ -594,3 +599,259 @@ def generate_shap_waterfall_plot(
     shap.plots.waterfall(shap_values[0], show=False)
     plt.title(title)
     _save_matplotlib(path)
+
+
+def infer_problem_type(predictor, df_train_full: pd.DataFrame, label_column: str) -> str:
+    """
+    Return 'binary', 'multiclass', or 'regression'.
+    Prefer the predictor's own metadata when available; otherwise infer from label dtype/uniques.
+    """
+    # AutoGluon predictors usually expose .problem_type; be defensive.
+    pt = getattr(predictor, "problem_type", None)
+    if isinstance(pt, str):
+        pt_l = pt.lower()
+        if "regression" in pt_l:
+            return "regression"
+        if "binary" in pt_l:
+            return "binary"
+        if "multiclass" in pt_l or "multiclass" in pt_l:
+            return "multiclass"
+
+    y = df_train_full[label_column]
+    if pd.api.types.is_numeric_dtype(y) and y.nunique() > 10:
+        return "regression"
+    return "binary" if y.nunique() == 2 else "multiclass"
+
+
+def _safe_floatify(d: Dict[str, Any]) -> Dict[str, float]:
+    """Make evaluate() outputs JSON/csv friendly floats."""
+    out = {}
+    for k, v in d.items():
+        try:
+            out[k] = float(v)
+        except Exception:
+            # keep only real-valued scalars
+            pass
+    return out
+
+
+def evaluate_all(
+    predictor,
+    df_train: pd.DataFrame,
+    df_val: pd.DataFrame,
+    df_test: pd.DataFrame,
+    label_column: str,
+    problem_type: str,
+) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
+    """
+    Run predictor.evaluate on train/val/test and normalize the result dicts to floats.
+    """
+    train_scores = _safe_floatify(predictor.evaluate(df_train, silent=True))
+    val_scores   = _safe_floatify(predictor.evaluate(df_val,   silent=True))
+    test_scores  = _safe_floatify(predictor.evaluate(df_test,  silent=True))
+    return train_scores, val_scores, test_scores
+
+
+def build_summary_html(
+    predictor,
+    args,
+    problem_type: str,
+    train_scores: Dict[str, float],
+    val_scores: Dict[str, float],
+    test_scores: Dict[str, float],
+    tmpdir: str,
+) -> str:
+    """
+    A compact summary: metrics table (train/val/test) + a tiny run/config block.
+    Returns HTML (to be used in the 'Validation Summary & Config' tab).
+    """
+    # metrics table
+    metrics = sorted(set(train_scores) | set(val_scores) | set(test_scores))
+    head = "<thead><tr><th>Metric</th><th>Train</th><th>Validation</th><th>Test</th></tr></thead>"
+    rows = []
+    for m in metrics:
+        tr = train_scores.get(m, np.nan)
+        vr = val_scores.get(m, np.nan)
+        te = test_scores.get(m, np.nan)
+        def fmt(x): 
+            try: return f"{float(x):.4f}"
+            except: return ""
+        rows.append(f"<tr><td>{m.replace('_',' ').title()}</td><td>{fmt(tr)}</td><td>{fmt(vr)}</td><td>{fmt(te)}</td></tr>")
+    metrics_tbl = f"<h2>Model Performance Summary</h2><table class='performance-summary'>{head}<tbody>{''.join(rows)}</tbody></table>"
+
+    # simple run/config info
+    cfg_lines = [
+        ("Problem type", problem_type),
+        ("Target column", args.label_column),
+        ("Image column", args.image_column or "—"),
+        ("Time limit (s)", args.time_limit if getattr(args, 'time_limit', None) else "—"),
+        ("Random seed", args.random_seed),
+    ]
+    cfg_rows = "".join(f"<tr><td>{k}</td><td>{v}</td></tr>" for k, v in cfg_lines)
+    cfg_tbl = f"<h2>Run Configuration</h2><table>{cfg_rows}</table>"
+
+    return metrics_tbl + "<hr>" + cfg_tbl
+
+
+def build_test_html_and_plots(
+    predictor,
+    problem_type: str,
+    df_test: pd.DataFrame,
+    label_column: str,
+    tmpdir: str,
+) -> Tuple[str, List[str]]:
+    """
+    Create a test-summary section (with a placeholder for metric rows) and a list of Plotly HTML divs.
+    Returns: (html_template_with_{}, list_of_plot_divs)
+    """
+    plots: List[str] = []
+
+    y_true = df_test[label_column].values
+    # Try proba/labels where meaningful
+    pred_labels = None
+    pred_proba  = None
+    try:
+        pred_labels = predictor.predict(df_test)
+    except Exception:
+        pass
+    try:
+        # TabularPredictor/MultiModalPredictor both expose predict_proba for classification
+        pred_proba = predictor.predict_proba(df_test)
+    except Exception:
+        pred_proba = None
+
+    # Classification visuals
+    if problem_type in ("binary", "multiclass") and pred_labels is not None:
+        # Confusion matrix
+        fig_cm = generate_confusion_matrix_plot(y_true, pred_labels, title="Confusion Matrix")
+        plots.append(fig_cm.to_html(full_html=False, include_plotlyjs="cdn"))
+
+        # Per-class metrics (bar)
+        fig_pc = generate_per_class_metrics_plot(y_true, pred_labels, title="Per-Class Metrics")
+        plots.append(fig_pc.to_html(full_html=False, include_plotlyjs=False))
+
+        # ROC/PR where possible
+        if pred_proba is not None:
+            # Normalize outputs to (n_samples, n_classes)
+            if isinstance(pred_proba, pd.Series):
+                proba_arr = pred_proba.to_numpy().reshape(-1, 1)
+            elif isinstance(pred_proba, pd.DataFrame):
+                proba_arr = pred_proba.to_numpy()
+            else:
+                proba_arr = np.asarray(pred_proba)
+
+            classes = np.unique(y_true)
+            if problem_type == "binary":
+                # accept shape (n,) or (n,2)
+                if proba_arr.ndim == 1 or proba_arr.shape[1] == 1:
+                    y_bin = (y_true == classes.max()).astype(int)
+                    fig_roc = generate_roc_curve_plot(y_bin, proba_arr.reshape(-1), title="ROC Curve")
+                    plots.append(fig_roc.to_html(full_html=False, include_plotlyjs=False))
+
+                    fig_pr = generate_pr_curve_plot(y_bin, proba_arr.reshape(-1), title="Precision–Recall Curve")
+                    plots.append(fig_pr.to_html(full_html=False, include_plotlyjs=False))
+                else:
+                    # take positive class (assume index of max class)
+                    pos_idx = 1 if proba_arr.shape[1] > 1 else 0
+                    y_bin = (y_true == classes.max()).astype(int)
+                    fig_roc = generate_roc_curve_plot(y_bin, proba_arr[:, pos_idx], title="ROC Curve")
+                    plots.append(fig_roc.to_html(full_html=False, include_plotlyjs=False))
+
+                    fig_pr = generate_pr_curve_plot(y_bin, proba_arr[:, pos_idx], title="Precision–Recall Curve")
+                    plots.append(fig_pr.to_html(full_html=False, include_plotlyjs=False))
+            else:
+                # multiclass one-vs-rest curves
+                fig_mroc = generate_multiclass_roc_curve_plot(y_true, proba_arr, classes=classes, title="Multiclass ROC Curves")
+                plots.append(fig_mroc.to_html(full_html=False, include_plotlyjs=False))
+
+                fig_mpr = generate_multiclass_pr_curve_plot(y_true, proba_arr, classes=classes, title="Multiclass PR Curves")
+                plots.append(fig_mpr.to_html(full_html=False, include_plotlyjs=False))
+
+    # Regression visuals
+    if problem_type == "regression":
+        if pred_labels is None:
+            pred_labels = predictor.predict(df_test)
+        fig_sc = generate_scatter_plot(y_true, pred_labels, title="Predicted vs Actual")
+        plots.append(fig_sc.to_html(full_html=False, include_plotlyjs="cdn"))
+
+        fig_res = generate_residual_plot(y_true, pred_labels, title="Residual Plot")
+        plots.append(fig_res.to_html(full_html=False, include_plotlyjs=False))
+
+        fig_hist = generate_residual_histogram(y_true, pred_labels, title="Residual Histogram")
+        plots.append(fig_hist.to_html(full_html=False, include_plotlyjs=False))
+
+        fig_cal = generate_regression_calibration_plot(y_true, pred_labels, title="Regression Calibration")
+        plots.append(fig_cal.to_html(full_html=False, include_plotlyjs=False))
+
+    # Small HTML template with placeholder for metric rows the caller fills in
+    test_html_template = """
+      <h2>Test Performance Summary</h2>
+      <table class="performance-summary">
+        <thead><tr><th>Metric</th><th>Test</th></tr></thead>
+        <tbody>{}</tbody>
+      </table>
+    """
+    return test_html_template, plots
+
+
+def build_feature_html(
+    predictor,
+    df_test: pd.DataFrame,
+    label_column: str,
+    tmpdir: str,
+    random_seed: int,
+) -> str:
+    """
+    Feature importance for Tabular; for Multimodal we show a placeholder if not supported.
+    Returns HTML (Feature Importance tab).
+    """
+    try:
+        # TabularPredictor supports feature_importance
+        imp = predictor.feature_importance(df_test)
+        # Expect columns: 'feature', 'importance'
+        if "feature" in imp.columns and "importance" in imp.columns:
+            top = imp.head(30)
+            fig = px.bar(top, x="feature", y="importance", title="Top Feature Importances")
+            fig.update_layout(xaxis_tickangle=45, template="plotly_white")
+            return fig.to_html(full_html=False, include_plotlyjs="cdn")
+        else:
+            # AutoGluon older versions return a Series
+            s = imp if isinstance(imp, pd.Series) else pd.Series(imp)
+            top = s.sort_values(ascending=False).head(30)
+            fig = px.bar(top.reset_index(), x="index", y=0, title="Top Feature Importances")
+            fig.update_layout(xaxis_title="feature", yaxis_title="importance",
+                              xaxis_tickangle=45, template="plotly_white")
+            return fig.to_html(full_html=False, include_plotlyjs="cdn")
+    except Exception:
+        # MultimodalPredictor or unsupported
+        return "<p><em>Feature importance not available for this predictor.</em></p>"
+
+
+def assemble_full_html_report(
+    summary_html: str,
+    test_html: str,
+    plots: List[str],
+    feature_html: str,
+) -> str:
+    """
+    Wrap the three tabs using utils.build_tabbed_html and return the full HTML document.
+    """
+    # Append plots under the Test tab
+    test_full = test_html + "".join(
+        f"<div class='plotly-center'>{p}</div>" for p in plots
+    )
+
+    tabs = build_tabbed_html(summary_html, test_full, feature_html, explainer_html=None)
+
+    html = get_html_template()
+    # small CSS helper to center plotly figures (works with our template)
+    html += """
+<style>
+  .plotly-center { display: flex; justify-content: center; }
+  .plotly-center .plotly-graph-div, .plotly-center .js-plotly-plot { margin: 0 auto !important; }
+  .js-plotly-plot, .plotly-graph-div { margin-left: auto !important; margin-right: auto !important; }
+</style>
+"""
+    html += tabs
+    html += get_html_closing()
+    return html
