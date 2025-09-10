@@ -8,165 +8,273 @@ LOG = logging.getLogger(__name__)
 
 def get_html_template() -> str:
     """
-    Returns the HTML header, opening <body> and container div,
-    including all CSS needed for the report (tables, tabs, help button, etc.).
+    Returns the opening HTML, <head> (with CSS/JS), and opens <body> + .container.
+    Includes:
+      - Base styling for layout and tables
+      - Sortable table headers with 3-state arrows (none ⇅, asc ↑, desc ↓)
+      - A scroll helper class (.scroll-rows-30) that approximates ~30 visible rows
+      - A guarded script so initializing runs only once even if injected twice
     """
     return """
+<!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8">
-    <title>Model Training Report</title>
-    <style>
-      body {
-          font-family: Arial, sans-serif;
-          margin: 0;
-          padding: 20px;
-          background-color: #f4f4f4;
+  <meta charset="UTF-8">
+  <title>Galaxy-Ludwig Report</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #f4f4f4;
+    }
+    .container {
+      max-width: 1200px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+      overflow-x: auto;
+    }
+    h1 {
+      text-align: center;
+      color: #333;
+    }
+    h2 {
+      border-bottom: 2px solid #4CAF50;
+      color: #4CAF50;
+      padding-bottom: 5px;
+      margin-top: 28px;
+    }
+
+    /* baseline table setup */
+    table {
+      border-collapse: collapse;
+      margin: 20px 0;
+      width: 100%;
+      table-layout: fixed;
+      background: #fff;
+    }
+    table, th, td {
+      border: 1px solid #ddd;
+    }
+    th, td {
+      padding: 10px;
+      text-align: center;
+      vertical-align: middle;
+      word-break: break-word;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    th {
+      background-color: #4CAF50;
+      color: white;
+    }
+
+    .plot {
+      text-align: center;
+      margin: 20px 0;
+    }
+    .plot img {
+      max-width: 100%;
+      height: auto;
+      border: 1px solid #ddd;
+    }
+
+    /* -------------------
+       sortable columns (3-state: none ⇅, asc ↑, desc ↓)
+       ------------------- */
+    table.performance-summary th.sortable {
+      cursor: pointer;
+      position: relative;
+      user-select: none;
+    }
+    /* default icon space */
+    table.performance-summary th.sortable::after {
+      content: '⇅';
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 0.8em;
+      color: #eaf5ea; /* light on green */
+      text-shadow: 0 0 1px rgba(0,0,0,0.15);
+    }
+    /* three states override the default */
+    table.performance-summary th.sortable.sorted-none::after { content: '⇅'; color: #eaf5ea; }
+    table.performance-summary th.sortable.sorted-asc::after  { content: '↑';  color: #ffffff; }
+    table.performance-summary th.sortable.sorted-desc::after { content: '↓';  color: #ffffff; }
+
+    /* show ~30 rows with a scrollbar (tweak if you want) */
+    .scroll-rows-30 {
+      max-height: 900px;       /* ~30 rows depending on row height */
+      overflow-y: auto;        /* vertical scrollbar (“sidebar”) */
+      overflow-x: auto;
+    }
+
+    /* Tabs + Help button (used by build_tabbed_html) */
+    .tabs {
+      display: flex;
+      align-items: center;
+      border-bottom: 2px solid #ccc;
+      margin-bottom: 1rem;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .tab {
+      padding: 10px 20px;
+      cursor: pointer;
+      border: 1px solid #ccc;
+      border-bottom: none;
+      background: #f9f9f9;
+      margin-right: 5px;
+      border-top-left-radius: 8px;
+      border-top-right-radius: 8px;
+    }
+    .tab.active {
+      background: white;
+      font-weight: bold;
+    }
+    .help-btn {
+      margin-left: auto;
+      padding: 6px 12px;
+      font-size: 0.9rem;
+      border: 1px solid #4CAF50;
+      border-radius: 4px;
+      background: #4CAF50;
+      color: white;
+      cursor: pointer;
+    }
+    .tab-content {
+      display: none;
+      padding: 20px;
+      border: 1px solid #ccc;
+      border-top: none;
+      background: #fff;
+    }
+    .tab-content.active {
+      display: block;
+    }
+
+    /* Modal (used by get_metrics_help_modal) */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 9999;
+      left: 0; top: 0;
+      width: 100%; height: 100%;
+      overflow: auto;
+      background-color: rgba(0,0,0,0.4);
+    }
+    .modal-content {
+      background-color: #fefefe;
+      margin: 8% auto;
+      padding: 20px;
+      border: 1px solid #888;
+      width: 90%;
+      max-width: 900px;
+      border-radius: 8px;
+    }
+    .modal .close {
+      color: #777;
+      float: right;
+      font-size: 28px;
+      font-weight: bold;
+      line-height: 1;
+      margin-left: 8px;
+    }
+    .modal .close:hover,
+    .modal .close:focus {
+      color: black;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .metrics-guide h3 { margin-top: 20px; }
+    .metrics-guide p { margin: 6px 0; }
+    .metrics-guide ul { margin: 10px 0; padding-left: 20px; }
+  </style>
+
+  <script>
+    // Guard to avoid double-initialization if this block is included twice
+    (function(){
+      if (window.__perfSummarySortInit) return;
+      window.__perfSummarySortInit = true;
+
+      function initPerfSummarySorting() {
+        // Record original order for "back to original"
+        document.querySelectorAll('table.performance-summary tbody').forEach(tbody => {
+          Array.from(tbody.rows).forEach((row, i) => { row.dataset.originalOrder = i; });
+        });
+
+        const getText = td => (td?.innerText || '').trim();
+        const cmp = (idx, asc) => (a, b) => {
+          const v1 = getText(a.children[idx]);
+          const v2 = getText(b.children[idx]);
+          const n1 = parseFloat(v1), n2 = parseFloat(v2);
+          if (!isNaN(n1) && !isNaN(n2)) return asc ? n1 - n2 : n2 - n1; // numeric
+          return asc ? v1.localeCompare(v2) : v2.localeCompare(v1);       // lexical
+        };
+
+        document.querySelectorAll('table.performance-summary th.sortable').forEach(th => {
+          // initialize to “none”
+          th.classList.remove('sorted-asc','sorted-desc');
+          th.classList.add('sorted-none');
+
+          th.addEventListener('click', () => {
+            const table = th.closest('table');
+            const headerRow = th.parentNode;
+            const allTh = headerRow.querySelectorAll('th.sortable');
+            const tbody = table.querySelector('tbody');
+
+            // Determine current state BEFORE clearing
+            const isAsc  = th.classList.contains('sorted-asc');
+            const isDesc = th.classList.contains('sorted-desc');
+
+            // Reset all headers in this row
+            allTh.forEach(x => x.classList.remove('sorted-asc','sorted-desc','sorted-none'));
+
+            // Compute next state
+            let next;
+            if (!isAsc && !isDesc) {
+              next = 'asc';
+            } else if (isAsc) {
+              next = 'desc';
+            } else {
+              next = 'none';
+            }
+            th.classList.add('sorted-' + next);
+
+            // Sort rows according to the chosen state
+            const rows = Array.from(tbody.rows);
+            if (next === 'none') {
+              rows.sort((a, b) => (a.dataset.originalOrder - b.dataset.originalOrder));
+            } else {
+              const idx = Array.from(headerRow.children).indexOf(th);
+              rows.sort(cmp(idx, next === 'asc'));
+            }
+            rows.forEach(r => tbody.appendChild(r));
+          });
+        });
       }
-      .container {
-          max-width: 800px;
-          margin: auto;
-          background: white;
-          padding: 20px;
-          box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-          overflow-x: auto;
+
+      // Run after DOM is ready
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initPerfSummarySorting);
+      } else {
+        initPerfSummarySorting();
       }
-      h1 { text-align: center; color: #333; }
-      h2 {
-          border-bottom: 2px solid #4CAF50;
-          color: #4CAF50;
-          padding-bottom: 5px;
-      }
-      table {
-          width: 100%;
-          border-collapse: collapse;
-          margin: 20px 0;
-      }
-      table, th, td {
-          border: 1px solid #ddd;
-      }
-      th, td {
-          padding: 8px;
-          text-align: left;
-      }
-      th {
-          background-color: #4CAF50;
-          color: white;
-      }
-      .plot {
-          text-align: center;
-          margin: 20px 0;
-      }
-      .plot img {
-          max-width: 100%;
-          height: auto;
-      }
-      .tabs {
-          display: flex;
-          align-items: center;
-          border-bottom: 2px solid #ccc;
-          margin-bottom: 1rem;
-      }
-      .tab {
-          padding: 10px 20px;
-          cursor: pointer;
-          border: 1px solid #ccc;
-          border-bottom: none;
-          background: #f9f9f9;
-          margin-right: 5px;
-          border-top-left-radius: 8px;
-          border-top-right-radius: 8px;
-      }
-      .tab.active {
-          background: white;
-          font-weight: bold;
-      }
-      .tab-content {
-          display: none;
-          padding: 20px;
-          border: 1px solid #ccc;
-          border-top: none;
-          background: white;
-      }
-      .tab-content.active {
-          display: block;
-      }
-      .help-btn {
-          margin-left: auto;
-          padding: 6px 12px;
-          font-size: 0.9rem;
-          border: 1px solid #4CAF50;
-          border-radius: 4px;
-          background: #4CAF50;
-          color: white;
-          cursor: pointer;
-      }
-      /* sortable table header arrows */
-      table.sortable th {
-          position: relative;
-          padding-right: 20px;
-          cursor: pointer;
-      }
-      table.sortable th::after {
-          content: '↕';
-          position: absolute;
-          right: 8px;
-          opacity: 0.4;
-          transition: opacity 0.2s;
-      }
-      table.sortable th:hover::after {
-          opacity: 0.7;
-      }
-      table.sortable th.sorted-asc::after {
-          content: '↑';
-          opacity: 1;
-      }
-      table.sortable th.sorted-desc::after {
-          content: '↓';
-          opacity: 1;
-      }
-    </style>
+    })();
+  </script>
 </head>
 <body>
-<div class="container">
+  <div class="container">
 """
 
 
-def get_html_closing() -> str:
-    """
-    Closes container and body, and injects the JS for sortable tables.
-    """
+def get_html_closing():
+    """Closes .container, body, and html."""
     return """
-</div>
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-  document.querySelectorAll('table.sortable').forEach(table => {
-    const getCellValue = (row, idx) =>
-      row.children[idx].innerText.trim() || '';
-    const comparer = (idx, asc) => (a, b) => {
-      const v1 = getCellValue(asc ? a : b, idx);
-      const v2 = getCellValue(asc ? b : a, idx);
-      const n1 = parseFloat(v1), n2 = parseFloat(v2);
-      if (!isNaN(n1) && !isNaN(n2)) return n1 - n2;
-      return v1.localeCompare(v2);
-    };
-    table.querySelectorAll('th').forEach((th, idx) => {
-      let asc = true;
-      th.addEventListener('click', () => {
-        const tbody = table.tBodies[0];
-        Array.from(tbody.rows)
-          .sort(comparer(idx, asc))
-          .forEach(row => tbody.appendChild(row));
-        table.querySelectorAll('th').forEach(h => {
-          h.classList.remove('sorted-asc','sorted-desc');
-        });
-        th.classList.add(asc ? 'sorted-asc' : 'sorted-desc');
-        asc = !asc;
-      });
-    });
-  });
-});
-</script>
+  </div>
 </body>
 </html>
 """
