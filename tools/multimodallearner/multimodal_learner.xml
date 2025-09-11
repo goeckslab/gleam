@@ -40,7 +40,9 @@
           --images_zip '$use_images_conditional.images_zip'
         #end if
       #end if
-      --random_seed $random_seed
+      #if $random_seed is not None:
+      	  --random_seed '$random_seed'
+      #end if
       #if $time_limit:
       --time_limit $time_limit
       #end if
