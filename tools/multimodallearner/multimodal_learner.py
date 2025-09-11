@@ -26,6 +26,7 @@ from plot_logic import (
     build_test_html_and_plots,
     build_feature_html,
     assemble_full_html_report,
+    build_train_html_and_plots,
 )
 from metrics_logic import evaluate_all_transparency
 
@@ -310,6 +311,15 @@ def main():
         tmpdir
     )
 
+    train_html = build_train_html_and_plots(
+        predictor=predictor,
+        problem_type=kind,
+        df_train=df_train,
+        label_column=args.label_column,
+        tmpdir=tmpdir,
+        seed=int(args.random_seed),
+    )
+
     # Test section (reuse existing plot builder)
     test_html_template, plots = build_test_html_and_plots(predictor, kind, df_test, args.label_column, tmpdir)
 
@@ -384,6 +394,7 @@ def main():
 
     full_html = assemble_full_html_report(
         summary_html,
+        train_html,
         test_html_filled,
         plots,
         feature_html + transparency_blocks

@@ -279,20 +279,20 @@ def get_html_closing():
 </html>
 """
 
-
 def build_tabbed_html(
     summary_html: str,
+    train_html: str,
     test_html: str,
     feature_html: str,
     explainer_html: Optional[str] = None,
 ) -> str:
     """
-    Renders the tab headers, tab contents, and the JS to switch tabs.
+    Renders the tab headers, contents, and JS to switch tabs.
     """
-    # Tabs header
     tabs = [
         '<div class="tabs">',
         '<div class="tab active" onclick="showTab(\'summary\')">Validation Summary & Config</div>',
+        '<div class="tab" onclick="showTab(\'train\')">Train</div>',
         '<div class="tab" onclick="showTab(\'test\')">Test Summary</div>',
         '<div class="tab" onclick="showTab(\'feature\')">Feature Importance</div>',
     ]
@@ -302,9 +302,9 @@ def build_tabbed_html(
     tabs.append('</div>')
     tabs_section = "\n".join(tabs)
 
-    # Tab contents
     contents = [
         f'<div id="summary" class="tab-content active">{summary_html}</div>',
+        f'<div id="train" class="tab-content">{train_html}</div>',
         f'<div id="test" class="tab-content">{test_html}</div>',
         f'<div id="feature" class="tab-content">{feature_html}</div>',
     ]
@@ -312,7 +312,6 @@ def build_tabbed_html(
         contents.append(f'<div id="explainer" class="tab-content">{explainer_html}</div>')
     content_section = "\n".join(contents)
 
-    # Tab-switching JS
     js = """
 <script>
 function showTab(id) {
@@ -324,7 +323,6 @@ function showTab(id) {
 </script>
 """
     return tabs_section + "\n" + content_section + "\n" + js
-
 
 def encode_image_to_base64(image_path: str) -> str:
     """

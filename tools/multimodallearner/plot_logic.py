@@ -15,6 +15,8 @@ from sklearn.metrics import (
     precision_recall_curve,
     roc_auc_score,
     roc_curve,
+    accuracy_score,
+    log_loss,
 )
 from sklearn.model_selection import learning_curve as skl_learning_curve
 from sklearn.preprocessing import label_binarize
@@ -555,6 +557,174 @@ def plot_confidence_histogram(
 # Learning Curve
 # =========================
 
+
+def generate_learning_curve_from_predictions(
+    y_true: Sequence,
+    y_pred: Optional[Sequence] = None,
+    y_proba: Optional[np.ndarray] = None,
+    classes: Optional[Sequence] = None,
+    metric: str = "accuracy",                 # "accuracy" | "log_loss"
+    train_fracs: np.ndarray = np.linspace(0.1, 1.0, 10),
+    n_repeats: int = 5,
+    seed: int = 42,
+    title: str = "Learning Curve",
+    path: Optional[str] = None,
+) -> go.Figure:
+    """
+    Fast 'learning curves' from PREDICTIONS (no refits):
+      - accuracy: uses y_pred
+      - log_loss: uses y_proba (+ classes)
+    Useful to visualize stabilization as sample size grows.
+    """
+    rng = np.random.default_rng(seed)
+    y_true = np.asarray(y_true)
+    N = len(y_true)
+
+    if metric == "accuracy" and y_pred is None:
+        raise ValueError("accuracy curve requires y_pred")
+    if metric == "log_loss" and y_proba is None:
+        raise ValueError("log_loss curve requires y_proba")
+
+    if y_proba is not None:
+        y_proba = np.asarray(y_proba)
+    if y_pred is not None:
+        y_pred = np.asarray(y_pred)
+
+    sizes = (np.clip((train_fracs * N).astype(int), 1, N)).tolist()
+    means, stds = [], []
+
+    for n in sizes:
+        vals = []
+        for _ in range(n_repeats):
+            idx = rng.choice(N, size=n, replace=False)
+            if metric == "accuracy":
+                vals.append(float(accuracy_score(y_true[idx], y_pred[idx])))
+            else:
+                if y_proba.ndim == 1:
+                    # binary 1-d → expand to 2 columns for log_loss
+                    p = y_proba[idx]
+                    pp = np.column_stack([1 - p, p])
+                else:
+                    pp = y_proba[idx]
+                vals.append(float(log_loss(y_true[idx], pp, labels=None if classes is None else classes)))
+        means.append(np.mean(vals))
+        stds.append(np.std(vals))
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=sizes, y=means, mode="lines+markers",
+        error_y=dict(type="data", array=stds, visible=True),
+        name="Mean ± SD"
+    ))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Training samples (subset of train)",
+        yaxis_title=("Accuracy" if metric == "accuracy" else "LogLoss (lower is better)"),
+        template="plotly_white",
+    )
+    _save_plotly(fig, path)
+    return fig
+
+
+def build_train_html_and_plots(
+    predictor,
+    problem_type: str,
+    df_train: pd.DataFrame,
+    label_column: str,
+    tmpdir: str,
+    seed: int = 42,
+) -> str:
+    """
+    Generates the Train tab content:
+      - Learning Curves (Accuracy)
+      - Learning Curves (LogLoss)
+      - Threshold Plot (binary only)
+    Returns a ready-to-embed HTML string.
+    """
+    y_true = df_train[label_column].values
+
+    # Predictions / probabilities on TRAIN
+    pred_labels = None
+    pred_proba  = None
+    try:
+        pred_labels = predictor.predict(df_train)
+    except Exception:
+        pass
+    try:
+        proba_raw = predictor.predict_proba(df_train)
+        if isinstance(proba_raw, (pd.Series, pd.DataFrame)):
+            pred_proba = proba_raw.to_numpy()
+        else:
+            pred_proba = np.asarray(proba_raw)
+    except Exception:
+        pred_proba = None
+
+    pieces: List[str] = []
+
+    # Learning Curve - Accuracy (classification only and needs labels)
+    if problem_type in ("binary", "multiclass") and pred_labels is not None:
+        fig_acc = generate_learning_curve_from_predictions(
+            y_true=y_true,
+            y_pred=np.asarray(pred_labels),
+            metric="accuracy",
+            title="Learning Curves — Label Accuracy",
+            seed=seed,
+        )
+        pieces.append(fig_acc.to_html(full_html=False, include_plotlyjs="cdn"))
+
+    # Learning Curve - LogLoss (needs probabilities)
+    if problem_type in ("binary", "multiclass") and pred_proba is not None:
+        classes = np.unique(y_true)
+        # normalize to shape (n_samples, n_classes) for multiclass or (n,) for binary
+        if pred_proba.ndim == 1 or (pred_proba.ndim == 2 and pred_proba.shape[1] == 1):
+            # keep 1-D for binary; generator will expand for log_loss
+            pp = pred_proba.reshape(-1)
+        else:
+            pp = pred_proba
+        fig_ll = generate_learning_curve_from_predictions(
+            y_true=y_true,
+            y_proba=pp,
+            classes=classes,
+            metric="log_loss",
+            title="Learning Curves — Label Loss (LogLoss)",
+            seed=seed,
+        )
+        pieces.append(fig_ll.to_html(full_html=False, include_plotlyjs=False))
+
+    # Threshold Plot (binary only, needs probabilities for the positive class)
+    if problem_type == "binary" and pred_proba is not None:
+        # collapse to positive-class score
+        if pred_proba.ndim == 1:
+            pos_scores = pred_proba.reshape(-1)
+        else:
+            # pick column of lexicographically largest class (consistent with metrics_logic)
+            classes_sorted = np.sort(np.unique(y_true))
+            pos_label = classes_sorted[-1]
+            pos_idx = -1
+            try:
+                if hasattr(predictor, "class_labels") and predictor.class_labels:
+                    pos_idx = list(predictor.class_labels).index(pos_label)
+            except Exception:
+                pos_idx = -1
+            pos_scores = pred_proba[:, pos_idx].reshape(-1)
+
+        y_bin = (y_true == np.max(np.unique(y_true))).astype(int)
+        fig_thr = generate_threshold_plot(
+            y_true_bin=y_bin,
+            y_prob=pos_scores,
+            title="Threshold Plot (Precision/Recall/F1 vs Threshold)",
+        )
+        pieces.append(fig_thr.to_html(full_html=False, include_plotlyjs=False))
+
+    if not pieces:
+        # Fallback message
+        return """
+          <h2>Training Diagnostics</h2>
+          <p><em>No training diagnostics available for this run (task type or predictor lacks outputs).</em></p>
+        """
+
+    return "<h2>Training Diagnostics</h2>" + "".join(f"<div class='plotly-center'>{p}</div>" for p in pieces)
+
 def generate_learning_curve(
     estimator,
     X,
@@ -873,22 +1043,20 @@ def build_feature_html(
 
 def assemble_full_html_report(
     summary_html: str,
+    train_html: str,
     test_html: str,
     plots: List[str],
     feature_html: str,
 ) -> str:
     """
-    Wrap the three tabs using utils.build_tabbed_html and return the full HTML document.
+    Wrap the four tabs using utils.build_tabbed_html and return full HTML.
     """
     # Append plots under the Test tab
-    test_full = test_html + "".join(
-        f"<div class='plotly-center'>{p}</div>" for p in plots
-    )
+    test_full = test_html + "".join(f"<div class='plotly-center'>{p}</div>" for p in plots)
 
-    tabs = build_tabbed_html(summary_html, test_full, feature_html, explainer_html=None)
+    tabs = build_tabbed_html(summary_html, train_html, test_full, feature_html, explainer_html=None)
 
     html = get_html_template()
-    # small CSS helper to center plotly figures (works with our template)
     html += """
 <style>
   .plotly-center { display: flex; justify-content: center; }
