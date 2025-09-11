@@ -215,26 +215,64 @@ def generate_threshold_plot(
 def generate_per_class_metrics_plot(
     y_true: Sequence,
     y_pred: Sequence,
-    metrics: Sequence[str] = ("precision", "recall", "f1-score"),
-    title: str = "Per-Class Metrics",
+    metrics: Sequence[str] = ("precision", "recall", "f1_score"),
+    title: str = "Classification Report",
     path: Optional[str] = None,
 ) -> go.Figure:
     """
-    Per-class metrics bar chart (Plotly), using sklearn classification_report.
+    Per-class metrics heatmap (Plotly), similar to sklearn's classification report.
+    Rows = classes, columns = metrics; cell text shows the value (0–1).
     """
-    report = classification_report(y_true, y_pred, output_dict=True)
-    classes = [
-        c for c in report.keys()
-        if c not in {"accuracy", "macro avg", "micro avg", "weighted avg"}
-    ]
-    df = (
-        pd.DataFrame(report).T.loc[classes, list(metrics)]
-        .reset_index()
-        .rename(columns={"index": "Class"})
+    # Map display names -> sklearn keys
+    key_map = {"f1_score": "f1-score", "precision": "precision", "recall": "recall"}
+    report = classification_report(
+        y_true, y_pred, output_dict=True, zero_division=0
     )
-    df_m = df.melt(id_vars="Class", var_name="Metric", value_name="Score")
-    fig = px.bar(df_m, x="Class", y="Score", color="Metric", barmode="group", title=title)
-    fig.update_yaxes(range=[0, 1])
+
+    # Order classes sensibly (numeric if possible, else lexical)
+    def _sort_key(x):
+        try:
+            return (0, float(x))
+        except Exception:
+            return (1, str(x))
+
+    # Use all classes seen in y_true or y_pred (so rows don't jump around)
+    uniq = sorted(set(list(y_true) + list(y_pred)), key=_sort_key)
+    classes = [str(c) for c in uniq]
+
+    # Build Z matrix (rows=classes, cols=metrics)
+    used_metrics = [key_map.get(m, m) for m in metrics]
+    z = []
+    for c in classes:
+        row = report.get(c, {})
+        z.append([float(row.get(m, 0.0) or 0.0) for m in used_metrics])
+    z = np.array(z, dtype=float)
+
+    # Pretty cell labels
+    z_text = [[f"{v:.2f}" for v in r] for r in z]
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=z,
+            x=list(metrics),          # keep display names ("precision", "recall", "f1_score")
+            y=classes,                # classes as strings
+            colorscale="Reds",
+            zmin=0.0,
+            zmax=1.0,
+            colorbar=dict(title="Value"),
+            text=z_text,
+            texttemplate="%{text}",
+            hovertemplate="Class %{y}<br>%{x}: %{z:.2f}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=title,
+        xaxis_title="",
+        yaxis_title="Class",
+        template="plotly_white",
+        margin=dict(l=60, r=60, t=70, b=40),
+    )
+
     _save_plotly(fig, path)
     return fig
 
