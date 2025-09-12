@@ -232,3 +232,48 @@ def build_modalities_html(predictor, df_any: pd.DataFrame, label_col: str, image
     {img_block}
     {tab_block}
     """
+def build_model_performance_summary_table(
+    train_scores: dict,
+    val_scores: dict,
+    test_scores: dict | None = None,
+    include_test: bool = True,
+    title: str = 'Model Performance Summary',
+) -> str:
+    """
+    Returns an HTML table for metrics, optionally hiding the Test column.
+    Keys across score dicts are unioned; missing values render as '—'.
+    """
+    def fmt(v):
+        if v is None:
+            return '—'
+        if isinstance(v, (int, float)):
+            return f'{v:.4f}'
+        return str(v)
+
+    metrics = sorted(set(train_scores.keys()) |
+                     set(val_scores.keys()) |
+                     (set(test_scores.keys()) if (include_test and test_scores) else set()))
+
+    header_cells = ['<th>Metric</th>', '<th>Train</th>', '<th>Validation</th>']
+    if include_test and test_scores:
+        header_cells.append('<th>Test</th>')
+
+    rows_html = []
+    for m in metrics:
+        cells = [
+            f'<td>{m}</td>',
+            f'<td>{fmt(train_scores.get(m))}</td>',
+            f'<td>{fmt(val_scores.get(m))}</td>',
+        ]
+        if include_test and test_scores:
+            cells.append(f'<td>{fmt(test_scores.get(m))}</td>')
+        rows_html.append('<tr>' + ''.join(cells) + '</tr>')
+
+    table_html = f"""
+      <h3 style="margin-top:0">{title}</h3>
+      <table class="metric-table">
+        <thead><tr>{''.join(header_cells)}</tr></thead>
+        <tbody>{''.join(rows_html)}</tbody>
+      </table>
+    """
+    return table_html

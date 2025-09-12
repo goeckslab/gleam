@@ -40,6 +40,7 @@ from report_utils import (
     build_warnings_html,
     build_reproducibility_html,
     build_modalities_html,  # for multimodal runs
+    build_model_performance_summary_table,
 )
 
 # ------------- Logging -------------
@@ -256,6 +257,7 @@ def main():
         problem_type=kind,
     )
 
+
     # Write metrics CSV (flattened rows per phase, dynamic columns by task)
     all_keys = []
     for split in ("Train", "Validation", "Test"):
@@ -311,6 +313,16 @@ def main():
         tmpdir
     )
 
+
+    # Build the Train-tab performance table (Train & Validation only)
+    train_tab_perf_html = build_model_performance_summary_table(
+        train_scores=raw_metrics.get('Train', {}),
+        val_scores=raw_metrics.get('Validation', {}),
+        test_scores=raw_metrics.get('Test', {}),
+        include_test=False,  # hide Test column in Train tab
+        title="Model Performance Summary",
+    )
+
     train_html = build_train_html_and_plots(
         predictor=predictor,
         problem_type=kind,
@@ -318,6 +330,7 @@ def main():
         label_column=args.label_column,
         tmpdir=tmpdir,
         seed=int(args.random_seed),
+        perf_table_html=train_tab_perf_html,  # <-- pass the table to appear first
     )
 
     # Test section (reuse existing plot builder)

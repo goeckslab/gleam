@@ -189,30 +189,73 @@ def generate_calibration_plot(
 def generate_threshold_plot(
     y_true_bin: np.ndarray,
     y_prob: np.ndarray,
-    title: str = "Threshold Curve",
-    path: Optional[str] = None,
+    title: str = "Threshold Plot",
+    n_points: int = 201,
 ) -> go.Figure:
     """
-    Binary threshold sweep plotting Precision/Recall/F1 vs threshold (Plotly).
+    Precision, recall, F1, and queue rate vs discrimination threshold.
+    Draws a dashed vertical line at the F1-optimal threshold and labels it.
     """
-    precision, recall, thresholds = precision_recall_curve(y_true_bin, y_prob)
-    thresholds = np.append(thresholds, 1.0)  # Align lengths
-    f1 = 2 * (precision * recall) / (precision + recall + 1e-12)
+    y_true_bin = np.asarray(y_true_bin).astype(int)
+    y_prob = np.asarray(y_prob).astype(float)
+    th = np.linspace(0, 1, n_points)
+
+    precisions, recalls, f1s, qrates = [], [], [], []
+    for t in th:
+        yhat = (y_prob >= t).astype(int)
+        tp = int((yhat & (y_true_bin == 1)).sum())
+        fp = int((yhat & (y_true_bin == 0)).sum())
+        fn = int(((1 - yhat) & (y_true_bin == 1)).sum())
+
+        prec = tp / (tp + fp) if (tp + fp) else 0.0
+        rec  = tp / (tp + fn) if (tp + fn) else 0.0
+        f1   = (2 * prec * rec) / (prec + rec) if (prec + rec) else 0.0
+        qrat = float(yhat.mean())
+
+        precisions.append(prec)
+        recalls.append(rec)
+        f1s.append(f1)
+        qrates.append(qrat)
+
+    precisions = np.array(precisions)
+    recalls    = np.array(recalls)
+    f1s        = np.array(f1s)
+    qrates     = np.array(qrates)
+
+    # F1-optimal threshold
+    best_idx = int(np.argmax(f1s))
+    t_star = float(th[best_idx])
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=thresholds, y=precision, mode="lines", name="Precision"))
-    fig.add_trace(go.Scatter(x=thresholds, y=recall, mode="lines", name="Recall"))
-    fig.add_trace(go.Scatter(x=thresholds, y=f1, mode="lines", name="F1"))
+    def add_curve(y, name):
+        # line + soft fill to mimic the reference style
+        fig.add_trace(go.Scatter(
+            x=th, y=y, name=name, mode="lines",
+            line=dict(width=3),
+            fill="tozeroy", opacity=0.15, hovertemplate="t=%{x:.2f}<br>%{y:.3f}<extra></extra>"
+        ))
+    add_curve(precisions, "precision")
+    add_curve(recalls, "recall")
+    add_curve(f1s, "F₁")
+    add_curve(qrates, "queue rate")
+
+    # Vertical dashed line at t* (F1-optimal)
+    fig.add_vline(x=t_star, line_width=2, line_dash="dash", line_color="black")
+    fig.add_annotation(
+        x=t_star, y=0.98, xref="x", yref="paper",
+        showarrow=False, text=f"t* = {t_star:.2f}",
+        font=dict(color="black")
+    )
+
     fig.update_layout(
         title=title,
-        xaxis_title="Threshold",
-        yaxis_title="Score",
-        yaxis=dict(range=[0, 1]),
         template="plotly_white",
+        xaxis=dict(title="discrimination threshold", range=[0, 1], gridcolor="#eee"),
+        yaxis=dict(title="score", range=[0, 1], gridcolor="#eee"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0),
+        margin=dict(l=50, r=20, t=60, b=50),
     )
-    _save_plotly(fig, path)
     return fig
-
 
 def generate_per_class_metrics_plot(
     y_true: Sequence,
@@ -559,23 +602,17 @@ def plot_confidence_histogram(
 
 
 def generate_learning_curve_from_predictions(
-    y_true: Sequence,
-    y_pred: Optional[Sequence] = None,
-    y_proba: Optional[np.ndarray] = None,
-    classes: Optional[Sequence] = None,
-    metric: str = "accuracy",                 # "accuracy" | "log_loss"
+    y_true,
+    y_pred=None,
+    y_proba=None,
+    classes=None,
+    metric: str = "accuracy",
     train_fracs: np.ndarray = np.linspace(0.1, 1.0, 10),
     n_repeats: int = 5,
     seed: int = 42,
     title: str = "Learning Curve",
-    path: Optional[str] = None,
+    path: str | None = None,
 ) -> go.Figure:
-    """
-    Fast 'learning curves' from PREDICTIONS (no refits):
-      - accuracy: uses y_pred
-      - log_loss: uses y_proba (+ classes)
-    Useful to visualize stabilization as sample size grows.
-    """
     rng = np.random.default_rng(seed)
     y_true = np.asarray(y_true)
     N = len(y_true)
@@ -592,16 +629,14 @@ def generate_learning_curve_from_predictions(
 
     sizes = (np.clip((train_fracs * N).astype(int), 1, N)).tolist()
     means, stds = [], []
-
     for n in sizes:
         vals = []
         for _ in range(n_repeats):
             idx = rng.choice(N, size=n, replace=False)
             if metric == "accuracy":
-                vals.append(float(accuracy_score(y_true[idx], y_pred[idx])))
+                vals.append(float((y_true[idx] == y_pred[idx]).mean()))
             else:
                 if y_proba.ndim == 1:
-                    # binary 1-d → expand to 2 columns for log_loss
                     p = y_proba[idx]
                     pp = np.column_stack([1 - p, p])
                 else:
@@ -612,19 +647,21 @@ def generate_learning_curve_from_predictions(
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=sizes, y=means, mode="lines+markers",
-        error_y=dict(type="data", array=stds, visible=True),
-        name="Mean ± SD"
+        x=sizes, y=means, mode="lines+markers", name=("training" if metric == "log_loss" else "learning"),
+        line=dict(width=3, shape="spline"), marker=dict(size=7),
+        error_y=dict(type="data", array=stds, visible=True)
     ))
     fig.update_layout(
         title=title,
-        xaxis_title="Training samples (subset of train)",
-        yaxis_title=("Accuracy" if metric == "accuracy" else "LogLoss (lower is better)"),
         template="plotly_white",
+        xaxis=dict(title="epoch" if metric == "log_loss" else "samples", gridcolor="#eee"),
+        yaxis=dict(title=("loss" if metric == "log_loss" else "accuracy"), gridcolor="#eee"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0),
+        margin=dict(l=50, r=20, t=60, b=50),
     )
-    _save_plotly(fig, path)
+    if path:
+        _save_plotly(fig, path)
     return fig
-
 
 def build_train_html_and_plots(
     predictor,
@@ -633,95 +670,57 @@ def build_train_html_and_plots(
     label_column: str,
     tmpdir: str,
     seed: int = 42,
+    perf_table_html: str | None = None,   # <— NEW
 ) -> str:
-    """
-    Generates the Train tab content:
-      - Learning Curves (Accuracy)
-      - Learning Curves (LogLoss)
-      - Threshold Plot (binary only)
-    Returns a ready-to-embed HTML string.
-    """
     y_true = df_train[label_column].values
 
-    # Predictions / probabilities on TRAIN
-    pred_labels = None
-    pred_proba  = None
+    # predictions on TRAIN
+    pred_labels, pred_proba = None, None
     try:
         pred_labels = predictor.predict(df_train)
     except Exception:
         pass
     try:
         proba_raw = predictor.predict_proba(df_train)
-        if isinstance(proba_raw, (pd.Series, pd.DataFrame)):
-            pred_proba = proba_raw.to_numpy()
-        else:
-            pred_proba = np.asarray(proba_raw)
+        pred_proba = proba_raw.to_numpy() if isinstance(proba_raw, (pd.Series, pd.DataFrame)) else np.asarray(proba_raw)
     except Exception:
         pred_proba = None
 
-    pieces: List[str] = []
+    pieces: list[str] = []
 
-    # Learning Curve - Accuracy (classification only and needs labels)
+    # 0) Model Performance Summary (no Test) — FIRST
+    if perf_table_html:
+        pieces.append(f"<div class='card'>{perf_table_html}</div>")
+
+    # 1) Learning Curve — Accuracy
     if problem_type in ("binary", "multiclass") and pred_labels is not None:
         fig_acc = generate_learning_curve_from_predictions(
-            y_true=y_true,
-            y_pred=np.asarray(pred_labels),
-            metric="accuracy",
-            title="Learning Curves — Label Accuracy",
-            seed=seed,
+            y_true=y_true, y_pred=np.asarray(pred_labels),
+            metric="accuracy", title="Learning Curves Label Accuracy", seed=seed
         )
         pieces.append(fig_acc.to_html(full_html=False, include_plotlyjs="cdn"))
 
-    # Learning Curve - LogLoss (needs probabilities)
+    # 2) Learning Curve — Loss
     if problem_type in ("binary", "multiclass") and pred_proba is not None:
         classes = np.unique(y_true)
-        # normalize to shape (n_samples, n_classes) for multiclass or (n,) for binary
-        if pred_proba.ndim == 1 or (pred_proba.ndim == 2 and pred_proba.shape[1] == 1):
-            # keep 1-D for binary; generator will expand for log_loss
-            pp = pred_proba.reshape(-1)
-        else:
-            pp = pred_proba
+        pp = pred_proba.reshape(-1) if pred_proba.ndim == 1 or (pred_proba.ndim == 2 and pred_proba.shape[1] == 1) else pred_proba
         fig_ll = generate_learning_curve_from_predictions(
-            y_true=y_true,
-            y_proba=pp,
-            classes=classes,
-            metric="log_loss",
-            title="Learning Curves — Label Loss (LogLoss)",
-            seed=seed,
+            y_true=y_true, y_proba=pp, classes=classes,
+            metric="log_loss", title="Learning Curves Label Loss", seed=seed
         )
         pieces.append(fig_ll.to_html(full_html=False, include_plotlyjs=False))
 
-    # Threshold Plot (binary only, needs probabilities for the positive class)
+    # 3) Threshold Plot (binary only)
     if problem_type == "binary" and pred_proba is not None:
-        # collapse to positive-class score
-        if pred_proba.ndim == 1:
-            pos_scores = pred_proba.reshape(-1)
-        else:
-            # pick column of lexicographically largest class (consistent with metrics_logic)
-            classes_sorted = np.sort(np.unique(y_true))
-            pos_label = classes_sorted[-1]
-            pos_idx = -1
-            try:
-                if hasattr(predictor, "class_labels") and predictor.class_labels:
-                    pos_idx = list(predictor.class_labels).index(pos_label)
-            except Exception:
-                pos_idx = -1
-            pos_scores = pred_proba[:, pos_idx].reshape(-1)
-
+        pos_scores = pred_proba.reshape(-1) if pred_proba.ndim == 1 else pred_proba[:, -1]
         y_bin = (y_true == np.max(np.unique(y_true))).astype(int)
         fig_thr = generate_threshold_plot(
-            y_true_bin=y_bin,
-            y_prob=pos_scores,
-            title="Threshold Plot (Precision/Recall/F1 vs Threshold)",
+            y_true_bin=y_bin, y_prob=pos_scores, title="Threshold Plot"
         )
         pieces.append(fig_thr.to_html(full_html=False, include_plotlyjs=False))
 
     if not pieces:
-        # Fallback message
-        return """
-          <h2>Training Diagnostics</h2>
-          <p><em>No training diagnostics available for this run (task type or predictor lacks outputs).</em></p>
-        """
+        return "<h2>Training Diagnostics</h2><p><em>No training diagnostics available for this run.</em></p>"
 
     return "<h2>Training Diagnostics</h2>" + "".join(f"<div class='plotly-center'>{p}</div>" for p in pieces)
 
