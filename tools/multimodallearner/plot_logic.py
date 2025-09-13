@@ -15,6 +15,7 @@ from sklearn.metrics import (
     precision_recall_curve,
     roc_auc_score,
     roc_curve,
+    auc,
     accuracy_score,
     log_loss,
 )
@@ -30,11 +31,28 @@ from utils import (
 import matplotlib.pyplot as plt
 import seaborn as sns
 import shap
-
+from html import escape
+import html
 
 # =========================
 # Utilities
 # =========================
+def plot_with_table_style_title(fig, title: str) -> str:
+    """
+    Render a Plotly figure with a report-style <h2> header so it matches the
+    green table section headers.
+    """
+    # kill Plotly’s built-in title
+    fig.update_layout(title=None)
+
+    # figure HTML without PlotlyJS (we load it once globally)
+    plot_html = fig.to_html(full_html=False, include_plotlyjs=False)
+
+    # use <h2> — your CSS already styles <h2> like the table headers
+    return f"""
+<h2>{html.escape(title)}</h2>
+<div class="plotly-center">{plot_html}</div>
+""".strip()
 
 def _save_plotly(fig: go.Figure, path: Optional[str]) -> None:
     """
@@ -66,97 +84,133 @@ def _save_matplotlib(path: Optional[str]) -> None:
 # =========================
 
 def generate_confusion_matrix_plot(
-    y_true: Sequence,
-    y_pred: Sequence,
-    classes: Optional[Sequence] = None,
+    y_true,
+    y_pred,
     title: str = "Confusion Matrix",
-    path: Optional[str] = None,
 ) -> go.Figure:
-    """
-    Interactive confusion matrix heatmap (Plotly).
-    """
-    if classes is None:
-        classes = sorted(list(set(y_true) | set(y_pred)))
-    cm = confusion_matrix(y_true, y_pred, labels=classes)
-    ztext = cm.astype(str)
+    y_true = np.asarray(y_true)
+    y_pred = np.asarray(y_pred)
+
+    # Class order (works for strings or numbers)
+    labels = pd.Index(np.unique(np.concatenate([y_true, y_pred])), dtype=object).tolist()
+    cm = confusion_matrix(y_true, y_pred, labels=labels)
+
+    # Use categorical axes by passing string labels for x/y
+    cats = [str(l) for l in labels]
 
     fig = go.Figure(
         data=go.Heatmap(
             z=cm,
-            x=classes,
-            y=classes,
+            x=cats,              # categorical x
+            y=cats,              # categorical y
             colorscale="Blues",
-            text=ztext,
+            colorbar=dict(title="Count"),
+            text=cm,             # numbers inside cells
             texttemplate="%{text}",
-            hovertemplate="Pred: %{x}<br>True: %{y}<br>Count: %{z}<extra></extra>",
-            showscale=True,
+            hovertemplate="True=%{y}<br>Pred=%{x}<br>Count=%{z}<extra></extra>",
+            zmin=0
         )
     )
+
     fig.update_layout(
-        title=title,
+        title=None,
         xaxis_title="Predicted label",
         yaxis_title="True label",
-        yaxis_autorange="reversed",
+        xaxis=dict(type="category"),
+        yaxis=dict(type="category", autorange="reversed"),  # typical CM orientation
+        margin=dict(l=60, r=20, t=60, b=60),
+        template="plotly_white",
     )
-    _save_plotly(fig, path)
     return fig
-
 
 def generate_roc_curve_plot(
     y_true_bin: np.ndarray,
-    y_prob: np.ndarray,
+    y_score: np.ndarray,
     title: str = "ROC Curve",
-    path: Optional[str] = None,
+    marker_threshold: float | None = None,
 ) -> go.Figure:
-    """
-    Binary ROC curve (Plotly). y_true_bin must be 0/1.
-    """
-    fpr, tpr, _ = roc_curve(y_true_bin, y_prob)
-    auc = roc_auc_score(y_true_bin, y_prob)
+    y_true_bin = np.asarray(y_true_bin).astype(int).reshape(-1)
+    y_score = np.asarray(y_score).astype(float).reshape(-1)
+
+    fpr, tpr, thr = roc_curve(y_true_bin, y_score)
+    roc_auc = auc(fpr, tpr)
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=f"AUC = {auc:.3f}"))
-    fig.add_trace(
-        go.Scatter(x=[0, 1], y=[0, 1], mode="lines", line=dict(dash="dash"), name="Chance")
-    )
+    fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=f"ROC (AUC={roc_auc:.3f})"))
+
+    # 45° chance line (no legend to keep it clean)
+    fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines",
+                             line=dict(dash="dash"), showlegend=False))
+
+    # Optional marker at the user threshold
+    if marker_threshold is not None and len(thr):
+        # roc_curve returns thresholds of same length as fpr/tpr; includes inf at idx 0
+        finite = np.isfinite(thr)
+        if np.any(finite):
+            idx_local = int(np.argmin(np.abs(thr[finite] - float(marker_threshold))))
+            idx = int(np.nonzero(finite)[0][idx_local])  # map back to original indices
+            x_m, y_m = float(fpr[idx]), float(tpr[idx])
+
+            fig.add_trace(
+                go.Scatter(
+                    x=[x_m], y=[y_m],
+                    mode="markers",
+                    name=f"@ {float(marker_threshold):.2f}",
+                    marker=dict(size=10)
+                )
+            )
+
     fig.update_layout(
-        title=title,
+        title=None,
         xaxis_title="False Positive Rate",
         yaxis_title="True Positive Rate",
-        legend=dict(x=0.65, y=0.1),
+        template="plotly_white",
+        legend=dict(x=1, y=0, xanchor="right"),
+        margin=dict(l=60, r=20, t=60, b=60),
     )
-    _save_plotly(fig, path)
     return fig
 
 
 def generate_pr_curve_plot(
     y_true_bin: np.ndarray,
-    y_prob: np.ndarray,
+    y_score: np.ndarray,
     title: str = "Precision–Recall Curve",
-    path: Optional[str] = None,
+    marker_threshold: float | None = None,
 ) -> go.Figure:
-    """
-    Binary PR curve (Plotly). y_true_bin must be 0/1.
-    """
-    precision, recall, _ = precision_recall_curve(y_true_bin, y_prob)
-    ap = average_precision_score(y_true_bin, y_prob)
+    y_true_bin = np.asarray(y_true_bin).astype(int).reshape(-1)
+    y_score = np.asarray(y_score).astype(float).reshape(-1)
+
+    precision, recall, thr = precision_recall_curve(y_true_bin, y_score)
+    pr_auc = auc(recall, precision)
 
     fig = go.Figure()
-    fig.add_trace(
-        go.Scatter(x=recall, y=precision, mode="lines", name=f"AP = {ap:.3f}")
-    )
+    fig.add_trace(go.Scatter(x=recall, y=precision, mode="lines", name=f"PR (AUC={pr_auc:.3f})"))
+
+    # Optional marker at the user threshold
+    if marker_threshold is not None and len(thr):
+        # In PR, thresholds has length len(precision)-1. The point for thr[j] is (recall[j+1], precision[j+1]).
+        j = int(np.argmin(np.abs(thr - float(marker_threshold))))
+        j = int(np.clip(j, 0, len(thr) - 1))
+        x_m, y_m = float(recall[j + 1]), float(precision[j + 1])
+
+        fig.add_trace(
+            go.Scatter(
+                x=[x_m], y=[y_m],
+                mode="markers",
+                name=f"@ {float(marker_threshold):.2f}",
+                marker=dict(size=10)
+            )
+        )
+
     fig.update_layout(
-        title=title,
+        title=None,
         xaxis_title="Recall",
         yaxis_title="Precision",
-        yaxis=dict(range=[0, 1]),
-        xaxis=dict(range=[0, 1]),
-        legend=dict(x=0.65, y=0.1),
         template="plotly_white",
+        legend=dict(x=1, y=0, xanchor="right"),
+        margin=dict(l=60, r=20, t=60, b=60),
     )
-    _save_plotly(fig, path)
     return fig
-
 
 def generate_calibration_plot(
     y_true_bin: np.ndarray,
@@ -175,7 +229,7 @@ def generate_calibration_plot(
         go.Scatter(x=[0, 1], y=[0, 1], mode="lines", line=dict(dash="dash"), name="Perfect")
     )
     fig.update_layout(
-        title=title,
+        title=None,
         xaxis_title="Predicted Probability",
         yaxis_title="Observed Probability",
         yaxis=dict(range=[0, 1]),
@@ -190,65 +244,66 @@ def generate_threshold_plot(
     y_true_bin: np.ndarray,
     y_prob: np.ndarray,
     title: str = "Threshold Plot",
-    n_points: int = 201,
+    user_threshold: float | None = None,
 ) -> go.Figure:
-    """
-    Precision, recall, F1, and queue rate vs discrimination threshold.
-    Draws a dashed vertical line at the F1-optimal threshold and labels it.
-    """
-    y_true_bin = np.asarray(y_true_bin).astype(int)
-    y_prob = np.asarray(y_prob).astype(float)
-    th = np.linspace(0, 1, n_points)
+    y_true = np.asarray(y_true_bin, dtype=int).ravel()
+    p = np.asarray(y_prob, dtype=float).ravel()
 
-    precisions, recalls, f1s, qrates = [], [], [], []
+    # Evaluate only where predictions change
+    th = np.r_[0.0, np.unique(p), 1.0]   # monotone, includes 0 and 1
+
+    prec, rec, f1, qrate = [], [], [], []
     for t in th:
-        yhat = (y_prob >= t).astype(int)
-        tp = int((yhat & (y_true_bin == 1)).sum())
-        fp = int((yhat & (y_true_bin == 0)).sum())
-        fn = int(((1 - yhat) & (y_true_bin == 1)).sum())
+        yhat = (p >= t).astype(int)
+        tp = int(((yhat == 1) & (y_true == 1)).sum())
+        fp = int(((yhat == 1) & (y_true == 0)).sum())
+        fn = int(((yhat == 0) & (y_true == 1)).sum())
 
-        prec = tp / (tp + fp) if (tp + fp) else 0.0
-        rec  = tp / (tp + fn) if (tp + fn) else 0.0
-        f1   = (2 * prec * rec) / (prec + rec) if (prec + rec) else 0.0
-        qrat = float(yhat.mean())
+        pr = tp / (tp + fp) if (tp + fp) else np.nan  # undefined when no predicted positives
+        rc = tp / (tp + fn) if (tp + fn) else 0.0
+        f  = (2 * pr * rc) / (pr + rc) if (pr + rc) and not np.isnan(pr) else 0.0
+        q  = float(yhat.mean())
 
-        precisions.append(prec)
-        recalls.append(rec)
-        f1s.append(f1)
-        qrates.append(qrat)
+        prec.append(pr)
+        rec.append(rc)
+        f1.append(f)
+        qrate.append(q)
 
-    precisions = np.array(precisions)
-    recalls    = np.array(recalls)
-    f1s        = np.array(f1s)
-    qrates     = np.array(qrates)
-
-    # F1-optimal threshold
-    best_idx = int(np.argmax(f1s))
+    # Choose t* where F1 is maximized (ignore NaN precision rows)
+    f1_arr = np.asarray(f1, dtype=float)
+    best_idx = int(np.nanargmax(f1_arr))
     t_star = float(th[best_idx])
 
-    fig = go.Figure()
-    def add_curve(y, name):
-        # line + soft fill to mimic the reference style
-        fig.add_trace(go.Scatter(
-            x=th, y=y, name=name, mode="lines",
-            line=dict(width=3),
-            fill="tozeroy", opacity=0.15, hovertemplate="t=%{x:.2f}<br>%{y:.3f}<extra></extra>"
-        ))
-    add_curve(precisions, "precision")
-    add_curve(recalls, "recall")
-    add_curve(f1s, "F₁")
-    add_curve(qrates, "queue rate")
+    # Replace NaNs for plotting (don’t affect t*)
+    prec_plot = np.nan_to_num(prec, nan=0.0)
 
-    # Vertical dashed line at t* (F1-optimal)
+    fig = go.Figure()
+    def add_curve(x, y, name):
+        fig.add_trace(go.Scatter(
+            x=x, y=y, mode="lines", name=name,
+            line=dict(width=3),
+            hovertemplate="t=%{x:.3f}<br>%{y:.3f}<extra></extra>"
+        ))
+
+    add_curve(th, prec_plot, "precision")
+    add_curve(th, rec,       "recall")
+    add_curve(th, f1_arr,    "F1")
+    add_curve(th, qrate,     "queue rate")
+
+    # F1*-optimal (dashed)
     fig.add_vline(x=t_star, line_width=2, line_dash="dash", line_color="black")
-    fig.add_annotation(
-        x=t_star, y=0.98, xref="x", yref="paper",
-        showarrow=False, text=f"t* = {t_star:.2f}",
-        font=dict(color="black")
-    )
+    fig.add_annotation(x=t_star, y=0.98, xref="x", yref="paper", showarrow=False, text=f"t* = {t_star:.2f}")
+
+    # User threshold (solid)
+    if user_threshold is not None:
+        fig.add_vline(x=float(user_threshold), line_width=2, line_color="red")
+        fig.add_annotation(
+            x=float(user_threshold), y=0.90, xref="x", yref="paper",
+            showarrow=False, text=f"threshold = {float(user_threshold):.2f}"
+        )
 
     fig.update_layout(
-        title=title,
+        title=None,
         template="plotly_white",
         xaxis=dict(title="discrimination threshold", range=[0, 1], gridcolor="#eee"),
         yaxis=dict(title="score", range=[0, 1], gridcolor="#eee"),
@@ -311,7 +366,7 @@ def generate_per_class_metrics_plot(
         )
     )
     fig.update_layout(
-        title=title,
+        title=None,
         xaxis_title="",
         yaxis_title="Class",
         template="plotly_white",
@@ -352,14 +407,14 @@ def generate_multiclass_roc_curve_plot(
     fig = go.Figure()
     for i, cls in enumerate(classes):
         fpr, tpr, _ = roc_curve(y_true_bin[:, i], y_prob[:, i])
-        auc = roc_auc_score(y_true_bin[:, i], y_prob[:, i])
-        fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=f"{cls} (AUC {auc:.2f})"))
+        auc_val = roc_auc_score(y_true_bin[:, i], y_prob[:, i])
+        fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=f"{cls} (AUC {auc_val:.2f})"))
 
     fig.add_trace(
         go.Scatter(x=[0, 1], y=[0, 1], mode="lines", line=dict(dash="dash"), showlegend=False)
     )
     fig.update_layout(
-        title=title,
+        title=None,
         xaxis_title="False Positive Rate",
         yaxis_title="True Positive Rate",
         template="plotly_white",
@@ -395,7 +450,7 @@ def generate_multiclass_pr_curve_plot(
             fig.add_trace(go.Scatter(x=recall, y=precision, mode="lines", name=f"{cls} (AP {ap:.2f})"))
 
     fig.update_layout(
-        title=title,
+        title=None,
         xaxis_title="Recall",
         yaxis_title="Precision",
         yaxis=dict(range=[0, 1]),
@@ -418,7 +473,7 @@ def generate_metric_comparison_bar(
     """
     df = pd.DataFrame(metrics_scores, index=phases).T.reset_index().rename(columns={"index": "Metric"})
     df_m = df.melt(id_vars="Metric", var_name="Phase", value_name="Score")
-    fig = px.bar(df_m, x="Metric", y="Score", color="Phase", barmode="group", title=title)
+    fig = px.bar(df_m, x="Metric", y="Score", color="Phase", barmode="group", title=None)
     ymax = max(1.0, df_m["Score"].max() * 1.05)
     fig.update_yaxes(range=[0, ymax])
     fig.update_layout(template="plotly_white")
@@ -444,7 +499,7 @@ def generate_scatter_plot(
     vmin = float(min(np.min(y_true), np.min(y_pred)))
     vmax = float(max(np.max(y_true), np.max(y_pred)))
 
-    fig = px.scatter(x=y_true, y=y_pred, opacity=0.6, labels={"x": "Actual", "y": "Predicted"}, title=title)
+    fig = px.scatter(x=y_true, y=y_pred, opacity=0.6, labels={"x": "Actual", "y": "Predicted"}, title=None)
     fig.add_trace(go.Scatter(x=[vmin, vmax], y=[vmin, vmax], mode="lines", line=dict(dash="dash"), name="Ideal"))
     fig.update_layout(template="plotly_white")
     _save_plotly(fig, path)
@@ -466,7 +521,7 @@ def generate_residual_plot(
 
     fig = px.scatter(x=y_pred, y=residuals, opacity=0.6,
                      labels={"x": "Predicted", "y": "Residual (Actual - Predicted)"},
-                     title=title)
+                     title=None)
     fig.add_hline(y=0, line_dash="dash")
     fig.update_layout(template="plotly_white")
     _save_plotly(fig, path)
@@ -484,7 +539,7 @@ def generate_residual_histogram(
     Residuals histogram (Plotly).
     """
     residuals = np.asarray(y_true) - np.asarray(y_pred)
-    fig = px.histogram(x=residuals, nbins=bins, labels={"x": "Residual"}, title=title)
+    fig = px.histogram(x=residuals, nbins=bins, labels={"x": "Residual"}, title=None)
     fig.update_layout(yaxis_title="Frequency", template="plotly_white")
     _save_plotly(fig, path)
     return fig
@@ -520,7 +575,7 @@ def generate_regression_calibration_plot(
     fig.add_trace(go.Scatter(x=[vmin, vmax], y=[vmin, vmax], mode="lines", line=dict(dash="dash"),
                              name="Ideal"))
     fig.update_layout(
-        title=title,
+        title=None,
         xaxis_title="Mean Predicted per bin",
         yaxis_title="Mean Actual per bin",
         template="plotly_white",
@@ -562,7 +617,7 @@ def plot_error_vs_confidence(
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=centers, y=err_rates, mode="lines+markers", name="Error rate"))
     fig.update_layout(
-        title=title,
+        title=None,
         xaxis_title="Confidence (max predicted probability)",
         yaxis_title="Error Rate",
         yaxis=dict(range=[0, 1]),
@@ -590,7 +645,7 @@ def plot_confidence_histogram(
 
     fig = px.histogram(x=confidences, nbins=bins, range_x=(0, 1),
                        labels={"x": "Confidence (max predicted probability)"},
-                       title=title)
+                       title=None)
     fig.update_layout(yaxis_title="Count", template="plotly_white")
     _save_plotly(fig, path)
     return fig
@@ -652,7 +707,7 @@ def generate_learning_curve_from_predictions(
         error_y=dict(type="data", array=stds, visible=True)
     ))
     fig.update_layout(
-        title=title,
+        title=None,
         template="plotly_white",
         xaxis=dict(title="epoch" if metric == "log_loss" else "samples", gridcolor="#eee"),
         yaxis=dict(title=("loss" if metric == "log_loss" else "accuracy"), gridcolor="#eee"),
@@ -670,7 +725,9 @@ def build_train_html_and_plots(
     label_column: str,
     tmpdir: str,
     seed: int = 42,
-    perf_table_html: str | None = None,   # <— NEW
+    perf_table_html: str | None = None,
+    threshold: Optional[float] = None,
+    section_tile: str = "Training Diagnostics",
 ) -> str:
     y_true = df_train[label_column].values
 
@@ -686,6 +743,12 @@ def build_train_html_and_plots(
     except Exception:
         pred_proba = None
 
+    if problem_type == "binary" and threshold is not None and pred_proba is not None:
+        classes = np.unique(y_true)
+        pos_label, neg_label = classes.max(), classes.min()
+        pos_scores = pred_proba.reshape(-1) if pred_proba.ndim == 1 or pred_proba.shape[1] == 1 else pred_proba[:, -1]
+        pred_labels = np.where(pos_scores >= float(threshold), pos_label, neg_label)
+
     pieces: list[str] = []
 
     # 0) Model Performance Summary (no Test) — FIRST
@@ -696,9 +759,9 @@ def build_train_html_and_plots(
     if problem_type in ("binary", "multiclass") and pred_labels is not None:
         fig_acc = generate_learning_curve_from_predictions(
             y_true=y_true, y_pred=np.asarray(pred_labels),
-            metric="accuracy", title="Learning Curves Label Accuracy", seed=seed
+            metric="accuracy", title="Learning Curves — Label Accuracy", seed=seed
         )
-        pieces.append(fig_acc.to_html(full_html=False, include_plotlyjs="cdn"))
+        pieces.append(plot_with_table_style_title(fig_acc, "Learning Curves — Label Accuracy"))
 
     # 2) Learning Curve — Loss
     if problem_type in ("binary", "multiclass") and pred_proba is not None:
@@ -706,23 +769,22 @@ def build_train_html_and_plots(
         pp = pred_proba.reshape(-1) if pred_proba.ndim == 1 or (pred_proba.ndim == 2 and pred_proba.shape[1] == 1) else pred_proba
         fig_ll = generate_learning_curve_from_predictions(
             y_true=y_true, y_proba=pp, classes=classes,
-            metric="log_loss", title="Learning Curves Label Loss", seed=seed
+            metric="log_loss", title="Learning Curves — Label Loss", seed=seed
         )
-        pieces.append(fig_ll.to_html(full_html=False, include_plotlyjs=False))
+        pieces.append(plot_with_table_style_title(fig_ll, "Learning Curves — Label Loss"))
 
     # 3) Threshold Plot (binary only)
     if problem_type == "binary" and pred_proba is not None:
         pos_scores = pred_proba.reshape(-1) if pred_proba.ndim == 1 else pred_proba[:, -1]
         y_bin = (y_true == np.max(np.unique(y_true))).astype(int)
-        fig_thr = generate_threshold_plot(
-            y_true_bin=y_bin, y_prob=pos_scores, title="Threshold Plot"
-        )
-        pieces.append(fig_thr.to_html(full_html=False, include_plotlyjs=False))
+        fig_thr = generate_threshold_plot(y_true_bin=y_bin, y_prob=pos_scores, title="Threshold Plot",
+                                          user_threshold=threshold)
+        pieces.append(plot_with_table_style_title(fig_thr, "Threshold Plot"))
 
     if not pieces:
         return "<h2>Training Diagnostics</h2><p><em>No training diagnostics available for this run.</em></p>"
 
-    return "<h2>Training Diagnostics</h2>" + "".join(f"<div class='plotly-center'>{p}</div>" for p in pieces)
+    return "<h2>Train/Validation Performance Summary</h2>" + "".join(pieces)
 
 def generate_learning_curve(
     estimator,
@@ -756,7 +818,7 @@ def generate_learning_curve(
         error_y=dict(type="data", array=test_std, visible=True)
     ))
     fig.update_layout(
-        title=title,
+        title=None,
         xaxis_title="Training examples",
         yaxis_title=scoring,
         template="plotly_white",
@@ -867,44 +929,71 @@ def evaluate_all(
 
 def build_summary_html(
     predictor,
-    args,
-    problem_type: str,
-    train_scores: Dict[str, float],
-    val_scores: Dict[str, float],
-    test_scores: Dict[str, float],
-    tmpdir: str,
+    df_train: pd.DataFrame,
+    df_val: Optional[pd.DataFrame],
+    df_test: Optional[pd.DataFrame],
+    label_column: str,
+    extra_run_rows: Optional[list[tuple[str, str]]] = None,
+    class_balance_html: Optional[str] = None,
+    perf_table_html: Optional[str] = None,  # ← NEW: first section
 ) -> str:
-    """
-    A compact summary: metrics table (train/val/test) + a tiny run/config block.
-    Returns HTML (to be used in the 'Validation Summary & Config' tab).
-    """
-    # metrics table
-    metrics = sorted(set(train_scores) | set(val_scores) | set(test_scores))
-    head = "<thead><tr><th>Metric</th><th>Train</th><th>Validation</th><th>Test</th></tr></thead>"
-    rows = []
-    for m in metrics:
-        tr = train_scores.get(m, np.nan)
-        vr = val_scores.get(m, np.nan)
-        te = test_scores.get(m, np.nan)
-        def fmt(x): 
-            try: return f"{float(x):.4f}"
-            except: return ""
-        rows.append(f"<tr><td>{m.replace('_',' ').title()}</td><td>{fmt(tr)}</td><td>{fmt(vr)}</td><td>{fmt(te)}</td></tr>")
-    metrics_tbl = f"<h2>Model Performance Summary</h2><table class='performance-summary'>{head}<tbody>{''.join(rows)}</tbody></table>"
+    # 0) Performance table (FIRST)
+    perf_block = ""
+    if perf_table_html:
+        perf_block = f"""
+<section class="section">
+  <h2 class="section-title">Model Performance Summary</h2>
+  <div class="card">
+    {perf_table_html}
+  </div>
+</section>
+""".strip()
 
-    # simple run/config info
-    cfg_lines = [
-        ("Problem type", problem_type),
-        ("Target column", args.label_column),
-        ("Image column", args.image_column or "—"),
-        ("Time limit (s)", args.time_limit if getattr(args, 'time_limit', None) else "—"),
-        ("Random seed", args.random_seed),
+    # 1) Run Configuration
+    base_rows: list[tuple[str, str]] = [
+        ("Predictor type", type(predictor).__name__),
+        ("Framework", "AutoGluon Multimodal"),
     ]
-    cfg_rows = "".join(f"<tr><td>{k}</td><td>{v}</td></tr>" for k, v in cfg_lines)
-    cfg_tbl = f"<h2>Run Configuration</h2><table>{cfg_rows}</table>"
+    if extra_run_rows:
+        base_rows.extend(extra_run_rows)
 
-    return metrics_tbl + "<hr>" + cfg_tbl
+    def _fmt(v):
+        if v is None or v == "":
+            return "—"
+        return escape(str(v))
 
+    rows_html = "\n".join(
+        f"<tr><td>{escape(str(k))}</td><td>{_fmt(v)}</td></tr>"
+        for k, v in base_rows
+    )
+
+    run_cfg_html = f"""
+<section class="section">
+  <h2 class="section-title">Run Configuration</h2>
+  <div class="card">
+    <table class="kv-table">
+      <thead><tr><th>Key</th><th>Value</th></tr></thead>
+      <tbody>
+        {rows_html}
+      </tbody>
+    </table>
+  </div>
+</section>
+""".strip()
+
+    # 2) Class Balance (Train Full)
+    class_balance_block = ""
+    if class_balance_html:
+        class_balance_block = f"""
+<section class="section">
+  <h2 class="section-title">Class Balance (Train Full)</h2>
+  <div class="card">
+    {class_balance_html}
+  </div>
+</section>
+""".strip()
+
+    return "\n".join([perf_block, run_cfg_html, class_balance_block]).strip()
 
 def build_test_html_and_plots(
     predictor,
@@ -912,6 +1001,7 @@ def build_test_html_and_plots(
     df_test: pd.DataFrame,
     label_column: str,
     tmpdir: str,
+    threshold: Optional[float] = None,
 ) -> Tuple[str, List[str]]:
     """
     Create a test-summary section (with a placeholder for metric rows) and a list of Plotly HTML divs.
@@ -920,6 +1010,8 @@ def build_test_html_and_plots(
     plots: List[str] = []
 
     y_true = df_test[label_column].values
+    classes = np.unique(y_true)
+
     # Try proba/labels where meaningful
     pred_labels = None
     pred_proba  = None
@@ -933,68 +1025,74 @@ def build_test_html_and_plots(
     except Exception:
         pred_proba = None
 
-    # Classification visuals
+    proba_arr = None
+    if pred_proba is not None:
+        if isinstance(pred_proba, pd.Series):
+            proba_arr = pred_proba.to_numpy().reshape(-1, 1)
+        elif isinstance(pred_proba, pd.DataFrame):
+            proba_arr = pred_proba.to_numpy()
+        else:
+            proba_arr = np.asarray(pred_proba)
+
+    # Thresholded labels for binary
+    if problem_type == "binary" and threshold is not None and proba_arr is not None:
+        pos_label, neg_label = classes.max(), classes.min()
+        pos_scores = proba_arr.reshape(-1) if (proba_arr.ndim == 1 or proba_arr.shape[1] == 1) else proba_arr[:, -1]
+        pred_labels = np.where(pos_scores >= float(threshold), pos_label, neg_label)
+
+    # Confusion matrix / per-class now reflect thresholded labels
     if problem_type in ("binary", "multiclass") and pred_labels is not None:
-        # Confusion matrix
         fig_cm = generate_confusion_matrix_plot(y_true, pred_labels, title="Confusion Matrix")
-        plots.append(fig_cm.to_html(full_html=False, include_plotlyjs="cdn"))
+        plots.append(plot_with_table_style_title(fig_cm, "Confusion Matrix"))
 
-        # Per-class metrics (bar)
         fig_pc = generate_per_class_metrics_plot(y_true, pred_labels, title="Per-Class Metrics")
-        plots.append(fig_pc.to_html(full_html=False, include_plotlyjs=False))
+        plots.append(plot_with_table_style_title(fig_pc, "Per-Class Metrics"))
 
-        # ROC/PR where possible
-        if pred_proba is not None:
-            # Normalize outputs to (n_samples, n_classes)
-            if isinstance(pred_proba, pd.Series):
-                proba_arr = pred_proba.to_numpy().reshape(-1, 1)
-            elif isinstance(pred_proba, pd.DataFrame):
-                proba_arr = pred_proba.to_numpy()
+        # ROC/PR where possible — choose positive-class scores safely
+        pos_label = classes.max()  # or set explicitly, e.g., 1 or "yes"
+
+        if isinstance(pred_proba, pd.DataFrame):
+            proba_arr = pred_proba.to_numpy()
+            if pos_label in pred_proba.columns:
+                pos_idx = list(pred_proba.columns).index(pos_label)
             else:
-                proba_arr = np.asarray(pred_proba)
+                pos_idx = -1  # fallback to last column
+        elif isinstance(pred_proba, pd.Series):
+            proba_arr = pred_proba.to_numpy().reshape(-1, 1)
+            pos_idx = 0
+        else:
+            proba_arr = np.asarray(pred_proba) if pred_proba is not None else None
+            pos_idx = -1 if (proba_arr is not None and proba_arr.ndim == 2 and proba_arr.shape[1] > 1) else 0
 
-            classes = np.unique(y_true)
-            if problem_type == "binary":
-                # accept shape (n,) or (n,2)
-                if proba_arr.ndim == 1 or proba_arr.shape[1] == 1:
-                    y_bin = (y_true == classes.max()).astype(int)
-                    fig_roc = generate_roc_curve_plot(y_bin, proba_arr.reshape(-1), title="ROC Curve")
-                    plots.append(fig_roc.to_html(full_html=False, include_plotlyjs=False))
+        if proba_arr is not None:
+            y_bin = (y_true == pos_label).astype(int)
+            pos_scores = (
+                proba_arr.reshape(-1)
+                if proba_arr.ndim == 1 or proba_arr.shape[1] == 1
+                else proba_arr[:, pos_idx]
+            )
 
-                    fig_pr = generate_pr_curve_plot(y_bin, proba_arr.reshape(-1), title="Precision–Recall Curve")
-                    plots.append(fig_pr.to_html(full_html=False, include_plotlyjs=False))
-                else:
-                    # take positive class (assume index of max class)
-                    pos_idx = 1 if proba_arr.shape[1] > 1 else 0
-                    y_bin = (y_true == classes.max()).astype(int)
-                    fig_roc = generate_roc_curve_plot(y_bin, proba_arr[:, pos_idx], title="ROC Curve")
-                    plots.append(fig_roc.to_html(full_html=False, include_plotlyjs=False))
+            fig_roc = generate_roc_curve_plot(y_bin, pos_scores, title="ROC Curve", marker_threshold=threshold)
+            plots.append(plot_with_table_style_title(fig_roc, f"ROC Curve{'' if threshold is None else f' (marker at threshold={threshold:.2f})'}"))
 
-                    fig_pr = generate_pr_curve_plot(y_bin, proba_arr[:, pos_idx], title="Precision–Recall Curve")
-                    plots.append(fig_pr.to_html(full_html=False, include_plotlyjs=False))
-            else:
-                # multiclass one-vs-rest curves
-                fig_mroc = generate_multiclass_roc_curve_plot(y_true, proba_arr, classes=classes, title="Multiclass ROC Curves")
-                plots.append(fig_mroc.to_html(full_html=False, include_plotlyjs=False))
-
-                fig_mpr = generate_multiclass_pr_curve_plot(y_true, proba_arr, classes=classes, title="Multiclass PR Curves")
-                plots.append(fig_mpr.to_html(full_html=False, include_plotlyjs=False))
+            fig_pr = generate_pr_curve_plot(y_bin, pos_scores, title="Precision–Recall Curve", marker_threshold=threshold)
+            plots.append(plot_with_table_style_title(fig_pr, f"Precision–Recall Curve{'' if threshold is None else f' (marker at threshold={threshold:.2f})'}"))
 
     # Regression visuals
     if problem_type == "regression":
         if pred_labels is None:
             pred_labels = predictor.predict(df_test)
         fig_sc = generate_scatter_plot(y_true, pred_labels, title="Predicted vs Actual")
-        plots.append(fig_sc.to_html(full_html=False, include_plotlyjs="cdn"))
+        plots.append(plot_with_table_style_title(fig_sc, "Predicted vs Actual"))
 
         fig_res = generate_residual_plot(y_true, pred_labels, title="Residual Plot")
-        plots.append(fig_res.to_html(full_html=False, include_plotlyjs=False))
+        plots.append(plot_with_table_style_title(fig_res, "Residual Plot"))
 
         fig_hist = generate_residual_histogram(y_true, pred_labels, title="Residual Histogram")
-        plots.append(fig_hist.to_html(full_html=False, include_plotlyjs=False))
+        plots.append(plot_with_table_style_title(fig_hist, "Residual Histogram"))
 
         fig_cal = generate_regression_calibration_plot(y_true, pred_labels, title="Regression Calibration")
-        plots.append(fig_cal.to_html(full_html=False, include_plotlyjs=False))
+        plots.append(plot_with_table_style_title(fig_cal, "Regression Calibration"))
 
     # Small HTML template with placeholder for metric rows the caller fills in
     test_html_template = """
@@ -1009,35 +1107,30 @@ def build_test_html_and_plots(
 
 def build_feature_html(
     predictor,
-    df_test: pd.DataFrame,
+    df_train: pd.DataFrame,
     label_column: str,
-    tmpdir: str,
-    random_seed: int,
+    include_modalities: bool = True,       # ← NEW
+    include_class_balance: bool = True,    # ← NEW
 ) -> str:
-    """
-    Feature importance for Tabular; for Multimodal we show a placeholder if not supported.
-    Returns HTML (Feature Importance tab).
-    """
-    try:
-        # TabularPredictor supports feature_importance
-        imp = predictor.feature_importance(df_test)
-        # Expect columns: 'feature', 'importance'
-        if "feature" in imp.columns and "importance" in imp.columns:
-            top = imp.head(30)
-            fig = px.bar(top, x="feature", y="importance", title="Top Feature Importances")
-            fig.update_layout(xaxis_tickangle=45, template="plotly_white")
-            return fig.to_html(full_html=False, include_plotlyjs="cdn")
-        else:
-            # AutoGluon older versions return a Series
-            s = imp if isinstance(imp, pd.Series) else pd.Series(imp)
-            top = s.sort_values(ascending=False).head(30)
-            fig = px.bar(top.reset_index(), x="index", y=0, title="Top Feature Importances")
-            fig.update_layout(xaxis_title="feature", yaxis_title="importance",
-                              xaxis_tickangle=45, template="plotly_white")
-            return fig.to_html(full_html=False, include_plotlyjs="cdn")
-    except Exception:
-        # MultimodalPredictor or unsupported
-        return "<p><em>Feature importance not available for this predictor.</em></p>"
+    sections = []
+
+    # (Typical feature importance content…)
+    fi_html = build_feature_importance_html(predictor, df_train, label_column)
+    sections.append(f"<section class='section'><h2 class='section-title'>Feature Importance</h2><div class='card'>{fi_html}</div></section>")
+
+    # Previously: Modalities & Inputs and/or Class Balance may have been here.
+    # Only render them if flags are True.
+    if include_modalities:
+        from report_utils import build_modalities_html
+        modalities_html = build_modalities_html(predictor, df_train, label_column)
+        sections.append(f"<section class='section'><h2 class='section-title'>Modalities & Inputs</h2><div class='card'>{modalities_html}</div></section>")
+
+    if include_class_balance:
+        from report_utils import build_class_balance_html
+        cb_html = build_class_balance_html(df_train, label_column)
+        sections.append(f"<section class='section'><h2 class='section-title'>Class Balance (Train Full)</h2><div class='card'>{cb_html}</div></section>")
+
+    return "\n".join(sections)
 
 
 def assemble_full_html_report(
@@ -1050,19 +1143,24 @@ def assemble_full_html_report(
     """
     Wrap the four tabs using utils.build_tabbed_html and return full HTML.
     """
-    # Append plots under the Test tab
-    test_full = test_html + "".join(f"<div class='plotly-center'>{p}</div>" for p in plots)
+    # Append plots under the Test tab (already wrapped with titles)
+    test_full = test_html + "".join(plots)
 
     tabs = build_tabbed_html(summary_html, train_html, test_full, feature_html, explainer_html=None)
 
-    html = get_html_template()
-    html += """
+    html_out = get_html_template()
+
+    # 🔧 Ensure Plotly JS is available (we render plots with include_plotlyjs=False)
+    html_out += '\n<script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>\n'
+
+    # Optional: centering tweaks
+    html_out += """
 <style>
   .plotly-center { display: flex; justify-content: center; }
   .plotly-center .plotly-graph-div, .plotly-center .js-plotly-plot { margin: 0 auto !important; }
   .js-plotly-plot, .plotly-graph-div { margin-left: auto !important; margin-right: auto !important; }
 </style>
 """
-    html += tabs
-    html += get_html_closing()
-    return html
+    html_out += tabs
+    html_out += get_html_closing()
+    return html_out

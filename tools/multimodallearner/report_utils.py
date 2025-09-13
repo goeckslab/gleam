@@ -14,6 +14,58 @@ import pandas as pd
 def _escape(s: Any) -> str:
     return html.escape(str(s))
 
+def get_model_architecture(predictor: Any) -> str:
+    """
+    Returns a human-friendly description of the final model architecture.
+    - TabularPredictor: best model name
+    - MultiModalPredictor: backbone(s) from the config (e.g., timm_image=resnet50, hf_text=bert-base-uncased)
+    """
+    # TabularPredictor path
+    try:
+        from autogluon.tabular import TabularPredictor as _TP
+        if isinstance(predictor, _TP):
+            try:
+                return str(predictor.get_model_best())
+            except Exception:
+                try:
+                    lb = predictor.leaderboard(silent=True)
+                    if "model" in lb.columns and len(lb):
+                        return str(lb.iloc[0]["model"])
+                except Exception:
+                    pass
+            return "AutoGluon Tabular (ensemble)"
+    except Exception:
+        pass
+
+    # MultiModalPredictor path: read backbones from config if available
+    archs = []
+    for attr in ("_config", "config"):
+        cfg = getattr(predictor, attr, None)
+        try:
+            model_cfg = getattr(cfg, "model", None)
+            if model_cfg:
+                # OmegaConf-like mapping
+                for name, sub in dict(model_cfg).items():
+                    ck = None
+                    # sub may be an object or a dict-like node
+                    for k in ("checkpoint_name", "name", "model_name"):
+                        try:
+                            ck = getattr(sub, k)
+                        except Exception:
+                            ck = sub.get(k) if isinstance(sub, dict) else ck
+                        if ck:
+                            break
+                    if ck:
+                        archs.append(f"{name}={ck}")
+        except Exception:
+            continue
+
+    if archs:
+        return ", ".join(archs)
+
+    # Fallback
+    return type(predictor).__name__
+
 def collect_run_context(args, predictor, problem_type: str,
                         df_train: pd.DataFrame, df_val: pd.DataFrame, df_test: pd.DataFrame,
                         warnings_list: List[str],
@@ -237,7 +289,8 @@ def build_model_performance_summary_table(
     val_scores: dict,
     test_scores: dict | None = None,
     include_test: bool = True,
-    title: str = 'Model Performance Summary',
+    title: str | None = 'Model Performance Summary',
+    show_title: bool = True,
 ) -> str:
     """
     Returns an HTML table for metrics, optionally hiding the Test column.
@@ -269,8 +322,9 @@ def build_model_performance_summary_table(
             cells.append(f'<td>{fmt(test_scores.get(m))}</td>')
         rows_html.append('<tr>' + ''.join(cells) + '</tr>')
 
+    title_html = f'<h3 style="margin-top:0">{title}</h3>' if (show_title and title) else ''
     table_html = f"""
-      <h3 style="margin-top:0">{title}</h3>
+      {title_html}
       <table class="metric-table">
         <thead><tr>{''.join(header_cells)}</tr></thead>
         <tbody>{''.join(rows_html)}</tbody>

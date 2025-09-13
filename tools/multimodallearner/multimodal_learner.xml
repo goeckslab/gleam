@@ -43,6 +43,9 @@
       #if $random_seed is not None:
       	  --random_seed '$random_seed'
       #end if
+      #if $threshold is not None:
+      	  --threshold $threshold
+      #end if
       #if $time_limit:
       --time_limit $time_limit
       #end if
@@ -97,6 +100,10 @@
       </when>
       <when value='no'/>
     </conditional>
+
+    <param name='threshold' type='float' optional='true'
+         label='Binary decision threshold'
+         help='If set (0–1), use this cutoff to convert probabilities to labels for Train/Val/Test metrics and plots.'/>
 
     <param name='validation_size' type='float' value='0.125' label='Validation size (when split has {0,2})'/>
     <param name='split_probabilities' type='text' value='0.7,0.1,0.2' label='Random split proportions (train,val,test)'/>

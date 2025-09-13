@@ -189,15 +189,13 @@ def compute_metrics_for_split(
     predictor,
     df: pd.DataFrame,
     target_col: str,
-    problem_type: str
+    problem_type: str,
+    threshold: Optional[float] = None,    # <— NEW
 ) -> "OrderedDict[str, float]":
     """Compute transparency metrics for one split (Train/Val/Test) based on task type."""
     # Prepare inputs
     features = df.drop(columns=[target_col], errors="ignore")
     y_true_series = df[target_col].reset_index(drop=True)
-
-    # Predictions
-    y_pred_series = pd.Series(predictor.predict(features)).reset_index(drop=True)
 
     # Probabilities (if available)
     y_proba = None
@@ -206,6 +204,27 @@ def compute_metrics_for_split(
         y_proba = _safe_y_proba_to_array(y_proba_raw)
     except Exception:
         y_proba = None
+
+    # Labels (optionally thresholded for binary)
+    y_pred_series = None
+    if problem_type == "binary" and (threshold is not None) and (y_proba is not None):
+        classes_sorted = np.sort(pd.unique(y_true_series))
+        pos_label = classes_sorted[-1]
+        neg_label = classes_sorted[0]
+        if y_proba.ndim == 1:
+            pos_scores = y_proba
+        else:
+            pos_col_idx = -1
+            try:
+                if hasattr(predictor, "class_labels") and predictor.class_labels:
+                    pos_col_idx = list(predictor.class_labels).index(pos_label)
+            except Exception:
+                pos_col_idx = -1
+            pos_scores = y_proba[:, pos_col_idx]
+        y_pred_series = pd.Series(np.where(pos_scores >= float(threshold), pos_label, neg_label)).reset_index(drop=True)
+    else:
+        # Fall back to model's default label prediction (argmax / 0.5 equivalent)
+        y_pred_series = pd.Series(predictor.predict(features)).reset_index(drop=True)
 
     if problem_type == "regression":
         y_true_arr = np.asarray(y_true_series, dtype=float)
@@ -226,6 +245,7 @@ def evaluate_all_transparency(
     test_df: Optional[pd.DataFrame],
     target_col: str,
     problem_type: str,
+    threshold: Optional[float] = None,
 ) -> Tuple[pd.DataFrame, Dict[str, Dict[str, float]]]:
     """
     Evaluate Train/Val/Test with the transparent metrics suite.
@@ -237,13 +257,13 @@ def evaluate_all_transparency(
     splits = []
 
     if train_df is not None and len(train_df):
-        split_results["Train"] = compute_metrics_for_split(predictor, train_df, target_col, problem_type)
+        split_results["Train"] = compute_metrics_for_split(predictor, train_df, target_col, problem_type, threshold)
         splits.append("Train")
     if val_df is not None and len(val_df):
-        split_results["Validation"] = compute_metrics_for_split(predictor, val_df, target_col, problem_type)
+        split_results["Validation"] = compute_metrics_for_split(predictor, val_df, target_col, problem_type, threshold)
         splits.append("Validation")
     if test_df is not None and len(test_df):
-        split_results["Test"] = compute_metrics_for_split(predictor, test_df, target_col, problem_type)
+        split_results["Test"] = compute_metrics_for_split(predictor, test_df, target_col, problem_type, threshold)
         splits.append("Test")
 
     # Preserve order from the first split; include any extras from others
