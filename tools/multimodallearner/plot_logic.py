@@ -730,7 +730,7 @@ def build_train_html_and_plots(
     section_tile: str = "Training Diagnostics",
 ) -> str:
     y_true = df_train[label_column].values
-
+    threshold = None
     # predictions on TRAIN
     pred_labels, pred_proba = None, None
     try:

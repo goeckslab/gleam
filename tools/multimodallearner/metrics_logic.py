@@ -256,14 +256,15 @@ def evaluate_all_transparency(
     split_results: Dict[str, Dict[str, float]] = {}
     splits = []
 
+    # IMPORTANT: do NOT apply threshold to Train/Val
     if train_df is not None and len(train_df):
-        split_results["Train"] = compute_metrics_for_split(predictor, train_df, target_col, problem_type, threshold)
+        split_results["Train"] = compute_metrics_for_split(predictor, train_df, target_col, problem_type, threshold=None)
         splits.append("Train")
     if val_df is not None and len(val_df):
-        split_results["Validation"] = compute_metrics_for_split(predictor, val_df, target_col, problem_type, threshold)
+        split_results["Validation"] = compute_metrics_for_split(predictor, val_df, target_col, problem_type, threshold=None)
         splits.append("Validation")
     if test_df is not None and len(test_df):
-        split_results["Test"] = compute_metrics_for_split(predictor, test_df, target_col, problem_type, threshold)
+        split_results["Test"] = compute_metrics_for_split(predictor, test_df, target_col, problem_type, threshold=threshold)
         splits.append("Test")
 
     # Preserve order from the first split; include any extras from others
