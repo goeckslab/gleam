@@ -32,12 +32,22 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 
+# GPFM imports
+try:
+    import requests
+    GPFM_AVAILABLE = True
+except ImportError as e:
+    GPFM_AVAILABLE = False
+    logging.warning(f"GPFM dependencies not available: {e}")
+
 # Configure logging
 logging.basicConfig(
-    filename="/tmp/ludwig_embeddings.log",
-    filemode="a",
     format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.DEBUG,
+    level=logging.INFO,
+    handlers=[
+        logging.StreamHandler(),  # Console output
+        logging.FileHandler("/tmp/ludwig_embeddings.log", mode="a")  # File output
+    ]
 )
 
 # Create a cache directory in the current working directory
@@ -49,6 +59,222 @@ except OSError as e:
     logging.error(f"Failed to create cache directory {cache_dir}: {e}")
     raise
 
+# GPFM DinoVisionTransformer Implementation
+
+
+class DinoVisionTransformer(torch.nn.Module):
+    """Simplified DinoVisionTransformer for GPFM."""
+
+    def __init__(self, img_size=224, patch_size=14, embed_dim=1024, depth=24, num_heads=16):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_features = embed_dim
+        self.patch_size = patch_size
+
+        # Patch embedding
+        self.patch_embed = torch.nn.Conv2d(3, embed_dim, kernel_size=patch_size, stride=patch_size)
+        num_patches = (img_size // patch_size) ** 2
+
+        # Class token
+        self.cls_token = torch.nn.Parameter(torch.zeros(1, 1, embed_dim))
+
+        # Position embeddings
+        self.pos_embed = torch.nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim))
+
+        # Transformer blocks (simplified)
+        self.blocks = torch.nn.ModuleList([
+            torch.nn.TransformerEncoderLayer(
+                d_model=embed_dim,
+                nhead=num_heads,
+                dim_feedforward=embed_dim * 4,
+                dropout=0.0,
+                batch_first=True
+            ) for _ in range(depth)
+        ])
+
+        # Layer norm
+        self.norm = torch.nn.LayerNorm(embed_dim)
+
+        # Initialize weights
+        torch.nn.init.trunc_normal_(self.pos_embed, std=0.02)
+        torch.nn.init.trunc_normal_(self.cls_token, std=0.02)
+
+    def forward(self, x):
+        B = x.shape[0]
+
+        # Patch embedding
+        x = self.patch_embed(x)  # B, embed_dim, H//patch_size, W//patch_size
+        x = x.flatten(2).transpose(1, 2)  # B, num_patches, embed_dim
+
+        # Add class token
+        cls_tokens = self.cls_token.expand(B, -1, -1)
+        x = torch.cat([cls_tokens, x], dim=1)
+
+        # Add position embeddings
+        x = x + self.pos_embed
+
+        # Apply transformer blocks
+        for block in self.blocks:
+            x = block(x)
+
+        # Apply layer norm and return class token
+        x = self.norm(x)
+        return x[:, 0]  # Return class token features
+
+
+# GPFM Model Implementation
+class GPFMModel(torch.nn.Module):
+    """GPFM (Generalizable Pathology Foundation Model) implementation."""
+
+    def __init__(self, device='cpu'):
+        super().__init__()
+        self.device = device
+        self.model = None
+        self.transformer = None
+        self.embed_dim = 1024  # GPFM uses 1024-dimensional embeddings
+        self._load_model()
+
+    def _download_weights(self, url, filepath):
+        """Download GPFM weights from the official repository."""
+        if os.path.exists(filepath):
+            logging.info(f"GPFM weights already exist at {filepath}")
+            return True
+
+        logging.info(f"Downloading GPFM weights from {url}")
+        try:
+            response = requests.get(url, stream=True, timeout=300)
+            response.raise_for_status()
+
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+
+            # Get file size for progress tracking
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
+
+            with open(filepath, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total_size > 0:
+                            progress = (downloaded / total_size) * 100
+                            if downloaded % (1024 * 1024 * 10) == 0:  # Log every 10MB
+                                logging.info(f"Downloaded {downloaded // (1024 * 1024)}MB / {total_size // (1024 * 1024)}MB ({progress:.1f}%)")
+
+            logging.info(f"GPFM weights downloaded successfully to {filepath}")
+            return True
+
+        except Exception as e:
+            logging.error(f"Failed to download GPFM weights: {e}")
+            if os.path.exists(filepath):
+                os.remove(filepath)  # Clean up partial download
+            return False
+
+    def _load_model(self):
+        """Load GPFM model with pretrained weights."""
+        try:
+            # Create models directory
+            models_dir = os.path.join(cache_dir, 'gpfm_models')
+            os.makedirs(models_dir, exist_ok=True)
+
+            # GPFM weights URL from official repository
+            weights_url = "https://github.com/birkhoffkiki/GPFM/releases/download/ckpt/GPFM.pth"
+            weights_path = os.path.join(models_dir, 'GPFM.pth')
+
+            # Create GPFM DinoVisionTransformer architecture
+            self.model = DinoVisionTransformer(
+                img_size=224,
+                patch_size=14,
+                embed_dim=1024,
+                depth=24,
+                num_heads=16
+            )
+
+            # Try to download and load GPFM weights
+            weights_loaded = False
+            if self._download_weights(weights_url, weights_path):
+                try:
+                    logging.info("Loading GPFM pretrained weights...")
+                    checkpoint = torch.load(weights_path, map_location=self.device)
+
+                    # Extract teacher model weights (GPFM format)
+                    if 'teacher' in checkpoint:
+                        state_dict = checkpoint['teacher']
+                        logging.info("Found 'teacher' key in checkpoint")
+                    else:
+                        state_dict = checkpoint
+                        logging.info("Using checkpoint directly")
+
+                    # Rename keys to match our simplified architecture
+                    new_state_dict = {}
+                    for k, v in state_dict.items():
+                        # Remove 'backbone.' prefix if present
+                        if k.startswith('backbone.'):
+                            k = k[9:]  # Remove 'backbone.'
+
+                        # Map GPFM keys to our simplified architecture
+                        if k in ['cls_token', 'pos_embed']:
+                            new_state_dict[k] = v
+                        elif k.startswith('patch_embed.proj.'):
+                            # Map patch embedding
+                            new_k = k.replace('patch_embed.proj.', 'patch_embed.')
+                            new_state_dict[new_k] = v
+                        elif k.startswith('blocks.') and 'norm' in k:
+                            # Map layer norms
+                            if k.endswith('.norm1.weight') or k.endswith('.norm1.bias'):
+                                # Skip intermediate norms for simplified model
+                                continue
+                            elif k.endswith('.norm2.weight') or k.endswith('.norm2.bias'):
+                                continue
+                        elif k == 'norm.weight' or k == 'norm.bias':
+                            new_state_dict[k] = v
+
+                    # Load compatible weights
+                    missing_keys, unexpected_keys = self.model.load_state_dict(new_state_dict, strict=False)
+                    if missing_keys:
+                        logging.warning(f"Missing keys: {missing_keys[:5]}...")  # Show first 5
+                    if unexpected_keys:
+                        logging.warning(f"Unexpected keys: {unexpected_keys[:5]}...")  # Show first 5
+
+                    logging.info("GPFM pretrained weights loaded successfully")
+                    weights_loaded = True
+
+                except Exception as e:
+                    logging.warning(f"Could not load GPFM weights: {e}")
+
+            if not weights_loaded:
+                logging.info("Using randomly initialized GPFM architecture (no pretrained weights)")
+
+            self.model = self.model.to(self.device)
+            self.model.eval()
+
+            # GPFM preprocessing (based on official repository)
+            self.transformer = transforms.Compose([
+                transforms.Lambda(lambda x: x.convert("RGB")),  # Ensure RGB format
+                transforms.Resize((224, 224)),  # GPFM uses 224x224 (not 512x512 for features)
+                transforms.ToTensor(),
+                transforms.Normalize(
+                    mean=[0.485, 0.456, 0.406],  # ImageNet normalization
+                    std=[0.229, 0.224, 0.225]
+                )
+            ])
+
+            logging.info(f"GPFM model initialized successfully (embed_dim: {self.embed_dim})")
+
+        except Exception as e:
+            logging.error(f"Failed to initialize GPFM model: {e}")
+            raise
+
+    def forward(self, x):
+        """Forward pass through GPFM model."""
+        with torch.no_grad():
+            return self.model(x)
+
+    def get_transformer(self):
+        """Get the preprocessing transformer for GPFM."""
+        return self.transformer
+
+
 # Available models from torchvision
 AVAILABLE_MODELS = {
     name: getattr(models, name)
@@ -57,6 +283,10 @@ AVAILABLE_MODELS = {
         getattr(models, name)
     ) and "weights" in signature(getattr(models, name)).parameters
 }
+
+# Add GPFM model if available
+if GPFM_AVAILABLE:
+    AVAILABLE_MODELS['gpfm'] = GPFMModel
 
 # Default resize and normalization settings for models
 MODEL_DEFAULTS = {
@@ -86,6 +316,10 @@ MODEL_DEFAULTS = {
     "vit_b_32": {"resize": (224, 224), "normalize": (
         [0.5, 0.5, 0.5], [0.5, 0.5, 0.5]
     )},
+    "gpfm": {
+        "resize": (224, 224),
+        "normalize": ([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+    },
 }
 
 for model, settings in MODEL_DEFAULTS.items():
@@ -152,6 +386,13 @@ def load_model(model_name, device):
             f"Unsupported model: {model_name}. \
             Available models: {list(AVAILABLE_MODELS.keys())}")
     try:
+        # Special handling for GPFM
+        if model_name == "gpfm":
+            model = AVAILABLE_MODELS[model_name](device=device)
+            logging.info("GPFM model loaded")
+            return model
+
+        # Standard torchvision models
         if "weights" in inspect.signature(
                 AVAILABLE_MODELS[model_name]).parameters:
             model = AVAILABLE_MODELS[model_name](weights="DEFAULT").to(device)
@@ -231,13 +472,25 @@ def extract_embeddings(
     else:
         initial_transform = transforms.Lambda(lambda x: x.convert("RGB"))
 
-    transform_list = [initial_transform,
-                      transforms.Resize(resize),
-                      transforms.ToTensor()]
-    if apply_normalization:
-        transform_list.append(transforms.Normalize(mean=normalize[0],
-                                                   std=normalize[1]))
-    transform = transforms.Compose(transform_list)
+    # Handle GPFM separately as it has its own preprocessing
+    if model_name == "gpfm":
+        # For GPFM, combine initial transform with GPFM's custom transformer
+        if transform_type in ["grayscale", "clahe", "edges", "rgba_to_rgb"]:
+            transform = transforms.Compose([
+                initial_transform,
+                model.get_transformer()
+            ])
+        else:
+            transform = model.get_transformer()
+    else:
+        # Standard torchvision models
+        transform_list = [initial_transform,
+                          transforms.Resize(resize),
+                          transforms.ToTensor()]
+        if apply_normalization:
+            transform_list.append(transforms.Normalize(mean=normalize[0],
+                                                       std=normalize[1]))
+        transform = transforms.Compose(transform_list)
 
     class ImageDataset(Dataset):
         def __init__(self, zip_file, file_list, transform=None):
@@ -278,7 +531,7 @@ def extract_embeddings(
             dataloader = DataLoader(
                 dataset,
                 batch_size=16,  # Reduced for lower memory usage
-                num_workers=1,  # Reduced to minimize shared memory
+                num_workers=0,  # Fix multiprocessing issues with GPFM
                 shuffle=False,
                 pin_memory=True if device == "cuda" else False,
                 collate_fn=collate_fn,

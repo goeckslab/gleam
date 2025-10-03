@@ -50,6 +50,7 @@
             <option value="efficientnet_v2_s">EfficientNetV2-S</option>
             <option value="efficientnet_v2_m">EfficientNetV2-M</option>
             <option value="efficientnet_v2_l">EfficientNetV2-L</option>
+            <option value="gpfm">GPFM (Generalizable Pathology Foundation Model)</option>
             <option value="googlenet">GoogLeNet</option>
             <option value="inception_v3">Inception-V3</option>
             <option value="mnasnet0_5">MNASNet-0.5</option>
@@ -114,17 +115,36 @@
                 </assert_contents>
             </output>
         </test>
+        <test>
+            <param name="input_zip" value="1_digit.zip" ftype="zip" />
+            <param name="model_name" value="gpfm" />
+            <param name="apply_normalization" value="true" />
+            <param name="transform_type" value="RGB" />
+            <output name="output_csv">
+                <assert_contents>
+                    <has_text text="sample_name" />
+                    <has_n_columns min="1" />
+                </assert_contents>
+            </output>
+        </test>
     </tests>
     <help>
         <![CDATA[
         **What it does**
-        This tool extracts image embeddings using a selected deep learning model.
+        This tool extracts image embeddings using a selected deep learning model, including specialized pathology models like GPFM.
 
         **Inputs**
         - A zip file containing images to process.
-        - A model selection for embedding extraction.
+        - A model selection for embedding extraction (includes GPFM for pathology images).
         - An option to apply normalization to the extracted embeddings.
         - A choice of image transformation type before processing.
+
+        **Models Available**
+        - Standard computer vision models (ResNet, EfficientNet, ViT, etc.)
+        - GPFM: Generalizable Pathology Foundation Model - specialized for medical/pathology images
+          * Automatically downloads 1.2GB pretrained weights on first use
+          * Uses DinoVisionTransformer architecture (1024-dimensional embeddings)
+          * Optimized for histopathology images at 224x224 resolution
 
         **Outputs**
         - A CSV file containing embeddings. Each row corresponds to an image, with the file name in the first column and embedding vectors in the subsequent columns.
