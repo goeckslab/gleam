@@ -51,6 +51,27 @@ Set of three specialized tools designed to transforms raw, large pathology image
 
 ## Installation
 
+### Install from Galaxy ToolShed (Recommended)
+
+GLEAM tools are available in the [Galaxy ToolShed](https://toolshed.g2.bx.psu.edu/) and can be installed directly into your Galaxy instance:
+
+1. Log in to your Galaxy instance as an administrator
+2. Navigate to **Admin** → **Install and Uninstall** (or **Manage Tools**)
+3. Search for the following tool suites under the **goeckslab** owner:
+   - `suite_tabular_learner` - TabularLearner tools
+   - `suite_imagelearner` - ImageLearner tools
+   - `suite_ludwig` - Galaxy-Ludwig tools
+   - `suite_tiler` - Image Tiler tool
+   - `suite_embedding_extractor` - Embedding Extractor tool
+   - `suite_mil_bag` - Multiple Instance Learning Bag Processor tool
+4. Select the desired tool suites and click **Install**
+
+Galaxy will automatically handle dependencies and configuration.
+
+### Manual Installation (Alternative)
+
+If you prefer to install from source or need to modify the tools:
+
 1. Clone the repository:
 
    ```bash
