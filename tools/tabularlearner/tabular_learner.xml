@@ -173,6 +173,10 @@
         <data name="model" format="h5" from_work_dir="pycaret_model.h5" label="${tool.name} best model on ${on_string}" />
         <data name="best_model_csv" format="csv" from_work_dir="best_model.csv" label="${tool.name} The parameters of the best model on ${on_string}" hidden="true" />
         <data name="comparison_result" format="html" from_work_dir="comparison_result.html" label="${tool.name} analysis report on ${on_string}" />
+        <data name="metrics_json" format="json" from_work_dir="metrics.json" label="${tool.name} metrics summary on ${on_string}" />
+        <collection name="plots" type="list" label="${tool.name} plots on ${on_string}">
+            <discover_datasets pattern="(?P&lt;designation&gt;plot_.*|shap_summary|tree_importance)\.png" format="png" directory="." />
+        </collection>
     </outputs>
     <tests>
         <test>
@@ -198,6 +202,11 @@
                 </assert_contents>
             </output>
             <output name="best_model_csv" value="expected_best_model_classification_customized.csv" />
+            <output name="metrics_json">
+                <assert_contents>
+                    <has_text text="best_model" />
+                </assert_contents>
+            </output>
         </test>
         <test>
             <param name="input_file" value="pcr.tsv"/>
@@ -281,6 +290,15 @@
         - **Comparison Result**: The comparison result of different models in html format. 
             It contains the performance metrics of different models, plots of the best model 
             on the testing set (or part of the training set if a separate test set is not uploaded), and feature analysis plots.
+
+
+        - **Metrics Summary**: A JSON file that captures the experiment configuration, best model details, and evaluation metrics for train, validation, and test results.
+
+
+        - **Plots Collection**: A dataset collection containing the generated diagnostic and feature-importance plots (PNG images) for downstream review or download.
+
+
+        - **Markdown Report**: A concise Markdown summary suitable for embedding in downstream workflows.
 
     </help>
     <expand macro="macro_citations" />

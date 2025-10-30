@@ -1,5 +1,7 @@
 import base64
+import json
 import logging
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -21,6 +23,40 @@ from utils import (
 
 logging.basicConfig(level=logging.DEBUG)
 LOG = logging.getLogger(__name__)
+
+
+def _json_safe(value):
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, pd.Series):
+        return [_json_safe(v) for v in value.tolist()]
+    if isinstance(value, pd.DataFrame):
+        return [
+            {str(k): _json_safe(v) for k, v in row.items()}
+            for row in value.replace({np.nan: None}).to_dict(orient="records")
+        ]
+    if isinstance(value, np.ndarray):
+        return [_json_safe(v) for v in value.tolist()]
+    if isinstance(value, Path):
+        return str(value)
+    return str(value)
+
+
+def _df_to_json_records(df: pd.DataFrame):
+    if df is None:
+        return []
+    df_clean = df.replace({np.nan: None})
+    records = df_clean.to_dict(orient="records")
+    return [
+        {str(k): _json_safe(v) for k, v in record.items()}
+        for record in records
+    ]
 
 
 class BaseModelTrainer:
@@ -258,63 +294,37 @@ class BaseModelTrainer:
                 model_bytes = tmp.read()
             f.create_dataset("model", data=np.void(model_bytes))
 
-    def generate_plots(self):
-        LOG.info("Generating PyCaret diagnostic pltos")
+    def _store_plot(self, src_path: str, plot_key: str):
+        if not src_path:
+            return None
 
-        # choose the right plots based on task type
-        if self.task_type == "classification":
-            plot_names = [
-                "learning",
-                "vc",
-                "calibration",
-                "dimension",
-                "manifold",
-                "rfe",
-                "threshold",
-                "percentage_above_below",
-                "class_report",
-                "pr_auc",
-                "roc_auc",
-            ]
-        else:
-            plot_names = ["residuals", "vc", "parameter", "error",
-                          "learning"]
-        for name in plot_names:
-            try:
-                ax = self.exp.plot_model(
-                    self.best_model, plot=name, save=False
-                )
-                out_path = Path(self.output_dir) / f"plot_{name}.png"
-                fig = ax.get_figure()
-                fig.savefig(out_path, bbox_inches="tight")
-                self.plots[name] = str(out_path)
-            except Exception as e:
-                LOG.warning(f"Could not generate {name} plot: {e}")
+        src = Path(src_path)
+        if not src.exists():
+            LOG.warning(f"Plot path {src_path} does not exist; skipping copy.")
+            return None
+
+        ext = src.suffix or ".png"
+        dest = Path(self.output_dir) / f"plot_{plot_key}{ext}"
+
+        try:
+            if src.resolve() != dest.resolve():
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dest)
+            stored_path = dest
+        except Exception as exc:
+            LOG.warning(
+                f"Failed to copy plot {plot_key} from {src} to {dest}: {exc}. Using original path."
+            )
+            stored_path = src
+
+        self.plots[plot_key] = str(stored_path)
+        return self.plots[plot_key]
 
     def encode_image_to_base64(self, img_path: str) -> str:
         with open(img_path, "rb") as img_file:
             return base64.b64encode(img_file.read()).decode("utf-8")
 
-    def save_html_report(self):
-        LOG.info("Saving HTML report")
-
-        # 1) Determine best model name
-        try:
-            best_model_name = str(self.results.iloc[0]["Model"])
-        except Exception:
-            best_model_name = type(self.best_model).__name__
-        LOG.info(f"Best model determined as: {best_model_name}")
-
-        # 2) Compute training sample count
-        try:
-            n_train = self.exp.X_train.shape[0]
-        except Exception:
-            n_train = getattr(
-                self.exp, "X_train_transformed", pd.DataFrame()
-            ).shape[0]
-        total_rows = self.data.shape[0]
-
-        # 3) Build setup parameters table
+    def _prepare_setup_summary(self, n_train, total_rows):
         all_params = self.setup_params.copy()
         if self.task_type == "classification" and (
             hasattr(self, "probability_threshold")
@@ -342,12 +352,14 @@ class BaseModelTrainer:
             pk = key.lower().replace(" ", "_")
             v = all_params.get(pk)
             if key == "Train Size":
-                frac = (
-                    float(v)
-                    if v is not None
-                    else (n_train / total_rows if total_rows else 0)
-                )
-                dv = f"{frac:.2f} ({n_train} rows)"
+                if v is not None:
+                    frac = float(v)
+                elif total_rows and n_train is not None:
+                    frac = n_train / total_rows if total_rows else 0
+                else:
+                    frac = 0
+                train_rows = int(n_train) if n_train is not None else 0
+                dv = f"{frac:.2f} ({train_rows} rows)"
             elif key in {
                 "Normalize",
                 "Feature Selection",
@@ -361,18 +373,43 @@ class BaseModelTrainer:
             elif key == "Cross Validation Folds":
                 dv = v if v is not None else "None"
             elif key == "Models":
-                dv = ", ".join(map(str, v)) if isinstance(
-                    v, (list, tuple)
-                ) else "None"
+                if isinstance(v, (list, tuple)):
+                    dv = ", ".join(map(str, v))
+                else:
+                    dv = "None"
             elif key == "Probability Threshold":
                 dv = f"{v:.2f}" if v is not None else "0.5"
             else:
                 dv = v if v is not None else "None"
-            setup_rows.append([key, dv])
+            setup_rows.append({"Parameter": key, "Value": dv})
         if hasattr(self.exp, "_fold_metric"):
-            setup_rows.append(["best_model_metric", self.exp._fold_metric])
-
+            setup_rows.append(
+                {"Parameter": "best_model_metric", "Value": self.exp._fold_metric}
+            )
         df_setup = pd.DataFrame(setup_rows, columns=["Parameter", "Value"])
+        return setup_rows, df_setup
+
+    def save_html_report(self):
+        LOG.info("Saving HTML report")
+
+        # 1) Determine best model name
+        try:
+            best_model_name = str(self.results.iloc[0]["Model"])
+        except Exception:
+            best_model_name = type(self.best_model).__name__
+        LOG.info(f"Best model determined as: {best_model_name}")
+
+        # 2) Compute training sample count
+        try:
+            n_train = self.exp.X_train.shape[0]
+        except Exception:
+            n_train = getattr(
+                self.exp, "X_train_transformed", pd.DataFrame()
+            ).shape[0]
+        total_rows = self.data.shape[0]
+
+        # 3) Build setup parameters table
+        _, df_setup = self._prepare_setup_summary(n_train, total_rows)
         df_setup.to_csv(
             Path(self.output_dir) / "setup_params.csv", index=False
         )
@@ -653,6 +690,74 @@ class BaseModelTrainer:
             f"{self.output_dir}/comparison_result.html"
         )
 
+    def save_metrics_json(self):
+        LOG.info("Saving metrics JSON report")
+
+        try:
+            best_model_name = str(self.results.iloc[0]["Model"])
+        except Exception:
+            best_model_name = type(self.best_model).__name__
+
+        try:
+            n_train = self.exp.X_train.shape[0]
+        except Exception:
+            n_train = getattr(
+                self.exp, "X_train_transformed", pd.DataFrame()
+            ).shape[0]
+        total_rows = self.data.shape[0] if self.data is not None else None
+
+        setup_rows, _ = self._prepare_setup_summary(n_train, total_rows)
+
+        best_model_params = {
+            str(k): _json_safe(v)
+            for k, v in self.best_model.get_params().items()
+        }
+
+        metrics_block = {
+            "train_validation": _df_to_json_records(self.results),
+            "test": _df_to_json_records(self.test_result_df),
+        }
+        if self.tuning_results is not None:
+            metrics_block["tuning"] = _df_to_json_records(self.tuning_results)
+
+        payload = {
+            "task_type": self.task_type,
+            "target_column": self.target,
+            "random_seed": self.random_seed,
+            "data_summary": {
+                "total_rows": int(total_rows)
+                if total_rows is not None
+                else None,
+                "train_rows": int(n_train)
+                if n_train is not None
+                else None,
+                "test_dataset_provided": bool(self.test_data is not None),
+            },
+            "best_model": {
+                "name": best_model_name,
+                "metric": getattr(self.exp, "_fold_metric", None),
+                "hyperparameters": best_model_params,
+            },
+            "setup_parameters": [
+                {
+                    "Parameter": row["Parameter"],
+                    "Value": _json_safe(row["Value"]),
+                }
+                for row in setup_rows
+            ],
+            "metrics": metrics_block,
+        }
+
+        prob_thresh = getattr(self, "probability_threshold", None)
+        if self.task_type == "classification" and prob_thresh is not None:
+            payload["best_model"]["probability_threshold"] = prob_thresh
+
+        metrics_path = Path(self.output_dir) / "metrics.json"
+        metrics_path.write_text(
+            json.dumps(payload, indent=2), encoding="utf-8"
+        )
+        LOG.info(f"Metrics JSON generated at: {metrics_path}")
+
     def save_dashboard(self):
         raise NotImplementedError("Subclasses should implement this method")
 
@@ -694,4 +799,5 @@ class BaseModelTrainer:
         self.generate_plots_explainer()
         self.generate_tree_plots()
         self.save_html_report()
+        self.save_metrics_json()
         # self.save_dashboard()

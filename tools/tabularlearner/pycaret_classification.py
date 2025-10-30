@@ -87,7 +87,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
                         save=True,
                         plot_kwargs={"binary": True, "percentage": True},
                     )
-                    self.plots[plot_name] = plot_path
+                    self._store_plot(plot_path, plot_name)
                 elif plot_name == "auc" and not self.exp.is_multiclass:
                     plot_path = self.exp.plot_model(
                         self.best_model,
@@ -100,12 +100,12 @@ class ClassificationModelTrainer(BaseModelTrainer):
                             "binary": True,
                         },
                     )
-                    self.plots[plot_name] = plot_path
+                    self._store_plot(plot_path, plot_name)
                 else:
                     plot_path = self.exp.plot_model(
                         self.best_model, plot=plot_name, save=True
                     )
-                    self.plots[plot_name] = plot_path
+                    self._store_plot(plot_path, plot_name)
             except Exception as e:
                 LOG.error(f"Error generating plot {plot_name}: {e}")
                 continue
