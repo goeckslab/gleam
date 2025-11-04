@@ -244,12 +244,12 @@ class BaseModelTrainer:
         if getattr(self, "cross_validation_folds", None) is not None:
             compare_kwargs["fold"] = self.cross_validation_folds
 
-        chosen_metric = self._normalize_metric(geattr(self, "best_model_metric", None))
+        chosen_metric = self._normalize_metric(getattr(self, "best_model_metric", None))
         if chosen_metric:
-            compare_kwargs["sort"] = chosen
-            self.chosen_metric_label = chosen
+            compare_kwargs["sort"] = chosen_metric
+            self.chosen_metric_label = chosen_metric
             try:
-                setattr(self.exp, "_fold_metric", chosen)
+                setattr(self.exp, "_fold_metric", chosen_metric)
             except Exception:
                 pass
 
@@ -402,8 +402,6 @@ class BaseModelTrainer:
             setup_rows.append([key, dv])
         if getattr(self, "chosen_metric_label", None):
             setup_rows.append(["Best Model Metric", self.chosen_metric_label])
-        if hasattr(self.exp, "_fold_metric"):
-            setup_rows.append(["best_model_metric", self.exp._fold_metric])
 
         df_setup = pd.DataFrame(setup_rows, columns=["Parameter", "Value"])
         df_setup.to_csv(
