@@ -120,6 +120,12 @@ def main():
         default=None,
         help="Probability threshold for classification decision,",
     )
+    parser.add_argument(
+        "--best_model_metric",
+        type=str,
+        default=None,
+        help="Metric used to select the best model (e.g. AUC, Accuracy, R2, RMSE).",
+    )
 
     args = parser.parse_args()
 
@@ -144,6 +150,7 @@ def main():
         "fix_imbalance": args.fix_imbalance,
         "tune_model": args.tune_model,
         "probability_threshold": args.probability_threshold,
+        "best_model_metric": args.best_model_metric,
     }
     LOG.info(f"Model kwargs: {model_kwargs}")
 

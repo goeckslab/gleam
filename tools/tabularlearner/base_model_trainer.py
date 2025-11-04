@@ -199,6 +199,28 @@ class BaseModelTrainer:
         self.exp.setup(self.data, **self.setup_params)
         self.setup_params.update(self.user_kwargs)
 
+    def _normalize_metric(self, m: str) -> str:
+        if not m:
+            return "Accuracy"
+        m_low = str(m).strip().lower()
+        alias = {
+            "auc": "AUC", "roc_auc": "AUC", "roc-auc": "AUC",
+            "accuracy": "Accuracy",
+            "precision": "Precision",
+            "recall": "Recall",
+            "f1": "F1",
+            "kappa": "Kappa",
+            "logloss": "Log Loss", "log_loss": "Log Loss",
+            "pr_auc": "PR-AUC-Weighted", "prauc": "PR-AUC-Weighted",
+            "r2": "R2",
+            "mae": "MAE",
+            "mse": "MSE",
+            "rmse": "RMSE",
+            "rmsle": "RMSLE",
+            "mape": "MAPE",
+        }
+        return alias.get(m_low, m)
+
     def train_model(self):
         LOG.info("Training and selecting the best model")
         if self.task_type == "classification":
@@ -221,6 +243,15 @@ class BaseModelTrainer:
         # Respect explicit fold count
         if getattr(self, "cross_validation_folds", None) is not None:
             compare_kwargs["fold"] = self.cross_validation_folds
+
+        chosen_metric = self._normalize_metric(geattr(self, "best_model_metric", None))
+        if chosen_metric:
+            compare_kwargs["sort"] = chosen
+            self.chosen_metric_label = chosen
+            try:
+                setattr(self.exp, "_fold_metric", chosen)
+            except Exception:
+                pass
 
         LOG.info(f"compare_models kwargs: {compare_kwargs}")
         self.best_model = self.exp.compare_models(**compare_kwargs)
@@ -369,6 +400,8 @@ class BaseModelTrainer:
             else:
                 dv = v if v is not None else "None"
             setup_rows.append([key, dv])
+        if getattr(self, "chosen_metric_label", None):
+            setup_rows.append(["Best Model Metric", self.chosen_metric_label])
         if hasattr(self.exp, "_fold_metric"):
             setup_rows.append(["best_model_metric", self.exp._fold_metric])
 
