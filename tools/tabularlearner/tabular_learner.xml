@@ -107,9 +107,9 @@
                     <option value="lightgbm">Light Gradient Boosting Machine</option>
                     <option value="catboost">CatBoost Classifier</option>
                 </param>
-                <param name="best_model_metric" type="select" label="Select metric to pick the best model" help="PyCaret will rank models by this metric. Default is ROC-AUC.">
-                    <option value="AUC" selected="true">ROC-AUC</option>
-                    <option value="Accuracy">Accuracy</option>
+                <param name="best_model_metric" type="select" label="Select metric to pick the best model" help="PyCaret will rank models by this metric. Default is Accuracy.">
+                    <option value="Accuracy" selected="true">Accuracy</option>
+                    <option value="AUC">ROC-AUC</option>
                     <option value="Precision">Precision</option>
                     <option value="Recall">Recall</option>
                     <option value="F1">F1</option>
