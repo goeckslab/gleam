@@ -37,6 +37,10 @@ If you are using an older version of Galaxy, then `job_conf.xml` would be someth
 See [documentation](https://docs.galaxyproject.org/en/master/admin/jobs.html#running-jobs-in-containers) for job_conf configuration. 
 * If you haven’t set `sanitize_all_html: false` in `galaxy.yml`, please set it to False to enable our HTML report functionality.
 
+# Experiment outputs
+
+Running the Ludwig experiment tool now emits a `feature_importance.csv` file in the `experiment_run/` directory alongside the existing prediction and statistics artifacts. The HTML report surfaces the top features for quick inspection.
+
 # Get Galaxy-Ludwig docker image
 
 This step is optional.

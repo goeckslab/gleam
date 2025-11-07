@@ -125,6 +125,7 @@
         <data format="html" name="output_report" from_work_dir="ludwig_experiment_report.html" label="${tool.name} report on ${on_string}" />
         <collection type="list" name="output_pred_csv" label="${tool.name} predictions CSVs/experiment stats on ${on_string}" >
             <discover_datasets pattern="(?P&lt;designation&gt;predictions_parquet\.csv)" format="csv" directory="experiment_run" />
+            <discover_datasets pattern="(?P&lt;designation&gt;feature_importance)\.csv" format="csv" directory="experiment_run" />
             <discover_datasets pattern="(?P&lt;designation&gt;.+)\.json" format="json" directory="experiment_run" />
         </collection>
     </outputs>
