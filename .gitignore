@@ -72,4 +72,4 @@ tool_test_output.json
 
 .venv
 
-
+*.log

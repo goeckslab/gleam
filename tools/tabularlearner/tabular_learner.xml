@@ -200,6 +200,7 @@
             <param name="input_file" value="pcr.tsv"/>
             <param name="target_feature" value="11"/> 
             <param name="model_type" value="classification"/>
+            <param name="best_model_metric" value="F1"/>
             <param name="random_seed" value="42"/>
             <param name="customize_defaults" value="true"/>
             <param name="train_size" value="0.8"/>
@@ -216,6 +217,8 @@
                     <has_text text="Validation Summary" />
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
+                    <has_text text="Best Model Metric" />
+                    <has_text text="F1" />
                 </assert_contents>
             </output>
             <output name="best_model_csv" value="expected_best_model_classification_customized.csv" />
@@ -278,6 +281,7 @@
             <param name="input_file" value="auto-mpg.tsv"/>
             <param name="target_feature" value="1"/> 
             <param name="model_type" value="regression"/>
+            <param name="best_model_metric" value="RMSE"/>
             <param name="random_seed" value="42"/>
             <output name="model" file="expected_model_regression.h5" compare="sim_size" />
             <output name="comparison_result">
@@ -285,6 +289,8 @@
                     <has_text text="Validation Summary" />
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
+                    <has_text text="Best Model Metric" />
+                    <has_text text="RMSE" />
                 </assert_contents>
             </output>
             <output name="best_model_csv" value="expected_best_model_regression.csv" />

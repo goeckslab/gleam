@@ -201,7 +201,7 @@ class BaseModelTrainer:
 
     def _normalize_metric(self, m: str) -> str:
         if not m:
-            return "Accuracy"
+            return "R2" if self.task_type == "regression" else "Accuracy"
         m_low = str(m).strip().lower()
         alias = {
             "auc": "AUC", "roc_auc": "AUC", "roc-auc": "AUC",
