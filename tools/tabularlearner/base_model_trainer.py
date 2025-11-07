@@ -250,8 +250,8 @@ class BaseModelTrainer:
             self.chosen_metric_label = chosen_metric
             try:
                 setattr(self.exp, "_fold_metric", chosen_metric)
-            except Exception:
-                pass
+            except Exception as e:
+                LOG.warning(f"Failed to set '_fold_metric' to '{chosen_metric}': {e}", exc_info=True)
 
         LOG.info(f"compare_models kwargs: {compare_kwargs}")
         self.best_model = self.exp.compare_models(**compare_kwargs)
