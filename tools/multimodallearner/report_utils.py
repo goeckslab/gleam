@@ -303,29 +303,113 @@ def build_model_performance_summary_table(
             return f'{v:.4f}'
         return str(v)
 
-    metrics = sorted(set(train_scores.keys()) |
-                     set(val_scores.keys()) |
-                     (set(test_scores.keys()) if (include_test and test_scores) else set()))
+    # Collect union of metric keys across splits
+    metrics = set(train_scores.keys()) | set(val_scores.keys()) | (set(test_scores.keys()) if (include_test and test_scores) else set())
 
-    header_cells = ['<th>Metric</th>', '<th>Train</th>', '<th>Validation</th>']
+    # Remove AG_roc_auc entirely as requested
+    metrics.discard('AG_roc_auc')
+
+    # Helper: normalize metric keys for matching preferred names
+    def _norm(k: str) -> str:
+        return ''.join(ch for ch in str(k).lower() if ch.isalnum())
+
+    # Preferred metrics to appear at the end in this specific order (display names):
+    preferred_display = ['Accuracy', 'ROC-AUC', 'Precision', 'Recall', 'F1-Score', 'PR-AUC', 'Specificity', 'MCC', 'LogLoss']
+    # Mapping of normalized key -> display label
+    norm_to_display = {
+        'accuracy': 'Accuracy',
+        'acc': 'Accuracy',
+        'rocauc': 'ROC-AUC',
+        'roc_auc': 'ROC-AUC',
+        'rocaucscore': 'ROC-AUC',
+        'precision': 'Precision',
+        'prec': 'Precision',
+        'recall': 'Recall',
+        'recallsensitivitytpr': 'Recall',
+        'f1': 'F1-Score',
+        'f1score': 'F1-Score',
+        'pr_auc': 'PR-AUC',
+        'prauc': 'PR-AUC',
+        'averageprecision': 'PR-AUC',
+        'specificity': 'Specificity',
+        'tnr': 'Specificity',
+        'mcc': 'MCC',
+        'logloss': 'LogLoss',
+        'crossentropy': 'LogLoss',
+    }
+
+    # Build ordered list: all non-preferred metrics sorted alphabetically, then preferred metrics in the requested order if present
+    preferred_norms = [ _norm(x) for x in preferred_display ]
+    all_metrics = list(metrics)
+    # Partition
+    preferred_present = []
+    others = []
+    for m in sorted(all_metrics):
+        nm = _norm(m)
+        if nm in preferred_norms or any(p in nm for p in ['rocauc','prauc','f1','mcc','logloss','accuracy','precision','recall','specificity']):
+            # Defer preferred-like metrics to the end (we will place them in canonical order)
+            preferred_present.append(m)
+        else:
+            others.append(m)
+
+    # Now assemble final metric order: others (alpha), then preferred in exact requested order if they exist in metrics
+    final_metrics = []
+    final_metrics.extend(others)
+    for disp in preferred_display:
+        # find any original key matching this display (by normalized mapping)
+        target_norm = _norm(disp)
+        found = None
+        for m in preferred_present:
+            if _norm(m) == target_norm or norm_to_display.get(_norm(m)) == disp or _norm(m).replace(' ', '') == target_norm:
+                found = m
+                break
+            # also allow substring matches (e.g., 'roc_auc' vs 'rocauc')
+            if target_norm in _norm(m):
+                found = m
+                break
+        if found:
+            final_metrics.append(found)
+
+    metrics = final_metrics
+
+    # Make all headers sortable by adding the 'sortable' class; the JS in utils.py hooks table.performance-summary
+    header_cells = [
+        '<th class="sortable">Metric</th>',
+        '<th class="sortable">Train</th>',
+        '<th class="sortable">Validation</th>'
+    ]
     if include_test and test_scores:
-        header_cells.append('<th>Test</th>')
+        header_cells.append('<th class="sortable">Test</th>')
 
     rows_html = []
     for m in metrics:
+        # Display label mapping: clean up common verbose names
+        disp = m
+        nm = _norm(m)
+        if nm in norm_to_display:
+            disp = norm_to_display[nm]
+        else:
+            # generic cleanup: replace underscores with space and remove parenthetical qualifiers
+            disp = str(m).replace('_', ' ')
+            disp = disp.replace('(Sensitivity/TPR)', '')
+            disp = disp.replace('(TNR)', '')
+            disp = disp.strip()
+
         cells = [
-            f'<td>{m}</td>',
+            f'<td>{_escape(disp)}</td>',
             f'<td>{fmt(train_scores.get(m))}</td>',
             f'<td>{fmt(val_scores.get(m))}</td>',
         ]
         if include_test and test_scores:
             cells.append(f'<td>{fmt(test_scores.get(m))}</td>')
+
         rows_html.append('<tr>' + ''.join(cells) + '</tr>')
 
     title_html = f'<h3 style="margin-top:0">{title}</h3>' if (show_title and title) else ''
+
     table_html = f"""
       {title_html}
-      <table class="metric-table">
+      <table class="performance-summary">
         <thead><tr>{''.join(header_cells)}</tr></thead>
         <tbody>{''.join(rows_html)}</tbody>
       </table>

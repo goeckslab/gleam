@@ -17,6 +17,7 @@ import torch
 
 from autogluon.multimodal import MultiModalPredictor
 from autogluon.tabular import TabularPredictor
+from sklearn.model_selection import StratifiedKFold, KFold
 
 from split_logic import (
     load_and_split,
@@ -94,6 +95,189 @@ def ensure_local_tmp():
     return None
 
 
+def normalize_image_args(args):
+    """Normalize legacy and plural image arguments on the parsed args object.
+
+    - `--image_columns` (list) and legacy `--image_column` (single) are merged
+      into `args.image_columns` as either a list or None.
+    - `--images_zips` (list) and legacy `--images_zip` (single) are merged
+      into `args.images_zips` as a list (possibly empty).
+    - `--image_folders` is filtered to existing directories only.
+    The function mutates `args` in-place.
+    """
+    # image_columns: prefer the explicit list, fall back to single legacy flag
+    if getattr(args, "image_columns", None):
+        img_cols = args.image_columns
+    elif getattr(args, "image_column", None):
+        img_cols = [args.image_column]
+    else:
+        img_cols = None
+    args.image_columns = img_cols
+
+    # images_zips: merge plural + legacy single into a cleaned list
+    zips = list(args.images_zips or [])
+    if getattr(args, "images_zip", None):
+        zips.append(args.images_zip)
+    args.images_zips = [z for z in zips if z]
+
+    # image_folders: keep only paths that exist and are directories
+    args.image_folders = [d for d in (args.image_folders or []) if d and os.path.isdir(d)]
+
+
+def parse_args(argv=None):
+    """Build and validate CLI arguments. Returns argparse.Namespace.
+
+    Kept separate to make `main()` easier to read and test.
+    """
+    parser = argparse.ArgumentParser(description="Train & report an AutoGluon model")
+    parser.add_argument("--input_csv_train", dest="train_csv", required=True)
+    parser.add_argument("--input_csv_test", dest="test_csv", default=None)
+    parser.add_argument("--target_column", dest="label_column", required=True)
+    parser.add_argument("--output_csv", dest="output_csv", required=True)
+    parser.add_argument("--output_json", dest="output_json", default="results.json")
+    parser.add_argument("--output_html", dest="output_html", default="report.html")
+
+    # Images (lists + legacy)
+    parser.add_argument("--image_columns", dest="image_columns", nargs="+", default=None)
+    parser.add_argument("--image_column", dest="image_column", default=None)
+    parser.add_argument("--images_zips", dest="images_zips", nargs="*", default=None)
+    parser.add_argument("--images_zip", dest="images_zip", default=None)
+    parser.add_argument("--image_folders", dest="image_folders", nargs="*", default=None)
+
+    # How to handle missing images: if true -> remove rows with missing images; if false -> inject placeholder image path
+    parser.add_argument("--missing_image_strategy", dest="missing_image_strategy", default="false",
+                        help="true/false: if true remove rows with missing image paths; if false, generate placeholder image to fill missing entries")
+
+    # Threshold only for Test
+    parser.add_argument("--threshold", dest="threshold", type=float, default=None)
+
+    parser.add_argument("--time_limit", dest="time_limit", type=int, default=None)
+    parser.add_argument("--random_seed", dest="random_seed", type=int, default=42)
+
+    # New training knobs
+    parser.add_argument("--cross_validation", dest="cross_validation", type=str, default="false",
+                        help="Activate cross-validation: true or false")
+    parser.add_argument("--num_folds", dest="num_folds", type=int, default=5,
+                        help="Number of folds for cross-validation (integer)")
+    parser.add_argument("--epochs", dest="epochs", type=int, default=None,
+                        help="Number of training epochs (optional)")
+    parser.add_argument("--learning_rate", dest="learning_rate", type=float, default=None,
+                        help="Learning rate for training (optional)")
+    parser.add_argument("--batch_size", dest="batch_size", type=int, default=None,
+                        help="Batch size for training (optional)")
+    # Backbone selection per modality
+    parser.add_argument("--backbone_image", dest="backbone_image", type=str, default=None,
+                        help="Image backbone / timm checkpoint name for AutoMM (e.g., resnet50)")
+    parser.add_argument("--backbone_text", dest="backbone_text", type=str, default=None,
+                        help="Text backbone / HF checkpoint for AutoMM (e.g., bert-base-uncased)")
+    parser.add_argument("--backbone_tabular", dest="backbone_tabular", type=str, default=None,
+                        help="Tabular backbone selection (informational; mapped to mm_hparams.model.tabular.backbone)")
+
+    # Split knobs
+    parser.add_argument("--validation_size", type=float, default=0.125)
+    parser.add_argument("--split_probabilities", type=float, nargs=3, default=[0.7, 0.1, 0.2],
+                        metavar=("train", "val", "test"))
+    parser.add_argument("--val_size_with_test", type=float, default=0.2)
+
+    # Cheat-sheet knobs
+    parser.add_argument("--presets", nargs="+", default=None)
+    parser.add_argument("--preset", dest="preset", choices=["medium_quality", "high_quality", "best_quality"], default=None,
+                        help="Single preset: medium_quality, high_quality, or best_quality")
+    parser.add_argument("--eval_metric", default="roc_auc",
+                        help="Evaluation metric to use for training/evaluation (default: roc_auc)")
+    parser.add_argument("--excluded_model_types", nargs="*", default=None)
+    parser.add_argument("--num_bag_folds", type=int, default=None)
+    parser.add_argument("--num_stack_levels", type=int, default=None)
+    parser.add_argument("--refit_full", action="store_true")
+    parser.add_argument("--verbosity", type=int, default=2)
+    parser.add_argument("--hyperparameters", default=None)
+
+    args = parser.parse_args(argv)
+
+    # Normalize legacy/plural image arguments
+    normalize_image_args(args)
+
+    # Normalize boolean-like CLI values
+    def _str2bool(v):
+        if isinstance(v, bool):
+            return v
+        try:
+            return str(v).strip().lower() in ("true", "1", "yes", "y")
+        except Exception:
+            return False
+
+    args.cross_validation = _str2bool(args.cross_validation)
+    args.missing_image_strategy = _str2bool(args.missing_image_strategy)
+    # If user provided single --preset, prefer that and expose as args.presets for downstream compatibility
+    if getattr(args, "preset", None):
+        args.presets = [args.preset]
+    # If no presets were provided at all, default to high_quality
+    if not getattr(args, "presets", None):
+        args.presets = ["high_quality"]
+
+    # Basic validation
+    if not (0.0 <= args.validation_size <= 1.0):
+        parser.error("--validation_size must be in [0, 1]")
+    if len(args.split_probabilities) != 3 or abs(sum(args.split_probabilities) - 1.0) > 1e-6:
+        parser.error("--split_probabilities must be three numbers summing to 1.0")
+    if not (0.0 < args.val_size_with_test < 1.0):
+        parser.error("--val_size_with_test must be in (0, 1)")
+
+    if args.cross_validation and (args.num_folds is None or args.num_folds < 2):
+        parser.error("--num_folds must be an integer >= 2 when --cross_validation is true")
+    if args.epochs is not None and args.epochs <= 0:
+        parser.error("--epochs must be a positive integer if specified")
+    if args.learning_rate is not None and args.learning_rate <= 0.0:
+        parser.error("--learning_rate must be > 0 if specified")
+    if args.batch_size is not None and args.batch_size <= 0:
+        parser.error("--batch_size must be a positive integer if specified")
+
+    return args
+
+
+def build_extra_run_rows(
+    args,
+    predictor,
+    arch_str: str,
+    img_cols_display: str,
+    tabular_count: int,
+    calib_text: str,
+    threshold_val: str,
+    presets_used: str,
+    time_limit_val: str,
+):
+    """Return the list of (label, value) rows describing the run for the HTML report."""
+    extra_run_rows = [
+        ("Model architecture", arch_str),
+        ("Modalities & Inputs", "MultiModalPredictor (images + tabular)" if isinstance(predictor, MultiModalPredictor) else "TabularPredictor (tabular)"),
+        ("Label column", args.label_column),
+        ("Image columns", img_cols_display),
+        ("Tabular columns", str(tabular_count)),
+        ("Presets", presets_used),
+        ("Eval metric", args.eval_metric or "AutoGluon default"),
+        ("Decision threshold calibration", calib_text),
+        ("Decision threshold (Test only)", threshold_val),
+        ("Seed", str(int(args.random_seed))),
+        ("time limit(s)", time_limit_val),
+    ]
+    if not isinstance(predictor, MultiModalPredictor):
+        extra_run_rows.extend([
+            ("Excluded model types", " ".join(args.excluded_model_types) if args.excluded_model_types else "—"),
+            ("num_bag_folds", str(args.num_bag_folds) if args.num_bag_folds is not None else "—"),
+            ("num_stack_levels", str(args.num_stack_levels) if args.num_stack_levels is not None else "—"),
+            ("refit_full", "yes" if args.refit_full else "no"),
+        ])
+
+    # Add new training knobs to run context
+    extra_run_rows.extend([
+        ("Cross-validation", "yes" if args.cross_validation else "no"),
+        ("num_folds", str(args.num_folds) if args.cross_validation else "—"),
+        ("epochs", str(args.epochs) if args.epochs is not None else "—"),
+        ("learning_rate", str(args.learning_rate) if args.learning_rate is not None else "—"),
+        ("batch_size", str(args.batch_size) if args.batch_size is not None else "—"),
+    ])
+
+    return extra_run_rows
 def verify_outputs(paths):
     ok = True
     for p, desc in paths:
@@ -139,63 +323,7 @@ def create_stratified_random_split(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train & report an AutoGluon model")
-    parser.add_argument("--input_csv_train", dest="train_csv", required=True)
-    parser.add_argument("--input_csv_test", dest="test_csv", default=None)
-    parser.add_argument("--target_column", dest="label_column", required=True)
-    parser.add_argument("--output_csv", dest="output_csv", required=True)
-    parser.add_argument("--output_json", dest="output_json", default="results.json")
-    parser.add_argument("--output_html", dest="output_html", default="report.html")
-
-    # Images (lists + legacy)
-    parser.add_argument("--image_columns", dest="image_columns", nargs="+", default=None)
-    parser.add_argument("--image_column", dest="image_column", default=None)
-    parser.add_argument("--images_zips", dest="images_zips", nargs="*", default=None)
-    parser.add_argument("--images_zip", dest="images_zip", default=None)
-    parser.add_argument("--image_folders", dest="image_folders", nargs="*", default=None)
-
-    # Threshold only for Test
-    parser.add_argument("--threshold", dest="threshold", type=float, default=None)
-
-    parser.add_argument("--time_limit", dest="time_limit", type=int, default=None)
-    parser.add_argument("--random_seed", dest="random_seed", type=int, default=42)
-
-    # Split knobs
-    parser.add_argument("--validation_size", type=float, default=0.125)
-    parser.add_argument("--split_probabilities", type=float, nargs=3, default=[0.7, 0.1, 0.2],
-                        metavar=("train", "val", "test"))
-    parser.add_argument("--val_size_with_test", type=float, default=0.2)
-
-    # Cheat-sheet knobs
-    parser.add_argument("--presets", nargs="+", default=None)
-    parser.add_argument("--eval_metric", default=None)
-    parser.add_argument("--excluded_model_types", nargs="*", default=None)
-    parser.add_argument("--num_bag_folds", type=int, default=None)
-    parser.add_argument("--num_stack_levels", type=int, default=None)
-    parser.add_argument("--refit_full", action="store_true")
-    parser.add_argument("--verbosity", type=int, default=2)
-    parser.add_argument("--hyperparameters", default=None)
-
-    args = parser.parse_args()
-
-    # Normalize legacy flags
-    img_cols = args.image_columns or ([args.image_column] if args.image_column else None)
-    args.image_columns = img_cols
-
-    zips = []
-    if args.images_zips: zips.extend(args.images_zips)
-    if args.images_zip:  zips.append(args.images_zip)
-    args.images_zips = [z for z in zips if z]
-
-    args.image_folders = [d for d in (args.image_folders or []) if d and os.path.isdir(d)]
-
-    # Validate split args
-    if not (0.0 <= args.validation_size <= 1.0):
-        parser.error("--validation_size must be in [0, 1]")
-    if len(args.split_probabilities) != 3 or abs(sum(args.split_probabilities) - 1.0) > 1e-6:
-        parser.error("--split_probabilities must be three numbers summing to 1.0")
-    if not (0.0 < args.val_size_with_test < 1.0):
-        parser.error("--val_size_with_test must be in (0, 1)")
+    args = parse_args()
 
     # Debug
     logger.info("=== Galaxy Tool Debug Info ===")
@@ -258,6 +386,258 @@ def main():
             for c in args.image_columns:
                 df_[c] = df_[c].astype(str).apply(lambda p: path_expander_any(p, base_folders))
 
+    # Handle missing images according to missing_image_strategy
+    if args.image_columns:
+        # helper to detect missing/invalid paths
+        def _is_missing_path(p: str) -> bool:
+            try:
+                if p is None:
+                    return True
+                ps = str(p).strip()
+                if ps == "" or ps.lower() in ("nan", "none"):
+                    return True
+                return not os.path.exists(ps)
+            except Exception:
+                return True
+
+        placeholder_path = None
+        # If strategy is False -> generate placeholder image and fill missing entries
+        if not args.missing_image_strategy:
+            try:
+                # create a single placeholder image to reuse
+                import uuid
+                try:
+                    from PIL import Image
+                    pillow_ok = True
+                except Exception:
+                    pillow_ok = False
+                placeholder_dir = tempfile.mkdtemp(prefix="placeholder_images_")
+                placeholder_path = os.path.join(placeholder_dir, f"placeholder_{uuid.uuid4().hex}.png")
+                if pillow_ok:
+                    img = Image.new("RGB", (64, 64), color=(200, 200, 200))
+                    img.save(placeholder_path, format="PNG")
+                else:
+                    # Fallback to matplotlib if Pillow not available
+                    try:
+                        import matplotlib.pyplot as plt
+                        import numpy as _np
+                        arr = (_np.ones((64, 64, 3), dtype=_np.uint8) * 200)
+                        plt.imsave(placeholder_path, arr)
+                        plt.close("all")
+                    except Exception:
+                        placeholder_path = None
+                if placeholder_path:
+                    logger.info(f"Generated placeholder image at {placeholder_path} for missing image entries")
+            except Exception as e:
+                logger.warning(f"Could not create placeholder image: {e}")
+
+        # For each dataframe, either drop rows with missing images or fill with placeholder
+        for df_name, df_ in (("train", df_train), ("val", df_val), ("test", df_test)):
+            if df_ is None or len(df_) == 0:
+                continue
+            missing_any = None
+            for c in args.image_columns:
+                mask = df_[c].fillna("").astype(str).apply(_is_missing_path)
+                if missing_any is None:
+                    missing_any = mask
+                else:
+                    missing_any = missing_any | mask
+
+            if missing_any is None:
+                continue
+
+            n_missing = int(missing_any.sum())
+            if n_missing == 0:
+                continue
+
+            if args.missing_image_strategy:
+                # Drop rows with any missing images
+                logger.info(f"Dropping {n_missing} rows from {df_name} due to missing image files (per --missing_image_strategy=true)")
+                # mutate the respective df reference
+                if df_name == "train":
+                    df_train = df_train.loc[~missing_any].reset_index(drop=True)
+                elif df_name == "val":
+                    df_val = df_val.loc[~missing_any].reset_index(drop=True)
+                else:
+                    df_test = df_test.loc[~missing_any].reset_index(drop=True)
+            else:
+                # Fill missing image entries with placeholder path so AutoMM doesn't error
+                if not placeholder_path:
+                    logger.warning("No placeholder image available; missing image entries will remain as-is and may cause errors")
+                else:
+                    logger.info(f"Filling {n_missing} missing image entries in {df_name} with placeholder image")
+                    for c in args.image_columns:
+                        try:
+                            df_.loc[missing_any, c] = placeholder_path
+                        except Exception:
+                            # older pandas versions may require assignment differently
+                            df_.loc[missing_any.values, c] = placeholder_path
+                    # write back updated reference
+                    if df_name == "train":
+                        df_train = df_.reset_index(drop=True)
+                    elif df_name == "val":
+                        df_val = df_.reset_index(drop=True)
+                    else:
+                        df_test = df_.reset_index(drop=True)
+
+    # If cross-validation is requested, run k-fold training over df_train_full (train+val)
+    if args.cross_validation:
+        logger.info(f"Running cross-validation with {args.num_folds} folds")
+        df_full = df_train_full.reset_index(drop=True)
+        y = df_full[args.label_column]
+        # Choose stratified split for classification-like targets when possible
+        try:
+            use_stratified = y.dtype == object or y.nunique() <= 20
+        except Exception:
+            use_stratified = False
+
+        kf = StratifiedKFold(n_splits=int(args.num_folds), shuffle=True, random_state=int(args.random_seed)) if use_stratified else KFold(n_splits=int(args.num_folds), shuffle=True, random_state=int(args.random_seed))
+
+        raw_folds = []
+        ag_folds = []
+        last_predictor = None
+        fold_idx = 0
+        for train_idx, val_idx in kf.split(df_full, y if use_stratified else None):
+            fold_idx += 1
+            logger.info(f"CV fold {fold_idx}/{args.num_folds}")
+            df_tr = df_full.iloc[train_idx].copy()
+            df_va = df_full.iloc[val_idx].copy()
+
+            # Expand image paths for these fold-specific frames
+            if args.image_columns:
+                for c in args.image_columns:
+                    df_tr[c] = df_tr[c].astype(str).apply(lambda p: path_expander_any(p, base_folders))
+                    df_va[c] = df_va[c].astype(str).apply(lambda p: path_expander_any(p, base_folders))
+
+            try:
+                mm_hparams_fold = build_mm_hparams(args, df_tr, args.image_columns)
+                predictor_fold = train_predictor(args, df_tr, df_va, args.image_columns, mm_hparams_fold)
+                last_predictor = predictor_fold
+                raw_metrics_fold, ag_by_split_fold = evaluate_predictor_all_splits(
+                    predictor=predictor_fold,
+                    df_train=df_tr,
+                    df_val=df_va,
+                    df_test=df_test,
+                    label_col=args.label_column,
+                    problem_type=infer_problem_type(predictor_fold, df_tr, args.label_column),
+                    eval_metric=args.eval_metric,
+                    threshold_test=args.threshold,
+                )
+                # capture predictor path if available
+                pred_path_fold = getattr(predictor_fold, "path", None)
+                raw_folds.append(raw_metrics_fold)
+                ag_folds.append(ag_by_split_fold)
+                # store fold-level info (metrics + predictor path)
+                if 'folds_info' not in locals():
+                    folds_info = []
+                folds_info.append({
+                    "fold": int(fold_idx),
+                    "predictor_path": pred_path_fold,
+                    "raw_metrics": raw_metrics_fold,
+                    "ag_eval": ag_by_split_fold,
+                })
+            except Exception as e:
+                logger.warning(f"Fold {fold_idx} failed: {e}")
+
+        # Aggregate folds (mean of numeric entries)
+        def _aggregate(list_of_metrics):
+            # list_of_metrics: list of raw_metrics dicts
+            agg_mean = {}
+            agg_std = {}
+            for split in ("Train", "Validation", "Test"):
+                # collect keys
+                keys = set()
+                for m in list_of_metrics:
+                    if split in m:
+                        keys.update(m[split].keys())
+                if not keys:
+                    continue
+                agg_mean[split] = {}
+                agg_std[split] = {}
+                for k in keys:
+                    vals = [m[split][k] for m in list_of_metrics if split in m and k in m[split]]
+                    # try numeric aggregation
+                    numeric_vals = []
+                    for v in vals:
+                        try:
+                            numeric_vals.append(float(v))
+                        except Exception:
+                            pass
+                    if numeric_vals:
+                        mean_v = float(np.mean(numeric_vals))
+                        std_v = float(np.std(numeric_vals, ddof=0))
+                        agg_mean[split][k] = mean_v
+                        agg_std[split][k] = std_v
+                    else:
+                        # fallback: keep last value as-is
+                        agg_mean[split][k] = vals[-1] if vals else None
+                        agg_std[split][k] = None
+            return agg_mean, agg_std
+
+        raw_metrics, raw_metrics_std = _aggregate(raw_folds)
+
+        # Aggregate AutoGluon evals similarly (mean + std)
+        ag_by_split = {"Train": {}, "Validation": {}, "Test": {}}
+        ag_by_split_std = {"Train": {}, "Validation": {}, "Test": {}}
+        for split in ("Train", "Validation", "Test"):
+            keys = set()
+            for m in ag_folds:
+                if split in m:
+                    keys.update(m[split].keys())
+            for k in keys:
+                vals = [m[split][k] for m in ag_folds if split in m and k in m[split]]
+                numeric_vals = []
+                for v in vals:
+                    try:
+                        numeric_vals.append(float(v))
+                    except Exception:
+                        pass
+                if numeric_vals:
+                    ag_by_split[split][k] = float(np.mean(numeric_vals))
+                    ag_by_split_std[split][k] = float(np.std(numeric_vals, ddof=0))
+                else:
+                    ag_by_split[split][k] = vals[-1] if vals else None
+                    ag_by_split_std[split][k] = None
+
+        predictor = last_predictor
+        if predictor is None:
+            logger.error("All CV folds failed. Exiting.")
+            sys.exit(1)
+
+        # Persist per-fold metrics for inclusion in outputs
+        try:
+            folds_payload = {
+                "raw_folds": raw_folds,
+                "ag_folds": ag_folds,
+                "folds_info": folds_info if 'folds_info' in locals() else None,
+                "summary_mean": raw_metrics,
+                "summary_std": raw_metrics_std,
+                "ag_summary_mean": ag_by_split,
+                "ag_summary_std": ag_by_split_std,
+            }
+            with open("folds_metrics.json", "w") as ff:
+                json.dump(folds_payload, ff, indent=2, default=str)
+            logger.info("Wrote per-fold metrics → folds_metrics.json")
+        except Exception as e:
+            logger.warning(f"Could not write per-fold metrics file: {e}")
+
+    else:
+        # Build hparams & train
+        mm_hparams = build_mm_hparams(args, df_train, args.image_columns)
+        predictor = train_predictor(args, df_train, df_val, args.image_columns, mm_hparams)
+
+        # Authoritative metrics from final predictor + transparent suite
+        raw_metrics, ag_by_split = evaluate_predictor_all_splits(
+            predictor=predictor,
+            df_train=df_train,
+            df_val=df_val,
+            df_test=df_test,
+            label_col=args.label_column,
+            problem_type=infer_problem_type(predictor, df_train_full, args.label_column),
+            eval_metric=args.eval_metric,
+            threshold_test=args.threshold,
+        )
+
     # Fallback if val/test got empty
     if (len(df_val) == 0) or (len(df_test) == 0):
         sys.stderr.write(
@@ -296,10 +676,6 @@ def main():
             pass
     warnings.showwarning = _warn_recorder
     warnings.filterwarnings("default")
-
-    # Build hparams & train
-    mm_hparams = build_mm_hparams(args, df_train, args.image_columns)
-    predictor = train_predictor(args, df_train, df_val, args.image_columns, mm_hparams)
 
     # Save predictor path
     try:
@@ -374,6 +750,15 @@ def main():
                 "threshold_test": args.threshold,
                 "presets": args.presets,
                 "eval_metric": args.eval_metric,
+                "folds": {
+                    "raw_folds": raw_folds if getattr(args, "cross_validation", False) else None,
+                    "ag_folds": ag_folds if getattr(args, "cross_validation", False) else None,
+                    "folds_info": folds_info if (getattr(args, "cross_validation", False) and 'folds_info' in locals()) else None,
+                    "summary_mean": raw_metrics if getattr(args, "cross_validation", False) else None,
+                    "summary_std": raw_metrics_std if getattr(args, "cross_validation", False) else None,
+                    "ag_summary_mean": ag_by_split if getattr(args, "cross_validation", False) else None,
+                    "ag_summary_std": ag_by_split_std if getattr(args, "cross_validation", False) else None,
+                },
             },
             f,
             indent=2,
@@ -401,21 +786,89 @@ def main():
     calib_text = "disabled (due to <10,000 validation rows (to avoid overfitting))" if len(df_val) < 10_000 else "enabled"
     threshold_val = "None" if args.threshold is None else f"{float(args.threshold):.3f}"
     time_limit_val = "None" if args.time_limit is None else str(int(args.time_limit))
-    arch_str = get_model_architecture(predictor)
 
-    extra_run_rows = [
-        ("Model architecture", arch_str),
-        ("Modalities & Inputs", modalities_inputs_text),
-        ("Label column", label_col),
-        ("Image columns", img_cols_display),
-        ("Tabular columns", str(tabular_count)),
-        ("Presets", presets_used),
-        ("Eval metric", args.eval_metric or "AutoGluon default"),
-        ("Decision threshold calibration", calib_text),
-        ("Decision threshold (Test only)", threshold_val),
-        ("Seed", str(int(args.random_seed))),
-        ("time limit(s)", time_limit_val),
-    ]
+    # --- Custom: Extract model names, backbones, and training knobs from config.yaml in predictor_path.txt ---
+    model_arch_names = None
+    image_backbone = None
+    structured_backbone = None
+    cfg_epochs = None
+    cfg_lr = None
+    cfg_batch = None
+    config_data = None
+    try:
+        pred_path_file = "predictor_path.txt"
+        if os.path.exists(pred_path_file):
+            with open(pred_path_file, "r") as pf:
+                pred_path = pf.read().strip()
+            config_path = os.path.join(pred_path, "config.yaml")
+            if os.path.exists(config_path):
+                import yaml
+                with open(config_path, "r") as cf:
+                    config_data = yaml.safe_load(cf) or {}
+                model_section = config_data.get("model", {})
+                model_arch_names = model_section.get("names", None)
+                if model_arch_names:
+                    arch_str = ", ".join(str(m) for m in model_arch_names)
+                else:
+                    arch_str = get_model_architecture(predictor)
+                # Extract image backbone if present
+                timm_image = model_section.get("timm_image", {})
+                image_backbone = timm_image.get("checkpoint_name", None)
+                # Extract structured backbone if present
+                ft_transformer = model_section.get("ft_transformer", {})
+                structured_backbone = ft_transformer.get("embedding_arch", None)
+                if isinstance(structured_backbone, list):
+                    structured_backbone = ", ".join(str(x) for x in structured_backbone)
+                # Extract training knobs
+                optim_section = config_data.get("optim", {})
+                cfg_epochs = optim_section.get("max_epochs", None) or optim_section.get("epochs", None)
+                cfg_lr = optim_section.get("lr", None) or optim_section.get("learning_rate", None)
+                env_section = config_data.get("env", {})
+                cfg_batch = env_section.get("batch_size", None) or env_section.get("per_gpu_batch_size", None)
+            else:
+                arch_str = get_model_architecture(predictor)
+        else:
+            arch_str = get_model_architecture(predictor)
+    except Exception:
+        arch_str = get_model_architecture(predictor)
+
+    # Determine presets used (prefer single --preset then --presets list)
+    if getattr(args, "preset", None):
+        presets_used = args.preset
+    else:
+        presets_used = " ".join(args.presets) if args.presets else "AutoGluon default"
+
+    # Build the extra run rows in the requested order and with renames
+    extra_run_rows = []
+    extra_run_rows.append(("Model architecture", arch_str))
+    # Insert backbones immediately after model architecture if present
+    if image_backbone:
+        extra_run_rows.append(("Image backbone", image_backbone))
+    if structured_backbone:
+        extra_run_rows.append(("Structured backbone", structured_backbone))
+
+    # Modalities (renamed)
+    extra_run_rows.append(("Modalities", "MultiModalPredictor (images + tabular)" if isinstance(predictor, MultiModalPredictor) else "TabularPredictor (tabular)"))
+    extra_run_rows.append(("Label column", args.label_column))
+    extra_run_rows.append(("Unstructured - Image", img_cols_display))
+    extra_run_rows.append(("Structured - numeric/categorical", str(tabular_count)))
+    # Experiment quality (presets)
+    extra_run_rows.append(("Experiment quality", presets_used))
+    # Model evaluation metric (renamed)
+    extra_run_rows.append(("Model Evaluation Metric", args.eval_metric or "AutoGluon default"))
+    extra_run_rows.append(("Decision threshold calibration", calib_text))
+    extra_run_rows.append(("Decision threshold (Test only)", threshold_val))
+    extra_run_rows.append(("Seed", str(int(args.random_seed))))
+    extra_run_rows.append(("time limit(s)", time_limit_val))
+
+    # Epochs / LR / Batch from config.yaml if present, else CLI knobs
+    epochs_val = cfg_epochs if cfg_epochs is not None else (args.epochs if args.epochs is not None else "—")
+    lr_val = cfg_lr if cfg_lr is not None else (args.learning_rate if args.learning_rate is not None else "—")
+    batch_val = cfg_batch if cfg_batch is not None else (args.batch_size if args.batch_size is not None else "—")
+    extra_run_rows.append(("Epochs", str(epochs_val)))
+    extra_run_rows.append(("Learning Rate", str(lr_val)))
+    extra_run_rows.append(("Batch Size", str(batch_val)))
+
     if not isinstance(predictor, MultiModalPredictor):
         extra_run_rows.extend([
             ("Excluded model types", " ".join(args.excluded_model_types) if args.excluded_model_types else "—"),
@@ -434,6 +887,14 @@ def main():
         title=None,
         show_title=False,
     )
+    # Get feature importance HTML
+    feature_importance_html = None
+    try:
+        from feature_importance import build_feature_importance_html
+        feature_importance_html = build_feature_importance_html(predictor, df_train_full, args.label_column)
+    except Exception as e:
+        feature_importance_html = f"<p>Error loading feature importance: {e}</p>"
+
     summary_html = build_summary_html(
         predictor=predictor,
         df_train=df_train_full,
@@ -443,6 +904,7 @@ def main():
         extra_run_rows=extra_run_rows,
         class_balance_html=class_balance_block_html,
         perf_table_html=summary_perf_table_html,
+        feature_html=feature_importance_html,
     )
 
     train_tab_perf_html = build_model_performance_summary_table(
@@ -490,13 +952,74 @@ def main():
 
     is_multimodal = isinstance(predictor, MultiModalPredictor)
     if is_multimodal:
-        feature_html = (
-            "<h3>Feature Importance</h3>"
+        feature_text = (
             "<p>Permutation importance is not supported for MultiModalPredictor in this tool. "
             "For tabular-only runs, this section shows permutation importance.</p>"
         )
     else:
-        feature_html = build_feature_html(predictor, df_test, args.label_column, tmpdir, args.random_seed)
+        feature_text = build_feature_html(predictor, df_test, args.label_column, tmpdir, args.random_seed)
+
+    # If CV was used, build a simple per-fold metrics HTML block to include in the report
+    folds_html = ""
+    if getattr(args, "cross_validation", False):
+        try:
+            # Build a summary table (mean ± std) for each split
+            summary_blocks = []
+            try:
+                for split in ("Train", "Validation", "Test"):
+                    mean_dict = raw_metrics.get(split, {}) if isinstance(raw_metrics, dict) else {}
+                    std_dict = raw_metrics_std.get(split, {}) if isinstance(raw_metrics_std, dict) else {}
+                    if mean_dict:
+                        rows = [f"<h4>{split} summary (mean ± std)</h4>", "<table class=\"fold-summary\">"]
+                        for k in sorted(mean_dict.keys()):
+                            m = mean_dict.get(k)
+                            s = std_dict.get(k) if std_dict is not None else None
+                            if s is None:
+                                val = f"{m}"
+                            else:
+                                val = f"{m:.6f} ± {s:.6f}" if isinstance(m, float) and isinstance(s, float) else f"{m} ± {s}"
+                            rows.append(f"<tr><td>{k}</td><td>{val}</td></tr>")
+                        rows.append("</table>")
+                        summary_blocks.append("\n".join(rows))
+            except Exception:
+                # ignore summary build errors
+                pass
+
+            folds_list_html = []
+            for i, (rf, af) in enumerate(zip(raw_folds, ag_folds), start=1):
+                fold_rows = []
+                fold_rows.append(f"<h4>Fold {i}</h4>")
+                # include predictor path if available
+                try:
+                    pinfo = None
+                    if 'folds_info' in locals() and len(folds_info) >= i:
+                        pinfo = folds_info[i-1].get('predictor_path')
+                    if pinfo:
+                        fold_rows.append(f"<p>Model path: {pinfo}</p>")
+                except Exception:
+                    pass
+                # Raw metrics
+                if rf:
+                    for split_name, metrics_dict in rf.items():
+                        fold_rows.append(f"<h5>{split_name}</h5>")
+                        fold_rows.append("<table class=\"fold-table\">")
+                        for k, v in metrics_dict.items():
+                            fold_rows.append(f"<tr><td>{k}</td><td>{v}</td></tr>")
+                        fold_rows.append("</table>")
+                # AG evals
+                if af:
+                    fold_rows.append("<h5>AutoGluon eval</h5>")
+                    for split_name, metrics_dict in af.items():
+                        fold_rows.append(f"<h6>{split_name}</h6>")
+                        fold_rows.append("<table class=\"fold-table\">")
+                        for k, v in metrics_dict.items():
+                            fold_rows.append(f"<tr><td>{k}</td><td>{v}</td></tr>")
+                        fold_rows.append("</table>")
+                folds_list_html.append("\n".join(fold_rows))
+
+            folds_html = "<section><h3>Cross-validation fold metrics</h3>" + "<hr>".join(summary_blocks + folds_list_html) + "</section>"
+        except Exception:
+            folds_html = "<p>Could not build fold metrics HTML.</p>"
 
     notices: List[str] = []
     notices.append("No presets specified; AutoGluon defaulted to 'medium' (fast prototyping)." if not args.presets else f"Presets used: {presets_used}.")
@@ -533,7 +1056,7 @@ def main():
         train_html,
         test_html_filled,
         plots,
-        feature_html + transparency_blocks,
+        feature_text + folds_html + transparency_blocks,
     )
     with open(args.output_html, "w") as f:
         f.write(full_html)

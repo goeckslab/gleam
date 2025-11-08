@@ -294,7 +294,6 @@ def build_tabbed_html(
         '<div class="tab active" onclick="showTab(\'summary\')">Model Summary & Config</div>',
         '<div class="tab" onclick="showTab(\'train\')">Train/Validation Summary</div>',
         '<div class="tab" onclick="showTab(\'test\')">Test Summary</div>',
-        '<div class="tab" onclick="showTab(\'feature\')">Feature Importance</div>',
     ]
     if explainer_html:
         tabs.append('<div class="tab" onclick="showTab(\'explainer\')">Explainer Plots</div>')
@@ -306,7 +305,6 @@ def build_tabbed_html(
         f'<div id="summary" class="tab-content active">{summary_html}</div>',
         f'<div id="train" class="tab-content">{train_html}</div>',
         f'<div id="test" class="tab-content">{test_html}</div>',
-        f'<div id="feature" class="tab-content">{feature_html}</div>',
     ]
     if explainer_html:
         contents.append(f'<div id="explainer" class="tab-content">{explainer_html}</div>')

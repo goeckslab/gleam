@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import torch
 from packaging.version import Version
+import importlib
 
 from autogluon.multimodal import MultiModalPredictor
 from autogluon.tabular import TabularPredictor
@@ -95,8 +96,8 @@ def ag_evaluate_safely(predictor, df: pd.DataFrame, metrics: Optional[List[str]]
 # ---------------------- hparams & training ----------------------
 def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[str]]) -> dict:
     """
-    Start with seed, optionally force a safe HF text checkpoint on torch<2.6,
-    then merge user overrides. If --eval_metric is given, set optimization.metric.
+    Build hyperparameters for MultiModalPredictor.
+    Handles text checkpoints for torch<2.6 and merges user overrides.
     """
     img_set = set(image_columns or [])
     text_cols = [
@@ -106,12 +107,18 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
         and df_train[c].notna().any()
     ]
 
-    hp = {"optimization": {"seed": int(args.random_seed)}}
-
-    # Plug in the requested eval metric for AutoMM (accepted via hyperparameters)
+    hp = {}
+    
+    # Setup environment
+    hp["env"] = {
+        "seed": int(args.random_seed)
+    }
+    
+    # Set eval metric through model config
     if args.eval_metric:
-        # AutoMM expects the name as a string; 'roc_auc' is valid for binary.
-        hp["optimization"]["metric"] = str(args.eval_metric)
+        # Ensure model config exists and set metric through model.metric_learning
+        hp.setdefault("model", {})
+        hp["model"].setdefault("metric_learning", {})["metric"] = str(args.eval_metric)
 
     if text_cols and Version(torch.__version__) < Version("2.6"):
         safe_ckpt = "distilbert-base-uncased"
@@ -124,6 +131,69 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
 
     user_hp = load_user_hparams(args.hyperparameters)
     hp = deep_update(hp, user_hp)
+
+    # Map CLI knobs into AutoMM optimization hyperparameters when provided.
+    # We set multiple common key names (nested dicts and dotted flat keys) to
+    # maximize compatibility across AutoMM/AutoGluon versions.
+    try:
+        # Attach optimization parameters using dotted keys only. Avoid creating
+        # a top-level 'optimization' dict which may not exist in the base
+        # AutoMM config; also set the alternate 'optim' dotted keys to match
+        # variants of saved configs across AG versions.
+        if any(getattr(args, param, None) is not None for param in ["epochs", "learning_rate", "batch_size"]):
+            if getattr(args, "epochs", None) is not None:
+                hp["optim.max_epochs"] = int(args.epochs)
+                hp["optim.epochs"] = int(args.epochs)
+            if getattr(args, "learning_rate", None) is not None:
+                hp["optim.learning_rate"] = float(args.learning_rate)
+                hp["optim.lr"] = float(args.learning_rate)
+            if getattr(args, "batch_size", None) is not None:
+                hp["optim.batch_size"] = int(args.batch_size)
+                hp["optim.per_device_train_batch_size"] = int(args.batch_size)
+
+        # Also set dotted flat keys for max compatibility (e.g., 'optimization.max_epochs')
+        if getattr(args, "epochs", None) is not None:
+            hp["optimization.max_epochs"] = int(args.epochs)
+            hp["optimization.epochs"] = int(args.epochs)
+        if getattr(args, "learning_rate", None) is not None:
+            hp["optimization.learning_rate"] = float(args.learning_rate)
+            hp["optimization.lr"] = float(args.learning_rate)
+        if getattr(args, "batch_size", None) is not None:
+            hp["optimization.batch_size"] = int(args.batch_size)
+            hp["optimization.per_device_train_batch_size"] = int(args.batch_size)
+    except Exception:
+        logger.warning("Failed to attach epochs/learning_rate/batch_size to mm_hparams; continuing without them.")
+
+    # Map backbone selections into mm_hparams if provided
+    try:
+        if getattr(args, "backbone_text", None):
+            # nested dict
+            hp.setdefault("model.hf_text", {})["checkpoint_name"] = str(args.backbone_text)
+            # dotted flat keys
+            hp.setdefault("model", {})["hf_text.checkpoint_name"] = str(args.backbone_text)
+            hp["model.hf_text.checkpoint_name"] = str(args.backbone_text)
+        if getattr(args, "backbone_image", None):
+            hp.setdefault("model.timm_image", {})["checkpoint_name"] = str(args.backbone_image)
+            hp.setdefault("model", {})["timm_image.checkpoint_name"] = str(args.backbone_image)
+            hp["model.timm_image.checkpoint_name"] = str(args.backbone_image)
+        if getattr(args, "backbone_tabular", None):
+            hp.setdefault("model", {})["tabular.backbone"] = str(args.backbone_tabular)
+            hp["model.tabular.backbone"] = str(args.backbone_tabular)
+    except Exception:
+        logger.warning("Failed to attach backbone selections to mm_hparams; continuing without them.")
+
+    # If AutoGluon is installed, detect version and (optionally) adapt canonical keys
+    try:
+        ag_mod = importlib.import_module("autogluon")
+        ag_ver = getattr(ag_mod, "__version__", None)
+        if ag_ver:
+            ag_v = Version(str(ag_ver))
+            # If needed, we could adapt key names per version here. For now, we just log.
+            logger.info(f"Detected AutoGluon version: {ag_v}; applied robust hyperparameter mappings.")
+    except Exception:
+        # AutoGluon not present in this environment; leave mappings as-is
+        pass
+
     return hp
 
 
@@ -169,10 +239,20 @@ def train_predictor(
         train_data=df_train,
         tuning_data=df_val,
         time_limit=args.time_limit,
-        eval_metric=args.eval_metric,
-        verbosity=args.verbosity,
-        seed=int(args.random_seed),
+        verbosity=args.verbosity
     )
+    
+    # Setup hyperparameters and AG args
+    hyperparameters = {}
+    if args.eval_metric:
+        hyperparameters["eval_metric"] = args.eval_metric
+    if hyperparameters:
+        tab_fit_kwargs["hyperparameters"] = hyperparameters
+        
+    # Set seed through AG args
+    tab_fit_kwargs["ag_args_fit"] = {
+        "seed": int(args.random_seed)
+    }
 
     preset_tab = normalize_presets(args.presets, for_multimodal=False)
     if preset_tab is not None:

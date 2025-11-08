@@ -31,7 +31,7 @@ from utils import (
 import matplotlib.pyplot as plt
 import seaborn as sns
 import shap
-from html import escape
+from html import escape as _escape
 import html
 
 # =========================
@@ -935,41 +935,43 @@ def build_summary_html(
     label_column: str,
     extra_run_rows: Optional[list[tuple[str, str]]] = None,
     class_balance_html: Optional[str] = None,
-    perf_table_html: Optional[str] = None,  # ← NEW: first section
+    perf_table_html: Optional[str] = None,
+    feature_html: Optional[str] = None,
 ) -> str:
-    # 0) Performance table (FIRST)
-    perf_block = ""
+    sections = []
+    
+    # Performance Summary
     if perf_table_html:
-        perf_block = f"""
+        sections.append(f"""
 <section class="section">
   <h2 class="section-title">Model Performance Summary</h2>
   <div class="card">
     {perf_table_html}
   </div>
 </section>
-""".strip()
+""".strip())
 
-    # 1) Run Configuration
-    base_rows: list[tuple[str, str]] = [
-        ("Predictor type", type(predictor).__name__),
-        ("Framework", "AutoGluon Multimodal"),
-    ]
+    # Model Configuration
+
+    # Remove Predictor type and Framework, and ensure Model Architecture is present
+    base_rows: list[tuple[str, str]] = []
     if extra_run_rows:
-        base_rows.extend(extra_run_rows)
+        # Remove any rows with keys 'Predictor type' or 'Framework'
+        base_rows.extend([(k, v) for (k, v) in extra_run_rows if k not in ("Predictor type", "Framework")])
 
     def _fmt(v):
         if v is None or v == "":
             return "—"
-        return escape(str(v))
+        return _escape(str(v))
 
     rows_html = "\n".join(
-        f"<tr><td>{escape(str(k))}</td><td>{_fmt(v)}</td></tr>"
+        f"<tr><td>{_escape(str(k))}</td><td>{_fmt(v)}</td></tr>"
         for k, v in base_rows
     )
 
-    run_cfg_html = f"""
+    sections.append(f"""
 <section class="section">
-  <h2 class="section-title">Run Configuration</h2>
+  <h2 class="section-title">Model Configuration</h2>
   <div class="card">
     <table class="kv-table">
       <thead><tr><th>Key</th><th>Value</th></tr></thead>
@@ -979,21 +981,79 @@ def build_summary_html(
     </table>
   </div>
 </section>
-""".strip()
+""".strip())
 
-    # 2) Class Balance (Train Full)
-    class_balance_block = ""
+    # Dataset Overview
     if class_balance_html:
-        class_balance_block = f"""
+        sections.append(f"""
 <section class="section">
-  <h2 class="section-title">Class Balance (Train Full)</h2>
+  <h2 class="section-title">Dataset Overview</h2>
   <div class="card">
     {class_balance_html}
   </div>
 </section>
-""".strip()
+""".strip())
 
-    return "\n".join([perf_block, run_cfg_html, class_balance_block]).strip()
+    # Feature Importance
+    if feature_html:
+        sections.append(f"""
+<section class="section">
+  <h2 class="section-title">Feature Importance Analysis</h2>
+  <div class="card">
+    {feature_html}
+  </div>
+</section>
+""".strip())
+
+    return "\n".join(sections).strip()
+
+def build_feature_importance_html(predictor, df_train: pd.DataFrame, label_column: str) -> str:
+    """Build a visualization of feature importance."""
+    try:
+        # Try to get feature importance from predictor
+        fi = None
+        if hasattr(predictor, "feature_importance") and callable(predictor.feature_importance):
+            try:
+                fi = predictor.feature_importance(df_train)
+            except Exception as e:
+                return f"<p>Could not compute feature importance: {e}</p>"
+
+        if fi is None or (isinstance(fi, pd.DataFrame) and fi.empty):
+            return "<p>Feature importance not available for this model.</p>"
+
+        # Format as a sortable table
+        rows = []
+        if isinstance(fi, pd.DataFrame):
+            fi = fi.sort_values("importance", ascending=False)
+            for _, row in fi.iterrows():
+                feat = row.index[0] if isinstance(row.index, pd.Index) else row["feature"]
+                imp = float(row["importance"])
+                rows.append(f"<tr><td>{_escape(str(feat))}</td><td>{imp:.4f}</td></tr>")
+        else:
+            # Handle other formats (dict, etc)
+            for feat, imp in sorted(fi.items(), key=lambda x: float(x[1]), reverse=True):
+                rows.append(f"<tr><td>{_escape(str(feat))}</td><td>{float(imp):.4f}</td></tr>")
+
+        if not rows:
+            return "<p>No feature importance values available.</p>"
+
+        table_html = f"""
+        <table class="performance-summary">
+          <thead>
+            <tr>
+              <th class="sortable">Feature</th>
+              <th class="sortable">Importance</th>
+            </tr>
+          </thead>
+          <tbody>
+            {"".join(rows)}
+          </tbody>
+        </table>
+        """
+        return table_html
+        
+    except Exception as e:
+        return f"<p>Error building feature importance visualization: {e}</p>"
 
 def build_test_html_and_plots(
     predictor,
