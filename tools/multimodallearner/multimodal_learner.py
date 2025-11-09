@@ -729,14 +729,16 @@ def main():
     tabular_count = len(tabular_cols)
 
     presets_used = " ".join(args.presets) if args.presets else "AutoGluon default"
-    calib_text = "disabled (due to <10,000 validation rows (to avoid overfitting))" if len(df_val) < 10_000 else "enabled"
-    threshold_val = "None" if args.threshold is None else f"{float(args.threshold):.3f}"
     time_limit_val = "None" if args.time_limit is None else str(int(args.time_limit))
 
     # --- Custom: Extract model names, backbones, and training knobs from config.yaml in predictor_path.txt ---
     model_arch_names = None
     image_backbone = None
+    text_backbone = None
     structured_backbone = None
+    image_modality_present = False
+    text_modality_present = False
+    structured_modality_present = False
     cfg_epochs = None
     cfg_lr = None
     cfg_batch = None
@@ -758,13 +760,35 @@ def main():
                 else:
                     arch_str = get_model_architecture(predictor)
                 # Extract image backbone if present
-                timm_image = model_section.get("timm_image", {})
-                image_backbone = timm_image.get("checkpoint_name", None)
+                timm_image = model_section.get("timm_image", {}) or {}
+                if isinstance(timm_image, dict) and timm_image:
+                    image_modality_present = True
+                    image_backbone = (
+                        timm_image.get("checkpoint_name")
+                        or timm_image.get("name")
+                        or image_backbone
+                    )
+                # Extract text backbone if present
+                hf_text_section = model_section.get("hf_text", {}) or {}
+                if isinstance(hf_text_section, dict) and hf_text_section:
+                    text_modality_present = True
+                    text_backbone = (
+                        hf_text_section.get("checkpoint_name")
+                        or hf_text_section.get("name")
+                        or text_backbone
+                    )
                 # Extract structured backbone if present
-                ft_transformer = model_section.get("ft_transformer", {})
-                structured_backbone = ft_transformer.get("embedding_arch", None)
+                ft_transformer = model_section.get("ft_transformer", {}) or {}
+                if isinstance(ft_transformer, dict) and ft_transformer:
+                    structured_modality_present = True
+                    structured_backbone = ft_transformer.get("embedding_arch", None) or structured_backbone
                 if isinstance(structured_backbone, list):
                     structured_backbone = ", ".join(str(x) for x in structured_backbone)
+                if not structured_modality_present:
+                    for key in ("numerical_mlp", "categorical_mlp", "tabular", "fusion_mlp"):
+                        if isinstance(model_section.get(key), dict):
+                            structured_modality_present = True
+                            break
                 # Extract training knobs
                 optim_section = config_data.get("optim", {})
                 cfg_epochs = optim_section.get("max_epochs", None) or optim_section.get("epochs", None)
@@ -777,6 +801,11 @@ def main():
             arch_str = get_model_architecture(predictor)
     except Exception:
         arch_str = get_model_architecture(predictor)
+
+    if not image_modality_present:
+        image_modality_present = bool(image_cols)
+    if not structured_modality_present:
+        structured_modality_present = tabular_count > 0
 
     # Determine presets used (prefer single --preset then --presets list)
     if getattr(args, "preset", None):
@@ -796,14 +825,16 @@ def main():
     # Modalities (renamed)
     extra_run_rows.append(("Modalities", "MultiModalPredictor (images + structured/tabular)"))
     extra_run_rows.append(("Label column", args.label_column))
-    extra_run_rows.append(("Unstructured - Image", img_cols_display))
-    extra_run_rows.append(("Structured - numeric/categorical", str(tabular_count)))
+    if image_modality_present:
+        extra_run_rows.append(("Unstructured - Image", img_cols_display))
+    if text_modality_present:
+        extra_run_rows.append(("Unstructured - Text", text_backbone or "—"))
+    if structured_modality_present:
+        extra_run_rows.append(("Structured - numeric/categorical", str(tabular_count)))
     # Experiment quality (presets)
     extra_run_rows.append(("Experiment quality", presets_used))
     # Model evaluation metric (renamed)
     extra_run_rows.append(("Model Evaluation Metric", args.eval_metric or "AutoGluon default"))
-    extra_run_rows.append(("Decision threshold calibration", calib_text))
-    extra_run_rows.append(("Decision threshold (Test only)", threshold_val))
     extra_run_rows.append(("Seed", str(int(args.random_seed))))
     extra_run_rows.append(("time limit(s)", time_limit_val))
 
