@@ -914,13 +914,13 @@ def evaluate_all(
 ) -> Tuple[Dict[str, float], Dict[str, float], Dict[str, float]]:
     """
     Run predictor.evaluate on train/val/test and normalize the result dicts to floats.
-    Compatible with both TabularPredictor (supports `silent`) and MultiModalPredictor (no `silent`).
+    MultiModalPredictor does not accept the `silent` kwarg, so call defensively.
     """
     def _evaluate(df):
         try:
-            return predictor.evaluate(df, silent=True)  # TabularPredictor path
+            return predictor.evaluate(df, silent=True)
         except TypeError:
-            return predictor.evaluate(df)               # MultiModalPredictor path
+            return predictor.evaluate(df)
 
     train_scores = _safe_floatify(_evaluate(df_train))
     val_scores   = _safe_floatify(_evaluate(df_val))
@@ -1080,7 +1080,7 @@ def build_test_html_and_plots(
     except Exception:
         pass
     try:
-        # TabularPredictor/MultiModalPredictor both expose predict_proba for classification
+        # MultiModalPredictor exposes predict_proba for classification problems.
         pred_proba = predictor.predict_proba(df_test)
     except Exception:
         pred_proba = None

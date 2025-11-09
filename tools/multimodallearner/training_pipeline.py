@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import importlib
 import io
 import json
 import logging
@@ -10,10 +11,8 @@ import numpy as np
 import pandas as pd
 import torch
 from packaging.version import Version
-import importlib
 
 from autogluon.multimodal import MultiModalPredictor
-from autogluon.tabular import TabularPredictor
 
 from metrics_logic import evaluate_all_transparency
 
@@ -21,25 +20,19 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------- small utilities ----------------------
-def normalize_presets(presets, for_multimodal: bool) -> Optional[str]:
+def normalize_presets(presets) -> Optional[str]:
     """
-    AutoMM expects a single string preset; Tabular accepts a string as well.
-    If a list is provided:
-      - MultiModal: use the first and warn.
-      - Tabular: join with spaces ("best_quality optimize_for_deployment").
+    AutoMM expects a single preset string. If multiple are provided, use the first.
     """
     if presets is None:
         return None
     if isinstance(presets, (list, tuple)):
-        if for_multimodal:
-            if len(presets) > 1:
-                logger.warning(
-                    "MultiModalPredictor accepts a single preset. "
-                    f"Received {presets}; using the first: '{presets[0]}'"
-                )
-            return str(presets[0])
-        # Tabular path: join tokens into one string
-        return " ".join(str(p) for p in presets)
+        if len(presets) > 1:
+            logger.warning(
+                "MultiModalPredictor accepts a single preset. "
+                f"Received {presets}; using the first: '{presets[0]}'"
+            )
+        return str(presets[0])
     return str(presets)
 
 def load_user_hparams(hp_arg: Optional[str]) -> dict:
@@ -205,79 +198,28 @@ def train_predictor(
     mm_hparams: dict,
 ):
     """
-    Train either MultiModalPredictor (if image columns) or TabularPredictor (else),
-    honoring cheat-sheet knobs (presets, eval_metric, bagging/stacking, etc.).
+    Train a MultiModalPredictor, honoring common knobs (presets, eval_metric, etc.).
     """
-    presets_arg = args.presets if args.presets else None
+    logger.info("Starting AutoGluon MultiModal training...")
+    predictor = MultiModalPredictor(label=args.label_column, path=None)
+    column_types = {c: "image_path" for c in (image_columns or [])}
 
-    if image_columns:
-        logger.info("Starting AutoGluon MultiModal training...")
-        column_types = {c: "image_path" for c in image_columns}
-        predictor = MultiModalPredictor(label=args.label_column, path=None)
-
-        # NOTE: AutoMM does not accept eval_metric / verbosity as kwargs.
-        mm_fit_kwargs = dict(
-            train_data=df_train,
-            tuning_data=df_val,
-            time_limit=args.time_limit,
-            seed=int(args.random_seed),
-            column_types=column_types,
-            hyperparameters=mm_hparams,
-        )
-        preset_mm = normalize_presets(args.presets, for_multimodal=True)
-        if preset_mm is not None:
-            mm_fit_kwargs["presets"] = preset_mm
-
-        predictor.fit(**mm_fit_kwargs)
-        return predictor
-
-# --- Tabular ---
-    logger.info("Starting AutoGluon Tabular training...")
-    predictor = TabularPredictor(label=args.label_column, path=None)
-
-    tab_fit_kwargs = dict(
+    mm_fit_kwargs = dict(
         train_data=df_train,
-        tuning_data=df_val,
         time_limit=args.time_limit,
-        verbosity=args.verbosity
+        seed=int(args.random_seed),
+        hyperparameters=mm_hparams,
     )
-    
-    # Setup hyperparameters and AG args
-    hyperparameters = {}
-    if args.eval_metric:
-        hyperparameters["eval_metric"] = args.eval_metric
-    if hyperparameters:
-        tab_fit_kwargs["hyperparameters"] = hyperparameters
-        
-    # Set seed through AG args
-    tab_fit_kwargs["ag_args_fit"] = {
-        "seed": int(args.random_seed)
-    }
+    if df_val is not None and not df_val.empty:
+        mm_fit_kwargs["tuning_data"] = df_val
+    if column_types:
+        mm_fit_kwargs["column_types"] = column_types
 
-    preset_tab = normalize_presets(args.presets, for_multimodal=False)
-    if preset_tab is not None:
-        tab_fit_kwargs["presets"] = preset_tab
+    preset_mm = normalize_presets(args.presets)
+    if preset_mm is not None:
+        mm_fit_kwargs["presets"] = preset_mm
 
-    ag_args_fit = {}
-    if args.num_bag_folds is not None:
-        ag_args_fit["num_bag_folds"] = int(args.num_bag_folds)
-    if args.num_stack_levels is not None:
-        ag_args_fit["num_stack_levels"] = int(args.num_stack_levels)
-    if ag_args_fit:
-        tab_fit_kwargs["ag_args_fit"] = ag_args_fit
-
-    if args.excluded_model_types:
-        tab_fit_kwargs["excluded_model_types"] = args.excluded_model_types
-
-    predictor.fit(**tab_fit_kwargs)
-
-    if args.refit_full:
-        try:
-            logger.info("Refitting best model on all (train+val) data (refit_full=True)...")
-            predictor.refit_full()
-        except Exception as e:
-            logger.warning(f"refit_full failed: {e}")
-
+    predictor.fit(**mm_fit_kwargs)
     return predictor
 
 

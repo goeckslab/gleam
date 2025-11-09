@@ -2,7 +2,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import os
 import base64
-import shap
 def get_metrics_help_modal() -> str:
     # The HTML structure of the modal
     modal_html = """
@@ -139,59 +138,5 @@ def encode_image_to_base64(image_path):
     with open(image_path, "rb") as img_file:
         return base64.b64encode(img_file.read()).decode("utf-8")
 
-def generate_feature_importance(predictor, df_test, label_col, tmpdir, random_seed=42):
-    feature_html = "<p><em>Feature importance is not available for this model.</em></p>"
-
-    if hasattr(predictor, "feature_importance") and callable(getattr(predictor, "feature_importance")):
-        # TabularPredictor: use built-in permutation importance
-        try:
-            fi = predictor.feature_importance(
-                df_test,
-                subsample_size=min(1000, len(df_test)),
-                num_shuffle_sets=10,
-                silent=True,
-            )
-            plt.figure(figsize=(8, max(4, len(fi) * 0.4)))
-            plt.barh(fi.index, fi["importance"].values, xerr=fi["stddev"].values)
-            plt.title("Feature Importance (Permutation)")
-            plt.xlabel("Importance")
-            plt.ylabel("Features")
-            fi_path = os.path.join(tmpdir, "feature_importance.png")
-            plt.savefig(fi_path, bbox_inches="tight")
-            plt.close()
-            feature_html = (
-                "<h2>Feature Importance</h2>"
-                "<div class='plot'>"
-                f"<img src='data:image/png;base64,{encode_image_to_base64(fi_path)}'/>"
-                "</div>"
-            )
-        except Exception as e:
-            feature_html = f"<p><em>Feature importance failed: {e}</em></p>"
-
-    else:
-        # Try SHAP for MultiModalPredictor with tabular features (if no images)
-        try:
-            if hasattr(predictor, "predict_proba") and not hasattr(predictor, "image_column"):
-                # Remove label column and sample
-                df_shap = df_test.drop(columns=[label_col]).sample(
-                    min(50, len(df_test)), random_state=random_seed
-                )
-                def model_func(df):
-                    if predictor.problem_type == "regression":
-                        return predictor.predict(df).values
-                    else:
-                        return predictor.predict_proba(df).values
-
-                explainer = shap.Explainer(model_func, df_shap)
-                shap_values = explainer(df_shap)
-                # generate SHAP summary plot here as needed (similar to your code)
-                # For simplicity, just show note here
-                feature_html = (
-                    "<h2>Feature Importance via SHAP</h2>"
-                    "<p>SHAP plot generation goes here (implement your plot functions accordingly)</p>"
-                )
-            else:
-                feature_html = "<p><em>SHAP feature importance not supported for this model type.</em></p>"
-        except Exception as e:
-            feature_html = f"<p><em>SHAP explanation failed: {e}</em></p>"
-    return feature_html
+def generate_feature_importance(*args, **kwargs):
+    return "<p><em>Feature importance visualizations are not supported for this MultiModal workflow.</em></p>"

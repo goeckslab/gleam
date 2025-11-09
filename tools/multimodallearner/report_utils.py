@@ -16,27 +16,9 @@ def _escape(s: Any) -> str:
 
 def get_model_architecture(predictor: Any) -> str:
     """
-    Returns a human-friendly description of the final model architecture.
-    - TabularPredictor: best model name
-    - MultiModalPredictor: backbone(s) from the config (e.g., timm_image=resnet50, hf_text=bert-base-uncased)
+    Returns a human-friendly description of the final model architecture based on the
+    MultiModalPredictor configuration (e.g., timm_image=resnet50, hf_text=bert-base-uncased).
     """
-    # TabularPredictor path
-    try:
-        from autogluon.tabular import TabularPredictor as _TP
-        if isinstance(predictor, _TP):
-            try:
-                return str(predictor.get_model_best())
-            except Exception:
-                try:
-                    lb = predictor.leaderboard(silent=True)
-                    if "model" in lb.columns and len(lb):
-                        return str(lb.iloc[0]["model"])
-                except Exception:
-                    pass
-            return "AutoGluon Tabular (ensemble)"
-    except Exception:
-        pass
-
     # MultiModalPredictor path: read backbones from config if available
     archs = []
     for attr in ("_config", "config"):
@@ -166,7 +148,7 @@ def build_leaderboard_html(predictor) -> str:
         return f"<h3>Model Leaderboard</h3><p>Unavailable: {_escape(e)}</p>"
 
 def build_ignored_features_html(predictor, df_any: pd.DataFrame) -> str:
-    # TabularPredictor exposes .features(); MultiModalPredictor may not
+    # MultiModalPredictor does not always expose .features(); guard accordingly.
     used = set()
     try:
         used = set(predictor.features())
@@ -185,16 +167,6 @@ def build_ignored_features_html(predictor, df_any: pd.DataFrame) -> str:
     """
 
 def build_presets_hparams_html(predictor) -> str:
-    # TabularPredictor: prefer fit_summary(); MultiModal: try ._config or ._fit_args
-    try:
-        from autogluon.tabular import TabularPredictor as _TP
-        if isinstance(predictor, _TP):
-            summ = predictor.fit_summary(verbosity=0)
-            hp = summ.get("hyperparameters") or summ.get("model_hyperparams") or {}
-            hp_html = f"<pre>{html.escape(json.dumps(hp, indent=2))}</pre>" if hp else "<i>Unavailable</i>"
-            return f"<h3>Training Presets & Hyperparameters</h3><details open><summary>Show hyperparameters</summary>{hp_html}</details>"
-    except Exception:
-        pass
     # MultiModalPredictor path
     mm_hp = {}
     for attr in ("_config", "config", "_fit_args"):
@@ -224,8 +196,8 @@ def build_reproducibility_html(args, ctx: Dict[str, Any], model_path: Optional[s
     load_snippet = ""
     if model_path:
         load_snippet = f"""<pre>
-from autogluon.tabular import TabularPredictor
-predictor = TabularPredictor.load("{_escape(model_path)}")
+from autogluon.multimodal import MultiModalPredictor
+predictor = MultiModalPredictor.load("{_escape(model_path)}")
 </pre>"""
     pkg_rows = "".join(f"<tr><td>{_escape(k)}</td><td>{_escape(v)}</td></tr>" for k, v in (ctx.get("packages") or {}).items())
     sys_table = f"""
@@ -275,11 +247,11 @@ def build_modalities_html(predictor, df_any: pd.DataFrame, label_col: str, image
         return f"<p>{len(arr)} columns</p>"
 
     img_block = f"<p><b>Image column:</b> {html.escape(image_col)}</p>" if img_present else "<p><b>Image column:</b> None</p>"
-    tab_block = f"<div><b>Tabular columns:</b> {len(tab_cols)}{list_or_count(tab_cols, max_show=15)}</div>"
+    tab_block = f"<div><b>Structured columns:</b> {len(tab_cols)}{list_or_count(tab_cols, max_show=15)}</div>"
 
     return f"""
     <h3>Modalities & Inputs</h3>
-    <p>This run used <b>MultiModalPredictor</b> (images + tabular).</p>
+    <p>This run used <b>MultiModalPredictor</b> (images + structured features).</p>
     <p><b>Label column:</b> {html.escape(label_col)}</p>
     {img_block}
     {tab_block}

@@ -16,7 +16,6 @@ import pandas as pd
 import torch
 
 from autogluon.multimodal import MultiModalPredictor
-from autogluon.tabular import TabularPredictor
 from sklearn.model_selection import StratifiedKFold, KFold
 
 from split_logic import (
@@ -171,7 +170,7 @@ def parse_args(argv=None):
     parser.add_argument("--backbone_text", dest="backbone_text", type=str, default=None,
                         help="Text backbone / HF checkpoint for AutoMM (e.g., bert-base-uncased)")
     parser.add_argument("--backbone_tabular", dest="backbone_tabular", type=str, default=None,
-                        help="Tabular backbone selection (informational; mapped to mm_hparams.model.tabular.backbone)")
+                        help="Structured backbone selection (informational; mapped to mm_hparams.model.tabular.backbone)")
 
     # Split knobs
     parser.add_argument("--validation_size", type=float, default=0.125)
@@ -185,11 +184,6 @@ def parse_args(argv=None):
                         help="Single preset: medium_quality, high_quality, or best_quality")
     parser.add_argument("--eval_metric", default="roc_auc",
                         help="Evaluation metric to use for training/evaluation (default: roc_auc)")
-    parser.add_argument("--excluded_model_types", nargs="*", default=None)
-    parser.add_argument("--num_bag_folds", type=int, default=None)
-    parser.add_argument("--num_stack_levels", type=int, default=None)
-    parser.add_argument("--refit_full", action="store_true")
-    parser.add_argument("--verbosity", type=int, default=2)
     parser.add_argument("--hyperparameters", default=None)
 
     args = parser.parse_args(argv)
@@ -235,49 +229,6 @@ def parse_args(argv=None):
     return args
 
 
-def build_extra_run_rows(
-    args,
-    predictor,
-    arch_str: str,
-    img_cols_display: str,
-    tabular_count: int,
-    calib_text: str,
-    threshold_val: str,
-    presets_used: str,
-    time_limit_val: str,
-):
-    """Return the list of (label, value) rows describing the run for the HTML report."""
-    extra_run_rows = [
-        ("Model architecture", arch_str),
-        ("Modalities & Inputs", "MultiModalPredictor (images + tabular)" if isinstance(predictor, MultiModalPredictor) else "TabularPredictor (tabular)"),
-        ("Label column", args.label_column),
-        ("Image columns", img_cols_display),
-        ("Tabular columns", str(tabular_count)),
-        ("Presets", presets_used),
-        ("Eval metric", args.eval_metric or "AutoGluon default"),
-        ("Decision threshold calibration", calib_text),
-        ("Decision threshold (Test only)", threshold_val),
-        ("Seed", str(int(args.random_seed))),
-        ("time limit(s)", time_limit_val),
-    ]
-    if not isinstance(predictor, MultiModalPredictor):
-        extra_run_rows.extend([
-            ("Excluded model types", " ".join(args.excluded_model_types) if args.excluded_model_types else "—"),
-            ("num_bag_folds", str(args.num_bag_folds) if args.num_bag_folds is not None else "—"),
-            ("num_stack_levels", str(args.num_stack_levels) if args.num_stack_levels is not None else "—"),
-            ("refit_full", "yes" if args.refit_full else "no"),
-        ])
-
-    # Add new training knobs to run context
-    extra_run_rows.extend([
-        ("Cross-validation", "yes" if args.cross_validation else "no"),
-        ("num_folds", str(args.num_folds) if args.cross_validation else "—"),
-        ("epochs", str(args.epochs) if args.epochs is not None else "—"),
-        ("learning_rate", str(args.learning_rate) if args.learning_rate is not None else "—"),
-        ("batch_size", str(args.batch_size) if args.batch_size is not None else "—"),
-    ])
-
-    return extra_run_rows
 def verify_outputs(paths):
     ok = True
     for p, desc in paths:
@@ -777,11 +728,6 @@ def main():
     tabular_cols = [c for c in df_train_full.columns if c not in exclude_cols]
     tabular_count = len(tabular_cols)
 
-    if isinstance(predictor, MultiModalPredictor):
-        modalities_inputs_text = "MultiModalPredictor (images + tabular)"
-    else:
-        modalities_inputs_text = "TabularPredictor (tabular)"
-
     presets_used = " ".join(args.presets) if args.presets else "AutoGluon default"
     calib_text = "disabled (due to <10,000 validation rows (to avoid overfitting))" if len(df_val) < 10_000 else "enabled"
     threshold_val = "None" if args.threshold is None else f"{float(args.threshold):.3f}"
@@ -848,7 +794,7 @@ def main():
         extra_run_rows.append(("Structured backbone", structured_backbone))
 
     # Modalities (renamed)
-    extra_run_rows.append(("Modalities", "MultiModalPredictor (images + tabular)" if isinstance(predictor, MultiModalPredictor) else "TabularPredictor (tabular)"))
+    extra_run_rows.append(("Modalities", "MultiModalPredictor (images + structured/tabular)"))
     extra_run_rows.append(("Label column", args.label_column))
     extra_run_rows.append(("Unstructured - Image", img_cols_display))
     extra_run_rows.append(("Structured - numeric/categorical", str(tabular_count)))
@@ -868,14 +814,6 @@ def main():
     extra_run_rows.append(("Epochs", str(epochs_val)))
     extra_run_rows.append(("Learning Rate", str(lr_val)))
     extra_run_rows.append(("Batch Size", str(batch_val)))
-
-    if not isinstance(predictor, MultiModalPredictor):
-        extra_run_rows.extend([
-            ("Excluded model types", " ".join(args.excluded_model_types) if args.excluded_model_types else "—"),
-            ("num_bag_folds", str(args.num_bag_folds) if args.num_bag_folds is not None else "—"),
-            ("num_stack_levels", str(args.num_stack_levels) if args.num_stack_levels is not None else "—"),
-            ("refit_full", "yes" if args.refit_full else "no"),
-        ])
 
     class_balance_block_html = build_class_balance_html(df_train_full, label_col)
 
