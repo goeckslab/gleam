@@ -22,11 +22,19 @@ class FeatureImportanceAnalyzer:
         target_col=None,
         exp=None,
         best_model=None,
+        max_plot_features=None,
     ):
         self.task_type = task_type
         self.output_dir = output_dir
         self.exp = exp
         self.best_model = best_model
+        self._skip_messages = []
+        if isinstance(max_plot_features, int) and max_plot_features > 0:
+            self.max_plot_features = max_plot_features
+        elif max_plot_features is None:
+            self.max_plot_features = 30
+        else:
+            self.max_plot_features = None
 
         if exp is not None:
             # Assume all configs (data, target) are in exp
@@ -94,11 +102,27 @@ class FeatureImportanceAnalyzer:
         feature_importances = pd.DataFrame(
             {"Feature": processed_features, "Importance": importances}
         ).sort_values(by="Importance", ascending=False)
+        cap = (
+            min(self.max_plot_features, len(feature_importances))
+            if self.max_plot_features is not None
+            else len(feature_importances)
+        )
+        plot_importances = feature_importances.head(cap)
+        if cap < len(feature_importances):
+            LOG.info(
+                "Tree importance plot limited to top %s of %s features",
+                cap,
+                len(feature_importances),
+            )
         plt.figure(figsize=(10, 6))
-        plt.barh(feature_importances["Feature"], feature_importances["Importance"])
+        plt.barh(
+            plot_importances["Feature"],
+            plot_importances["Importance"],
+        )
         plt.xlabel("Importance")
-        plt.title(f"Feature Importance ({model_type})")
+        plt.title(f"Feature Importance ({model_type}) (top {cap})")
         plot_path = os.path.join(self.output_dir, "tree_importance.png")
+        plt.tight_layout()
         plt.savefig(plot_path, bbox_inches="tight")
         plt.close()
         self.plots["tree_importance"] = plot_path
@@ -116,13 +140,16 @@ class FeatureImportanceAnalyzer:
         if X_data is None:
             raise RuntimeError("No transformed dataset found for SHAP.")
 
-        # --- Adaptive feature limiting (proportional cap) ---
         n_rows, n_features = X_data.shape
+        feature_cap = (
+            min(self.max_plot_features, n_features)
+            if self.max_plot_features is not None
+            else n_features
+        )
         if max_features is None:
-            if n_features <= 200:
-                max_features = n_features
-            else:
-                max_features = min(200, max(20, int(n_features * 0.1)))
+            max_features = feature_cap
+        else:
+            max_features = min(max_features, feature_cap)
 
         try:
             if hasattr(model, "feature_importances_"):
@@ -140,7 +167,9 @@ class FeatureImportanceAnalyzer:
 
             if len(top_features) < n_features:
                 LOG.info(
-                    f"Restricted SHAP computation to top {len(top_features)} / {n_features} features"
+                    "Restricted SHAP computation to top %s of %s features",
+                    len(top_features),
+                    n_features,
                 )
             X_data = X_data[top_features]
         except Exception as e:
@@ -162,13 +191,15 @@ class FeatureImportanceAnalyzer:
             X_data = X_data.sample(max_samples, random_state=42)
 
         # --- Adaptive feature display ---
+        display_cap = (
+            min(self.max_plot_features, X_data.shape[1])
+            if self.max_plot_features is not None
+            else X_data.shape[1]
+        )
         if max_display is None:
-            if X_data.shape[1] <= 20:
-                max_display = X_data.shape[1]
-            elif X_data.shape[1] <= 100:
-                max_display = 30
-            else:
-                max_display = 50
+            max_display = display_cap
+        else:
+            max_display = min(max_display, display_cap)
 
         # Background set
         bg = X_data.sample(min(len(X_data), 100), random_state=42)
@@ -201,6 +232,7 @@ class FeatureImportanceAnalyzer:
         plt.title(
             f"SHAP Summary for {model.__class__.__name__} (top {max_display} features)"
         )
+        plt.tight_layout()
         plt.savefig(out_path, bbox_inches="tight")
         plt.close()
         self.plots["shap_summary"] = out_path
@@ -230,9 +262,10 @@ class FeatureImportanceAnalyzer:
             else:
                 section_title = plot_name
             plots_html += f"""
-            <div class="plot" id="{plot_name}">
+            <div class="plot" id="{plot_name}" style="text-align:center;margin-bottom:24px;">
                 <h2>{section_title}</h2>
-                <img src="data:image/png;base64,{encoded_image}" alt="{plot_name}">
+                <img src="data:image/png;base64,{encoded_image}" alt="{plot_name}"
+                     style="max-width:95%;height:auto;display:block;margin:0 auto;border:1px solid #ddd;padding:8px;background:#fff;">
             </div>
             """
         return f"{plots_html}"

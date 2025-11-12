@@ -46,6 +46,7 @@ class BaseModelTrainer:
         self.results = None
         self.tuning_results = None
         self.features_name = None
+        self.plot_feature_names = None
         self.plots = {}
         self.explainer_plots = {}
         self.plots_explainer_html = None
@@ -53,6 +54,8 @@ class BaseModelTrainer:
         self.user_kwargs = kwargs.copy()
         for key, value in self.user_kwargs.items():
             setattr(self, key, value)
+        if not hasattr(self, "plot_feature_limit"):
+            self.plot_feature_limit = 30
         self.setup_params = {}
         self.test_file = test_file
         self.test_data = None
@@ -127,6 +130,7 @@ class BaseModelTrainer:
         LOG.info(f"Dataset columns after processing: {names}")
 
         self.features_name = [n for n in names if n != self.target]
+        self.plot_feature_names = self._select_plot_features(self.features_name)
 
         if getattr(self, "missing_value_strategy", None):
             strat = self.missing_value_strategy
@@ -152,6 +156,52 @@ class BaseModelTrainer:
             )
             df_test.columns = df_test.columns.str.replace(".", "_")
             self.test_data = df_test
+
+    def _select_plot_features(self, all_features):
+        limit = getattr(self, "plot_feature_limit", 30)
+        if not isinstance(limit, int) or limit <= 0:
+            LOG.info(
+                "Feature plotting limit disabled (plot_feature_limit=%s).", limit
+            )
+            return all_features
+        if len(all_features) <= limit:
+            LOG.info(
+                "Feature plotting limit not needed (%s features <= limit %s).",
+                len(all_features),
+                limit,
+            )
+            return all_features
+        df = self.data[all_features].copy()
+        numeric_cols = df.select_dtypes(include=["number"]).columns
+        ranked = []
+        if len(numeric_cols) > 0:
+            variances = (
+                df[numeric_cols]
+                .var()
+                .fillna(0)
+                .abs()
+                .sort_values(ascending=False)
+            )
+            ranked = variances.index.tolist()
+        selected = []
+        for col in ranked:
+            if len(selected) >= limit:
+                break
+            selected.append(col)
+        if len(selected) < limit:
+            for col in all_features:
+                if col in selected:
+                    continue
+                selected.append(col)
+                if len(selected) >= limit:
+                    break
+        LOG.info(
+            "Limiting feature-level plots to %s of %s available features (limit=%s).",
+            len(selected),
+            len(all_features),
+            limit,
+        )
+        return selected
 
     def setup_pycaret(self):
         LOG.info("Initializing PyCaret")
@@ -634,6 +684,7 @@ class BaseModelTrainer:
             output_dir=self.output_dir,
             exp=self.exp,
             best_model=self.best_model,
+            max_plot_features=self.plot_feature_limit,
         ).run()
 
         # 6b) Explainer SHAP importances
