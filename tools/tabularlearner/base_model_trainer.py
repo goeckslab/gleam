@@ -58,6 +58,7 @@ class BaseModelTrainer:
             self.plot_feature_limit = 30
         self._numeric_fill_values = None
         self._missing_value_strategy_effective = None
+        self._best_model_metric_used = None
         self.setup_params = {}
         self.test_file = test_file
         self.test_data = None
@@ -290,8 +291,16 @@ class BaseModelTrainer:
         if getattr(self, "cross_validation_folds", None) is not None:
             compare_kwargs["fold"] = self.cross_validation_folds
 
+        best_metric = getattr(self, "best_model_metric", None)
+        if best_metric:
+            compare_kwargs["sort"] = best_metric
+            self._best_model_metric_used = best_metric
+            LOG.info(f"Ranking models using metric: {best_metric}")
+
         LOG.info(f"compare_models kwargs: {compare_kwargs}")
         self.best_model = self.exp.compare_models(**compare_kwargs)
+        if self._best_model_metric_used is None:
+            self._best_model_metric_used = getattr(self.exp, "_fold_metric", None)
         self.results = self.exp.pull()
         if getattr(self, "tune_model", False):
             LOG.info("Tuning hyperparameters of the best model")
@@ -462,8 +471,11 @@ class BaseModelTrainer:
             else:
                 dv = v if v is not None else "None"
             setup_rows.append([key, dv])
-        if hasattr(self.exp, "_fold_metric"):
-            setup_rows.append(["best_model_metric", self.exp._fold_metric])
+        metric_label = self._best_model_metric_used or getattr(
+            self.exp, "_fold_metric", None
+        )
+        if metric_label:
+            setup_rows.append(["best_model_metric", metric_label])
 
         df_setup = pd.DataFrame(setup_rows, columns=["Parameter", "Value"])
         df_setup.to_csv(
