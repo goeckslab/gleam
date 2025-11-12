@@ -150,6 +150,7 @@ class FeatureImportanceAnalyzer:
             max_features = feature_cap
         else:
             max_features = min(max_features, feature_cap)
+        display_features = list(X_data.columns)
 
         try:
             if hasattr(model, "feature_importances_"):
@@ -165,17 +166,18 @@ class FeatureImportanceAnalyzer:
                 variances = X_data.var()
                 top_features = variances.nlargest(max_features).index
 
-            if len(top_features) < n_features:
+            display_features = list(top_features)
+            if len(display_features) < n_features:
                 LOG.info(
-                    "Restricted SHAP computation to top %s of %s features",
-                    len(top_features),
+                    "Restricting SHAP display to top %s of %s features",
+                    len(display_features),
                     n_features,
                 )
-            X_data = X_data[top_features]
         except Exception as e:
             LOG.warning(
                 f"Feature limiting failed: {e}. Using all {n_features} features."
             )
+            display_features = list(X_data.columns)
 
         # --- Adaptive row subsampling ---
         if max_samples is None:
@@ -192,14 +194,17 @@ class FeatureImportanceAnalyzer:
 
         # --- Adaptive feature display ---
         display_cap = (
-            min(self.max_plot_features, X_data.shape[1])
+            min(self.max_plot_features, len(display_features))
             if self.max_plot_features is not None
-            else X_data.shape[1]
+            else len(display_features)
         )
         if max_display is None:
             max_display = display_cap
         else:
             max_display = min(max_display, display_cap)
+        if not display_features:
+            display_features = list(X_data.columns)
+            max_display = len(display_features)
 
         # Background set
         bg = X_data.sample(min(len(X_data), 100), random_state=42)
@@ -224,6 +229,28 @@ class FeatureImportanceAnalyzer:
             LOG.error(f"SHAP computation failed: {e}")
             self.shap_model_name = None
             return
+
+        # Reduce Explanation to selected features for plotting
+        if len(display_features) < n_features:
+            try:
+                shap_values = shap_values[:, display_features]
+                X_data = X_data[display_features]
+                LOG.info(
+                    "SHAP explanation trimmed to %s display features.",
+                    len(display_features),
+                )
+            except Exception as exc:
+                LOG.warning(
+                    "Failed to restrict SHAP explanation to top features "
+                    "(sample=%s); plot will include all features. Error: %s",
+                    display_features[:5],
+                    exc,
+                )
+                fallback_names = getattr(
+                    shap_values, "feature_names", list(X_data.columns)
+                )
+                display_features = list(fallback_names)
+                max_display = min(max_display, len(display_features))
 
         # --- Plot SHAP summary ---
         out_path = os.path.join(self.output_dir, "shap_summary.png")

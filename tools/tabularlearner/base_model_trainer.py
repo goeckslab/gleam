@@ -56,6 +56,8 @@ class BaseModelTrainer:
             setattr(self, key, value)
         if not hasattr(self, "plot_feature_limit"):
             self.plot_feature_limit = 30
+        self._numeric_fill_values = None
+        self._missing_value_strategy_effective = None
         self.setup_params = {}
         self.test_file = test_file
         self.test_data = None
@@ -132,22 +134,24 @@ class BaseModelTrainer:
         self.features_name = [n for n in names if n != self.target]
         self.plot_feature_names = self._select_plot_features(self.features_name)
 
-        if getattr(self, "missing_value_strategy", None):
-            strat = self.missing_value_strategy
-            if strat == "mean":
-                self.data = self.data.fillna(
-                    self.data.mean(numeric_only=True)
-                )
-            elif strat == "median":
-                self.data = self.data.fillna(
-                    self.data.median(numeric_only=True)
-                )
-            elif strat == "drop":
-                self.data = self.data.dropna()
+        strat = getattr(self, "missing_value_strategy", None)
+        self._missing_value_strategy_effective = strat or "median"
+        if self._missing_value_strategy_effective == "mean":
+            self._numeric_fill_values = self.data.mean(numeric_only=True)
+            self.data = self.data.fillna(self._numeric_fill_values)
+        elif self._missing_value_strategy_effective == "median":
+            self._numeric_fill_values = self.data.median(numeric_only=True)
+            self.data = self.data.fillna(self._numeric_fill_values)
+        elif self._missing_value_strategy_effective == "drop":
+            self.data = self.data.dropna()
         else:
-            self.data = self.data.fillna(
-                self.data.median(numeric_only=True)
+            LOG.warning(
+                "Unknown missing_value_strategy '%s'; defaulting to median.",
+                self._missing_value_strategy_effective,
             )
+            self._missing_value_strategy_effective = "median"
+            self._numeric_fill_values = self.data.median(numeric_only=True)
+            self.data = self.data.fillna(self._numeric_fill_values)
 
         if self.test_file:
             LOG.info(f"Loading test data from {self.test_file}")
@@ -155,6 +159,20 @@ class BaseModelTrainer:
                 self.test_file, sep=None, engine="python"
             )
             df_test.columns = df_test.columns.str.replace(".", "_")
+            if self._missing_value_strategy_effective == "drop":
+                before = len(df_test)
+                df_test = df_test.dropna()
+                LOG.info(
+                    "Dropped %s rows with NaNs from test data "
+                    "to match 'drop' missing value strategy.",
+                    before - len(df_test),
+                )
+            else:
+                if self._numeric_fill_values is None:
+                    self._numeric_fill_values = self.data.median(
+                        numeric_only=True
+                    )
+                df_test = df_test.fillna(self._numeric_fill_values)
             self.test_data = df_test
 
     def _select_plot_features(self, all_features):
