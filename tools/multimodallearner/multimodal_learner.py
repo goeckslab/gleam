@@ -95,29 +95,28 @@ def ensure_local_tmp():
 
 
 def normalize_image_args(args):
-    """Normalize legacy and plural image arguments on the parsed args object.
+    """Normalize image arguments on the parsed args object.
 
-    - `--image_columns` (list) and legacy `--image_column` (single) are merged
-      into `args.image_columns` as either a list or None.
-    - `--images_zips` (list) and legacy `--images_zip` (single) are merged
-      into `args.images_zips` as a list (possibly empty).
+    - `--image_columns` accepts comma-separated string or repeated args and is stored as a list.
+    - `--images_zips` becomes a clean list (commas or repeated values allowed).
     - `--image_folders` is filtered to existing directories only.
     The function mutates `args` in-place.
     """
-    # image_columns: prefer the explicit list, fall back to single legacy flag
-    if getattr(args, "image_columns", None):
-        img_cols = args.image_columns
-    elif getattr(args, "image_column", None):
-        img_cols = [args.image_column]
-    else:
-        img_cols = None
-    args.image_columns = img_cols
+    # Normalize image columns to a list or None
+    img_cols = args.image_columns
+    if isinstance(img_cols, str):
+        img_cols = [c.strip() for c in img_cols.split(",") if c.strip()]
+    elif img_cols is not None:
+        img_cols = [str(c).strip() for c in img_cols if str(c).strip()]
+    args.image_columns = img_cols or None
 
-    # images_zips: merge plural + legacy single into a cleaned list
-    zips = list(args.images_zips or [])
-    if getattr(args, "images_zip", None):
-        zips.append(args.images_zip)
-    args.images_zips = [z for z in zips if z]
+    # Normalize image zips into a list
+    zips = args.images_zips
+    if isinstance(zips, str):
+        zips = [z.strip() for z in zips.split(",") if z.strip()]
+    elif zips is not None:
+        zips = [str(z).strip() for z in zips if str(z).strip()]
+    args.images_zips = zips or []
 
     # image_folders: keep only paths that exist and are directories
     args.image_folders = [d for d in (args.image_folders or []) if d and os.path.isdir(d)]
@@ -138,9 +137,7 @@ def parse_args(argv=None):
 
     # Images (lists + legacy)
     parser.add_argument("--image_columns", dest="image_columns", nargs="+", default=None)
-    parser.add_argument("--image_column", dest="image_column", default=None)
     parser.add_argument("--images_zips", dest="images_zips", nargs="*", default=None)
-    parser.add_argument("--images_zip", dest="images_zip", default=None)
     parser.add_argument("--image_folders", dest="image_folders", nargs="*", default=None)
 
     # How to handle missing images: if true -> remove rows with missing images; if false -> inject placeholder image path
@@ -291,15 +288,20 @@ def main():
     ensure_local_tmp()
     enable_tensor_cores_if_available()
 
-    # Build base folders (extract zips first, highest priority)
+    # Build base folders (extract zips into a single shared directory first)
     base_folders: List[str] = list(args.image_folders or [])
-    for z in (args.images_zips or []):
-        if os.path.isfile(z):
-            extract_dir = tempfile.mkdtemp()
+    extracted_images_dir = None
+    if args.images_zips:
+        extracted_images_dir = tempfile.mkdtemp(prefix="images_zip_")
+        for z in args.images_zips:
+            if not os.path.isfile(z):
+                logger.warning(f"Image ZIP '{z}' does not exist or is not a file; skipping.")
+                continue
             with zipfile.ZipFile(z, "r") as zip_ref:
-                zip_ref.extractall(extract_dir)
-            base_folders.insert(0, extract_dir)
-            logger.info(f"Extracted images ZIP to {extract_dir}")
+                zip_ref.extractall(extracted_images_dir)
+            logger.info(f"Extracted '{z}' into shared directory {extracted_images_dir}")
+        if extracted_images_dir:
+            base_folders.insert(0, extracted_images_dir)
     base_folders.append(os.getcwd())
 
     # Load + split
@@ -331,9 +333,11 @@ def main():
                     logger.error(f"Missing image column '{c}' in {name} CSV")
                     sys.exit(1)
 
-    # Expand image paths
+    # Expand image paths to absolute locations for every dataframe copy we use downstream
     if args.image_columns:
-        for df_ in (df_train, df_val, df_test):
+        for df_ in (df_train, df_val, df_test, df_train_full):
+            if df_ is None:
+                continue
             for c in args.image_columns:
                 df_[c] = df_[c].astype(str).apply(lambda p: path_expander_any(p, base_folders))
 
@@ -725,6 +729,13 @@ def main():
     img_cols_display = ", ".join(image_cols) if image_cols else "—"
 
     exclude_cols = set(image_cols) | {label_col}
+    text_cols = [
+        c for c in df_train_full.columns
+        if c not in exclude_cols
+        and str(df_train_full[c].dtype) == "object"
+        and df_train_full[c].notna().any()
+    ]
+    text_cols_display = ", ".join(text_cols) if text_cols else "—"
     tabular_cols = [c for c in df_train_full.columns if c not in exclude_cols]
     tabular_count = len(tabular_cols)
 
@@ -819,6 +830,8 @@ def main():
     # Insert backbones immediately after model architecture if present
     if image_backbone:
         extra_run_rows.append(("Image backbone", image_backbone))
+    if text_modality_present:
+        extra_run_rows.append(("Text backbone", text_backbone or "—"))
     if structured_backbone:
         extra_run_rows.append(("Structured backbone", structured_backbone))
 
@@ -827,8 +840,8 @@ def main():
     extra_run_rows.append(("Label column", args.label_column))
     if image_modality_present:
         extra_run_rows.append(("Unstructured - Image", img_cols_display))
-    if text_modality_present:
-        extra_run_rows.append(("Unstructured - Text", text_backbone or "—"))
+    if text_cols or text_modality_present:
+        extra_run_rows.append(("Unstructured - Text", text_cols_display))
     if structured_modality_present:
         extra_run_rows.append(("Structured - numeric/categorical", str(tabular_count)))
     # Experiment quality (presets)
