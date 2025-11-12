@@ -393,8 +393,15 @@ def generate_html_report(title, ludwig_output_directory_name):
                     .groupby("label", as_index=False)
                     .head(5)
                 )
+                explanation_text = (
+                    "<p>Feature importance scores come from Ludwig's Integrated Gradients explainer. "
+                    "It interpolates between each example and a neutral baseline sample, summing "
+                    "the change in the model output along that path. Higher absolute values "
+                    "indicate stronger influence for the given label.</p>"
+                )
                 feature_importance_html = (
                     "<h2>Feature Importance</h2>"
+                    + explanation_text
                     + top_rows.to_html(index=False, border=0, classes="feature-importance-table")
                 )
         except Exception as exc:
