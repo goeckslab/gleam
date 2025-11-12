@@ -230,15 +230,16 @@ class FeatureImportanceAnalyzer:
             self.shap_model_name = None
             return
 
-        # Reduce Explanation to selected features for plotting
-        if len(display_features) < n_features:
+        def _limit_explanation_features(explanation):
+            if len(display_features) >= n_features:
+                return explanation
             try:
-                shap_values = shap_values[:, display_features]
-                X_data = X_data[display_features]
+                limited = explanation[:, display_features]
                 LOG.info(
                     "SHAP explanation trimmed to %s display features.",
                     len(display_features),
                 )
+                return limited
             except Exception as exc:
                 LOG.warning(
                     "Failed to restrict SHAP explanation to top features "
@@ -247,26 +248,71 @@ class FeatureImportanceAnalyzer:
                     exc,
                 )
                 fallback_names = getattr(
-                    shap_values, "feature_names", list(X_data.columns)
+                    explanation, "feature_names", list(X_data.columns)
                 )
-                display_features = list(fallback_names)
-                max_display = min(max_display, len(display_features))
+                # Keep using full feature list if trimming fails
+                return explanation
 
-        # --- Plot SHAP summary ---
-        out_path = os.path.join(self.output_dir, "shap_summary.png")
-        plt.figure()
-        shap.plots.beeswarm(shap_values, max_display=max_display, show=False)
-        plt.title(
-            f"SHAP Summary for {model.__class__.__name__} (top {max_display} features)"
-        )
-        plt.tight_layout()
-        plt.savefig(out_path, bbox_inches="tight")
-        plt.close()
-        self.plots["shap_summary"] = out_path
+        shap_shape = getattr(shap_values, "shape", None)
+        class_labels = list(getattr(model, "classes_", []))
+        shap_outputs = []
+        if shap_shape is not None and len(shap_shape) == 3:
+            output_count = shap_shape[2]
+            LOG.info("Detected multi-output SHAP explanation with %s classes.", output_count)
+            for class_idx in range(output_count):
+                try:
+                    class_expl = shap_values[..., class_idx]
+                except Exception as exc:
+                    LOG.warning(
+                        "Failed to extract SHAP explanation for class index %s: %s",
+                        class_idx,
+                        exc,
+                    )
+                    continue
+                label = (
+                    class_labels[class_idx]
+                    if class_labels and class_idx < len(class_labels)
+                    else class_idx
+                )
+                shap_outputs.append((class_idx, label, class_expl))
+        else:
+            shap_outputs.append((None, None, shap_values))
+
+        if not shap_outputs:
+            LOG.error("No SHAP outputs available for plotting.")
+            self.shap_model_name = None
+            return
+
+        # --- Plot SHAP summary (one per class if needed) ---
+        for class_idx, class_label, class_expl in shap_outputs:
+            expl_to_plot = _limit_explanation_features(class_expl)
+            suffix = ""
+            plot_key = "shap_summary"
+            if class_idx is not None:
+                safe_label = str(class_label).replace("/", "_").replace(" ", "_")
+                suffix = f"_class_{safe_label}"
+                plot_key = f"shap_summary_class_{safe_label}"
+            out_filename = f"shap_summary{suffix}.png"
+            out_path = os.path.join(self.output_dir, out_filename)
+            plt.figure()
+            shap.plots.beeswarm(expl_to_plot, max_display=max_display, show=False)
+            title = f"SHAP Summary for {model.__class__.__name__}"
+            if class_idx is not None:
+                title += f" (class {class_label})"
+            plt.title(f"{title} (top {max_display} features)")
+            plt.tight_layout()
+            plt.savefig(out_path, bbox_inches="tight")
+            plt.close()
+            self.plots[plot_key] = out_path
 
         # --- Log summary ---
         LOG.info(
-            f"SHAP summary completed with {X_data.shape[0]} rows and {X_data.shape[1]} features (displaying top {max_display})."
+            "SHAP summary completed with %s rows and %s features "
+            "(displaying top %s) across %s output(s).",
+            X_data.shape[0],
+            X_data.shape[1],
+            max_display,
+            len(shap_outputs),
         )
 
     def generate_html_report(self):
@@ -285,6 +331,12 @@ class FeatureImportanceAnalyzer:
             elif plot_name == "shap_summary":
                 section_title = (
                     f"SHAP Summary from {getattr(self, 'shap_model_name', 'model')}"
+                )
+            elif plot_name.startswith("shap_summary_class_"):
+                class_label = plot_name.replace("shap_summary_class_", "")
+                section_title = (
+                    f"SHAP Summary for class {class_label} "
+                    f"({getattr(self, 'shap_model_name', 'model')})"
                 )
             else:
                 section_title = plot_name
