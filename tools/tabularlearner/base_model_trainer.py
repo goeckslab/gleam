@@ -199,28 +199,6 @@ class BaseModelTrainer:
         self.exp.setup(self.data, **self.setup_params)
         self.setup_params.update(self.user_kwargs)
 
-    def _normalize_metric(self, m: str) -> str:
-        if not m:
-            return "R2" if self.task_type == "regression" else "Accuracy"
-        m_low = str(m).strip().lower()
-        alias = {
-            "auc": "AUC", "roc_auc": "AUC", "roc-auc": "AUC",
-            "accuracy": "Accuracy",
-            "precision": "Precision",
-            "recall": "Recall",
-            "f1": "F1",
-            "kappa": "Kappa",
-            "logloss": "Log Loss", "log_loss": "Log Loss",
-            "pr_auc": "PR-AUC-Weighted", "prauc": "PR-AUC-Weighted",
-            "r2": "R2",
-            "mae": "MAE",
-            "mse": "MSE",
-            "rmse": "RMSE",
-            "rmsle": "RMSLE",
-            "mape": "MAPE",
-        }
-        return alias.get(m_low, m)
-
     def train_model(self):
         LOG.info("Training and selecting the best model")
         if self.task_type == "classification":
@@ -243,15 +221,6 @@ class BaseModelTrainer:
         # Respect explicit fold count
         if getattr(self, "cross_validation_folds", None) is not None:
             compare_kwargs["fold"] = self.cross_validation_folds
-
-        chosen_metric = self._normalize_metric(getattr(self, "best_model_metric", None))
-        if chosen_metric:
-            compare_kwargs["sort"] = chosen_metric
-            self.chosen_metric_label = chosen_metric
-            try:
-                setattr(self.exp, "_fold_metric", chosen_metric)
-            except Exception as e:
-                LOG.warning(f"Failed to set '_fold_metric' to '{chosen_metric}': {e}", exc_info=True)
 
         LOG.info(f"compare_models kwargs: {compare_kwargs}")
         self.best_model = self.exp.compare_models(**compare_kwargs)
@@ -325,6 +294,31 @@ class BaseModelTrainer:
     def encode_image_to_base64(self, img_path: str) -> str:
         with open(img_path, "rb") as img_file:
             return base64.b64encode(img_file.read()).decode("utf-8")
+
+    def _resolve_plot_callable(self, key, fig_or_fn, section):
+        """
+        Safely execute stored plot callables so a single failure does not
+        abort the entire HTML report generation.
+        """
+        if fig_or_fn is None:
+            return None
+        try:
+            return fig_or_fn() if callable(fig_or_fn) else fig_or_fn
+        except Exception as exc:
+            extra = ""
+            if isinstance(exc, ValueError) and "Input contains NaN" in str(exc):
+                extra = (
+                    " (model returned NaN probabilities; "
+                    "consider checking data preprocessing)"
+                )
+            LOG.warning(
+                "Skipping %s plot '%s' due to error: %s%s",
+                section,
+                key,
+                exc,
+                extra,
+            )
+            return None
 
     def save_html_report(self):
         LOG.info("Saving HTML report")
@@ -400,8 +394,8 @@ class BaseModelTrainer:
             else:
                 dv = v if v is not None else "None"
             setup_rows.append([key, dv])
-        if getattr(self, "chosen_metric_label", None):
-            setup_rows.append(["Best Model Metric", self.chosen_metric_label])
+        if hasattr(self.exp, "_fold_metric"):
+            setup_rows.append(["best_model_metric", self.exp._fold_metric])
 
         df_setup = pd.DataFrame(setup_rows, columns=["Parameter", "Value"])
         df_setup.to_csv(
@@ -569,7 +563,11 @@ class BaseModelTrainer:
         for key in test_order:
             fig_or_fn = self.explainer_plots.pop(key, None)
             if fig_or_fn is not None:
-                fig = fig_or_fn() if callable(fig_or_fn) else fig_or_fn
+                fig = self._resolve_plot_callable(
+                    key, fig_or_fn, section="test/explainer"
+                )
+                if fig is None:
+                    continue
                 title = plot_title_map.get(
                     key, key.replace("_", " ").title()
                 )
@@ -642,7 +640,11 @@ class BaseModelTrainer:
         for key in ["shap_mean", "shap_perm"]:
             fig_or_fn = self.explainer_plots.pop(key, None)
             if fig_or_fn is not None:
-                fig = fig_or_fn() if callable(fig_or_fn) else fig_or_fn
+                fig = self._resolve_plot_callable(
+                    key, fig_or_fn, section="feature importance"
+                )
+                if fig is None:
+                    continue
                 # give SHAP plots explicit titles
                 title = (
                     "Mean Absolute SHAP Value Impact"
@@ -660,7 +662,11 @@ class BaseModelTrainer:
         )
         for k in pdp_keys:
             fig_or_fn = self.explainer_plots[k]
-            fig = fig_or_fn() if callable(fig_or_fn) else fig_or_fn
+            fig = self._resolve_plot_callable(
+                k, fig_or_fn, section="pdp"
+            )
+            if fig is None:
+                continue
             # extract feature name
             feature = k.split("__", 1)[1]
             title = f"Partial Dependence for {feature}"
