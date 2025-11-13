@@ -247,9 +247,6 @@ class FeatureImportanceAnalyzer:
                     display_features[:5],
                     exc,
                 )
-                fallback_names = getattr(
-                    explanation, "feature_names", list(X_data.columns)
-                )
                 # Keep using full feature list if trimming fails
                 return explanation
 
