@@ -475,7 +475,7 @@ class BaseModelTrainer:
             self.exp, "_fold_metric", None
         )
         if metric_label:
-            setup_rows.append(["best_model_metric", metric_label])
+            setup_rows.append(["Best Model Metric", metric_label])
 
         df_setup = pd.DataFrame(setup_rows, columns=["Parameter", "Value"])
         df_setup.to_csv(

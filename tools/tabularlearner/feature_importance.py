@@ -213,22 +213,78 @@ class FeatureImportanceAnalyzer:
         )
 
         # Optimized explainer
+        explainer = None
+        explainer_label = None
         if hasattr(model, "feature_importances_"):
             explainer = shap.TreeExplainer(
                 model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
             )
+            explainer_label = "tree_path_dependent"
         elif hasattr(model, "coef_"):
             explainer = shap.LinearExplainer(model, bg)
+            explainer_label = "linear"
         else:
             explainer = shap.Explainer(predict_fn, bg)
+            explainer_label = explainer.__class__.__name__
 
         try:
             shap_values = explainer(X_data)
             self.shap_model_name = explainer.__class__.__name__
         except Exception as e:
-            LOG.error(f"SHAP computation failed: {e}")
-            self.shap_model_name = None
-            return
+            error_message = str(e)
+            needs_tree_fallback = (
+                hasattr(model, "feature_importances_")
+                and "does not cover all the leaves" in error_message.lower()
+            )
+            feature_name_mismatch = "feature names should match" in error_message.lower()
+            if needs_tree_fallback:
+                LOG.warning(
+                    "SHAP computation failed using '%s' perturbation (%s). "
+                    "Retrying with interventional perturbation.",
+                    explainer_label,
+                    error_message,
+                )
+                try:
+                    explainer = shap.TreeExplainer(
+                        model,
+                        bg,
+                        feature_perturbation="interventional",
+                        n_jobs=-1,
+                    )
+                    shap_values = explainer(X_data)
+                    self.shap_model_name = (
+                        f"{explainer.__class__.__name__} (interventional)"
+                    )
+                except Exception as retry_exc:
+                    LOG.error(
+                        "SHAP computation failed even after fallback: %s",
+                        retry_exc,
+                    )
+                    self.shap_model_name = None
+                    return
+            elif feature_name_mismatch:
+                LOG.warning(
+                    "SHAP computation failed due to feature-name mismatch (%s). "
+                    "Falling back to model-agnostic SHAP explainer.",
+                    error_message,
+                )
+                try:
+                    agnostic_explainer = shap.Explainer(predict_fn, bg)
+                    shap_values = agnostic_explainer(X_data)
+                    self.shap_model_name = (
+                        f"{agnostic_explainer.__class__.__name__} (fallback)"
+                    )
+                except Exception as fallback_exc:
+                    LOG.error(
+                        "Model-agnostic SHAP fallback also failed: %s",
+                        fallback_exc,
+                    )
+                    self.shap_model_name = None
+                    return
+            else:
+                LOG.error(f"SHAP computation failed: {e}")
+                self.shap_model_name = None
+                return
 
         def _limit_explanation_features(explanation):
             if len(display_features) >= n_features:
