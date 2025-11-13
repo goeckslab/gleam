@@ -77,6 +77,7 @@ def load_metadata_table(file_path: Path) -> pd.DataFrame:
         )
         return pd.read_csv(file_path, sep=None, engine="python")
 
+
 # Optional MetaFormer configuration registry
 META_DEFAULT_CFGS: Dict[str, Any] = {}
 try:
@@ -1634,7 +1635,6 @@ class ImageLearnerCLI:
         missing = required - set(df.columns)
         if missing:
             raise ValueError(f"Missing CSV columns: {', '.join(missing)}")
-
 
         try:
             # Use relative paths that Ludwig can resolve from its internal working directory
