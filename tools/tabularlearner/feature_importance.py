@@ -23,6 +23,7 @@ class FeatureImportanceAnalyzer:
         exp=None,
         best_model=None,
         max_plot_features=None,
+        processed_data=None,
     ):
         self.task_type = task_type
         self.output_dir = output_dir
@@ -56,6 +57,8 @@ class FeatureImportanceAnalyzer:
                 if task_type == "classification"
                 else RegressionExperiment()
             )
+        if processed_data is not None:
+            self.data = processed_data
 
         self.plots = {}
 

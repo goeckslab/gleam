@@ -56,8 +56,7 @@ class BaseModelTrainer:
             setattr(self, key, value)
         if not hasattr(self, "plot_feature_limit"):
             self.plot_feature_limit = 30
-        self._numeric_fill_values = None
-        self._missing_value_strategy_effective = None
+        self.imputed_training_data = None
         self._best_model_metric_used = None
         self.setup_params = {}
         self.test_file = test_file
@@ -135,45 +134,12 @@ class BaseModelTrainer:
         self.features_name = [n for n in names if n != self.target]
         self.plot_feature_names = self._select_plot_features(self.features_name)
 
-        strat = getattr(self, "missing_value_strategy", None)
-        self._missing_value_strategy_effective = strat or "median"
-        if self._missing_value_strategy_effective == "mean":
-            self._numeric_fill_values = self.data.mean(numeric_only=True)
-            self.data = self.data.fillna(self._numeric_fill_values)
-        elif self._missing_value_strategy_effective == "median":
-            self._numeric_fill_values = self.data.median(numeric_only=True)
-            self.data = self.data.fillna(self._numeric_fill_values)
-        elif self._missing_value_strategy_effective == "drop":
-            self.data = self.data.dropna()
-        else:
-            LOG.warning(
-                "Unknown missing_value_strategy '%s'; defaulting to median.",
-                self._missing_value_strategy_effective,
-            )
-            self._missing_value_strategy_effective = "median"
-            self._numeric_fill_values = self.data.median(numeric_only=True)
-            self.data = self.data.fillna(self._numeric_fill_values)
-
         if self.test_file:
             LOG.info(f"Loading test data from {self.test_file}")
             df_test = pd.read_csv(
                 self.test_file, sep=None, engine="python"
             )
             df_test.columns = df_test.columns.str.replace(".", "_")
-            if self._missing_value_strategy_effective == "drop":
-                before = len(df_test)
-                df_test = df_test.dropna()
-                LOG.info(
-                    "Dropped %s rows with NaNs from test data "
-                    "to match 'drop' missing value strategy.",
-                    before - len(df_test),
-                )
-            else:
-                if self._numeric_fill_values is None:
-                    self._numeric_fill_values = self.data.median(
-                        numeric_only=True
-                    )
-                df_test = df_test.fillna(self._numeric_fill_values)
             self.test_data = df_test
 
     def _select_plot_features(self, all_features):
@@ -266,7 +232,41 @@ class BaseModelTrainer:
             )
 
         self.exp.setup(self.data, **self.setup_params)
+        self._capture_imputed_training_data()
         self.setup_params.update(self.user_kwargs)
+
+    def _capture_imputed_training_data(self):
+        """
+        Cache the dataset as transformed/imputed by PyCaret so downstream
+        components (e.g., feature importance) can operate on the exact data
+        used for training.
+        """
+        if self.exp is None:
+            return
+        try:
+            X_processed = self.exp.get_config("X_transformed").copy()
+            y_processed = self.exp.get_config("y")
+            if isinstance(y_processed, pd.Series):
+                y_series = y_processed.reset_index(drop=True)
+            else:
+                y_series = pd.Series(y_processed)
+            y_series.name = self.target
+            X_processed = X_processed.reset_index(drop=True)
+            self.imputed_training_data = pd.concat(
+                [X_processed, y_series], axis=1
+            )
+            LOG.info(
+                "Captured imputed training dataset from PyCaret "
+                "(%s rows, %s features).",
+                self.imputed_training_data.shape[0],
+                self.imputed_training_data.shape[1] - 1,
+            )
+        except Exception as exc:
+            LOG.warning(
+                "Unable to capture processed training data from PyCaret: %s",
+                exc,
+            )
+            self.imputed_training_data = None
 
     def train_model(self):
         LOG.info("Training and selecting the best model")
@@ -707,14 +707,20 @@ class BaseModelTrainer:
         feature_html = header
 
         # 6a) PyCaret’s default feature importances
+        imputed_data = (
+            self.imputed_training_data
+            if self.imputed_training_data is not None
+            else self.data
+        )
         feature_html += FeatureImportanceAnalyzer(
-            data=self.data,
+            data=imputed_data,
             target_col=self.target_col,
             task_type=self.task_type,
             output_dir=self.output_dir,
             exp=self.exp,
             best_model=self.best_model,
             max_plot_features=self.plot_feature_limit,
+            processed_data=self.imputed_training_data,
         ).run()
 
         # 6b) Explainer SHAP importances
