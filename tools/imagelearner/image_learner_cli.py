@@ -51,6 +51,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger("ImageLearner")
 
+
+def load_metadata_table(file_path: Path) -> pd.DataFrame:
+    """Load image metadata allowing either CSV or TSV delimiters."""
+    logging.info("Loading data")
+    return pd.read_csv(file_path, sep=None, engine="python")
+
+
 # Optional MetaFormer configuration registry
 META_DEFAULT_CFGS: Dict[str, Any] = {}
 try:
@@ -844,16 +851,31 @@ class LudwigDirectBackend:
 
         label_column_path = config_params.get("label_column_data_path")
         label_series = None
+        num_unique_labels = 2
+        numeric_binary_labels = False
         if label_column_path is not None and Path(label_column_path).exists():
             try:
                 label_series = pd.read_csv(label_column_path)[LABEL_COLUMN_NAME]
+                non_na = label_series.dropna()
+                if not non_na.empty:
+                    num_unique_labels = non_na.nunique()
+                numeric_binary_labels = (
+                    ptypes.is_numeric_dtype(label_series.dtype)
+                    and num_unique_labels == 2
+                )
+                if numeric_binary_labels:
+                    logger.info(
+                        "Detected numeric binary labels in '%s'; configuring Ludwig for binary classification.",
+                        LABEL_COLUMN_NAME,
+                    )
             except Exception as e:
                 logger.warning(f"Could not read label column for task detection: {e}")
 
         if (
             label_series is not None
             and ptypes.is_numeric_dtype(label_series.dtype)
-            and label_series.nunique() > 10
+            and not numeric_binary_labels
+            and num_unique_labels > 10
         ):
             task_type = "regression"
         else:
@@ -938,9 +960,6 @@ class LudwigDirectBackend:
             val_metric = config_params.get("validation_metric", "mean_squared_error")
 
         else:
-            num_unique_labels = (
-                label_series.nunique() if label_series is not None else 2
-            )
             output_type = "binary" if num_unique_labels == 2 else "category"
             # Determine if this is regression or classification based on label type
             is_regression = (
@@ -1586,10 +1605,10 @@ class ImageLearnerCLI:
             raise RuntimeError("Temp dirs not initialized before data prep.")
 
         try:
-            df = pd.read_csv(self.args.csv_file)
-            logger.info(f"Loaded CSV: {self.args.csv_file}")
+            df = load_metadata_table(self.args.csv_file)
+            logger.info(f"Loaded metadata file: {self.args.csv_file}")
         except Exception:
-            logger.error("Error loading CSV file", exc_info=True)
+            logger.error("Error loading metadata file", exc_info=True)
             raise
 
         required = {IMAGE_PATH_COLUMN_NAME, LABEL_COLUMN_NAME}
@@ -1893,7 +1912,7 @@ def main():
         "--csv-file",
         required=True,
         type=Path,
-        help="Path to the input CSV",
+        help="Path to the input metadata file (CSV, TSV, etc)",
     )
     parser.add_argument(
         "--image-zip",
@@ -2011,7 +2030,7 @@ def main():
     if not 0.0 <= args.validation_size <= 1.0:
         parser.error("validation-size must be between 0.0 and 1.0")
     if not args.csv_file.is_file():
-        parser.error(f"CSV not found: {args.csv_file}")
+        parser.error(f"Metada file not found: {args.csv_file}")
     if not (args.image_zip.is_file() or args.image_zip.is_dir()):
         parser.error(f"ZIP or directory not found: {args.image_zip}")
     if args.augmentation is not None:
