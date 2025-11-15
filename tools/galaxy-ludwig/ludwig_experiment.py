@@ -210,8 +210,8 @@ def _load_dataset_dataframe(dataset_path):
 
 
 def sanitize_feature_name(name):
-    """Mirror Ludwig's feature-name sanitization by replacing non-word chars with underscores."""
-    return re.sub(r"\W", "_", str(name))
+    """Mirror Ludwig's get_sanitized_feature_name implementation."""
+    return re.sub(r"[(){}.:\"\"''\[\]]", "_", str(name))
 
 
 def _sanitize_dataframe_columns(dataframe):
