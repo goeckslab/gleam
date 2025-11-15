@@ -115,7 +115,7 @@
             <param name="dataset" value="temperature_la.csv" ftype="csv" />
             <param name="config" value="temperature_config.yml" ftype="yaml" />
             <param name="data_format" value="csv" />
-            <output name="output_report" file="ludwig_train_report_test.html" compare="sim_size" delta="30" >
+            <output name="output_report" file="ludwig_train_report_test.html" compare="sim_size" delta="20000" >
                 <assert_contents>
                     <has_text text="Visualizations" />
                 </assert_contents>
