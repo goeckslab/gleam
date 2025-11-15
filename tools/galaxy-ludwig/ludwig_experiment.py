@@ -210,7 +210,8 @@ def _load_dataset_dataframe(dataset_path):
 
 
 def sanitize_feature_name(name):
-    return re.sub(r"[(){}.:\"'\[\]]", "_", str(name))
+    """Mirror Ludwig's feature-name sanitization by replacing non-word chars with underscores."""
+    return re.sub(r"\W", "_", str(name))
 
 
 def _sanitize_dataframe_columns(dataframe):
@@ -393,6 +394,7 @@ def compute_feature_importance(ludwig_output_directory_name,
 
     LOG.info(f"Feature importance saved to {output_csv_path}")
 
+
 def generate_html_report(title, ludwig_output_directory_name):
     plots_html = ""
     plot_files = []
@@ -439,7 +441,7 @@ def generate_html_report(title, ludwig_output_directory_name):
                             f'<div class="plot feature-importance-plot">'
                             f'<h3>Top features for {label}</h3>'
                             f'<img src="data:image/png;base64,{encoded_plot}" '
-                            f'alt="Feature importance plot for {label}">' 
+                            f'alt="Feature importance plot for {label}">'
                             f'</div>'
                         )
                 explanation_text = (
