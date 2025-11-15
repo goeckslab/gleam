@@ -1,8 +1,11 @@
+import base64
 import json
 import logging
 import os
 import pickle
+import re
 import sys
+from io import BytesIO
 
 import pandas as pd
 from ludwig.api import LudwigModel
@@ -21,6 +24,11 @@ from utils import (
     get_html_closing,
     get_html_template
 )
+
+try:  # pragma: no cover - optional dependency in runtime containers
+    import matplotlib.pyplot as plt
+except ImportError:  # pragma: no cover
+    plt = None
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -201,6 +209,46 @@ def _load_dataset_dataframe(dataset_path):
     return None
 
 
+def sanitize_feature_name(name):
+    return re.sub(r"[(){}.:\"'\[\]]", "_", str(name))
+
+
+def _sanitize_dataframe_columns(dataframe):
+    """Rename dataframe columns to Ludwig-sanitized names for explainability."""
+    column_map = {col: sanitize_feature_name(col) for col in dataframe.columns}
+
+    sanitized_df = dataframe.rename(columns=column_map)
+    if len(set(column_map.values())) != len(column_map.values()):
+        LOG.warning(
+            "Column name collision after sanitization; feature importance may be unreliable"
+        )
+
+    return sanitized_df
+
+
+def _feature_importance_plot(label_df, label_name, top_n=10):
+    """Return base64-encoded bar plot for a label's top-N feature importances."""
+    if plt is None or label_df.empty:
+        return ""
+
+    top_features = label_df.nlargest(top_n, "abs_importance")
+    if top_features.empty:
+        return ""
+
+    fig, ax = plt.subplots(figsize=(6, 3 + 0.2 * len(top_features)))
+    ax.barh(top_features["feature"], top_features["abs_importance"], color="#3f8fd2")
+    ax.set_xlabel("|importance|")
+    ax.set_title(f"{label_name} (absolute)")
+    ax.invert_yaxis()
+    fig.tight_layout()
+
+    buf = BytesIO()
+    fig.savefig(buf, format="png", dpi=150)
+    plt.close(fig)
+    encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return encoded
+
+
 def compute_feature_importance(ludwig_output_directory_name,
                                sample_size=200,
                                random_seed=42):
@@ -246,6 +294,8 @@ def compute_feature_importance(ludwig_output_directory_name,
             ludwig_model.close()
         return
 
+    dataframe = _sanitize_dataframe_columns(dataframe)
+
     data_subset = dataframe if len(dataframe) <= sample_size else dataframe.head(sample_size)
     sample_df = dataframe.sample(
         n=min(sample_size, len(dataframe)),
@@ -261,12 +311,14 @@ def compute_feature_importance(ludwig_output_directory_name,
             ludwig_model.close()
         return
 
+    sanitized_output_feature = sanitize_feature_name(output_feature_name)
+
     try:
         explainer = IntegratedGradientsExplainer(
             ludwig_model,
             data_subset,
             sample_df,
-            output_feature_name,
+            sanitized_output_feature,
         )
         explanations = explainer.explain()
     except Exception as exc:
@@ -284,7 +336,7 @@ def compute_feature_importance(ludwig_output_directory_name,
     label_names = []
     target_metadata = {}
     if isinstance(training_metadata, dict):
-        target_metadata = training_metadata.get(output_feature_name, {})
+        target_metadata = training_metadata.get(sanitized_output_feature, {})
 
     if isinstance(target_metadata, dict):
         if "idx2str" in target_metadata:
@@ -342,23 +394,6 @@ def compute_feature_importance(ludwig_output_directory_name,
     LOG.info(f"Feature importance saved to {output_csv_path}")
 
 def generate_html_report(title, ludwig_output_directory_name):
-    # ludwig_output_directory = os.path.join(
-    #     output_directory, ludwig_output_directory_name)
-
-    # test_statistics_html = ""
-    # # Read test statistics JSON and convert to HTML table
-    # try:
-    #     test_statistics_path = os.path.join(
-    #         ludwig_output_directory, TEST_STATISTICS_FILE_NAME)
-    #     with open(test_statistics_path, "r") as f:
-    #         test_statistics = json.load(f)
-    #     test_statistics_html = "<h2>Test Statistics</h2>"
-    #     test_statistics_html += json_to_html_table(
-    #         test_statistics)
-    # except Exception as e:
-    #     LOG.info(f"Error reading test statistics: {e}")
-
-    # Convert visualizations to HTML
     plots_html = ""
     plot_files = []
     if os.path.isdir(viz_output_directory):
@@ -369,11 +404,12 @@ def generate_html_report(title, ludwig_output_directory_name):
         plot_path = os.path.join(viz_output_directory, plot_file)
         if os.path.isfile(plot_path) and plot_file.endswith((".png", ".jpg")):
             encoded_image = encode_image_to_base64(plot_path)
+            plot_title = os.path.splitext(plot_file)[0].replace("_", " ")
             plots_html += (
                 f'<div class="plot">'
-                f'<h3>{os.path.splitext(plot_file)[0]}</h3>'
+                f'<h3>{plot_title}</h3>'
                 '<img src="data:image/png;base64,'
-                f'{encoded_image}" alt="{plot_file}">' 
+                f'{encoded_image}" alt="{plot_file}">'
                 f'</div>'
             )
 
@@ -393,6 +429,19 @@ def generate_html_report(title, ludwig_output_directory_name):
                     .groupby("label", as_index=False)
                     .head(5)
                 )
+                plot_sections = []
+                for label in sorted(importance_df["label"].unique()):
+                    encoded_plot = _feature_importance_plot(
+                        importance_df[importance_df["label"] == label], label
+                    )
+                    if encoded_plot:
+                        plot_sections.append(
+                            f'<div class="plot feature-importance-plot">'
+                            f'<h3>Top features for {label}</h3>'
+                            f'<img src="data:image/png;base64,{encoded_plot}" '
+                            f'alt="Feature importance plot for {label}">' 
+                            f'</div>'
+                        )
                 explanation_text = (
                     "<p>Feature importance scores come from Ludwig's Integrated Gradients explainer. "
                     "It interpolates between each example and a neutral baseline sample, summing "
@@ -403,16 +452,96 @@ def generate_html_report(title, ludwig_output_directory_name):
                     "<h2>Feature Importance</h2>"
                     + explanation_text
                     + top_rows.to_html(index=False, border=0, classes="feature-importance-table")
+                    + "".join(plot_sections)
                 )
         except Exception as exc:
             LOG.info(f"Unable to embed feature importance table: {exc}")
 
     # Generate the full HTML content
+    feature_section = feature_importance_html or "<p>No feature importance artifacts were generated.</p>"
+    viz_section = plots_html or "<p>No visualizations were generated.</p>"
+    tabs_style = """
+    <style>
+        .tabs {
+            display: flex;
+            border-bottom: 2px solid #ccc;
+            margin-top: 20px;
+            margin-bottom: 1rem;
+        }
+        .tablink {
+            padding: 9px 18px;
+            cursor: pointer;
+            border: 1px solid #ccc;
+            border-bottom: none;
+            background: #f9f9f9;
+            margin-right: 5px;
+            border-top-left-radius: 8px;
+            border-top-right-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 500;
+            font-family: Arial, sans-serif;
+            color: #4A4A4A;
+        }
+        .tablink.active {
+            background: #ffffff;
+            font-weight: bold;
+        }
+        .tabcontent {
+            border: 1px solid #ccc;
+            border-top: none;
+            padding: 20px;
+            display: none;
+        }
+        .tabcontent.active {
+            display: block;
+        }
+    </style>
+    """
+    tabs_script = """
+    <script>
+        function openTab(evt, tabId) {
+            var i, tabcontent, tablinks;
+            tabcontent = document.getElementsByClassName("tabcontent");
+            for (i = 0; i < tabcontent.length; i++) {
+                tabcontent[i].style.display = "none";
+                tabcontent[i].classList.remove("active");
+            }
+            tablinks = document.getElementsByClassName("tablink");
+            for (i = 0; i < tablinks.length; i++) {
+                tablinks[i].classList.remove("active");
+            }
+            var current = document.getElementById(tabId);
+            if (current) {
+                current.style.display = "block";
+                current.classList.add("active");
+            }
+            if (evt && evt.currentTarget) {
+                evt.currentTarget.classList.add("active");
+            }
+        }
+        document.addEventListener("DOMContentLoaded", function() {
+            openTab({currentTarget: document.querySelector(".tablink")}, "viz-tab");
+        });
+    </script>
+    """
+    tabs_html = f"""
+    <div class="tabs">
+        <button class="tablink active" onclick="openTab(event, 'viz-tab')">Visualizations</button>
+        <button class="tablink" onclick="openTab(event, 'feature-tab')">Feature Importance</button>
+    </div>
+    <div id="viz-tab" class="tabcontent active">
+        {viz_section}
+    </div>
+    <div id="feature-tab" class="tabcontent">
+        {feature_section}
+    </div>
+    """
     html_content = f"""
     {get_html_template()}
         <h1>{title}</h1>
-        {feature_importance_html}
-        {plots_html}
+        {tabs_style}
+        {tabs_html}
+        {tabs_script}
     {get_html_closing()}
     """
 

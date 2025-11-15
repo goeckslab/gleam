@@ -1,0 +1,12 @@
+input_features:
+  - name: RPL23AP24
+    type: number
+  - name: RP11-206L10.9
+    type: number
+  - name: RP11-465B22.8
+    type: number
+output_features:
+  - name: AGE_CAT
+    type: category
+trainer:
+  epochs: 2

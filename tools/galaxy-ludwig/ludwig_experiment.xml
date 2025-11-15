@@ -148,6 +148,23 @@
                 </element>
             </output_collection>
         </test>
+        <test expect_num_outputs="3">
+            <param name="dataset" value="breast_sample.csv" ftype="csv" />
+            <param name="config" value="breast_config.yml" ftype="yaml" />
+            <param name="data_format" value="csv" />
+            <output name="output_report" file="ludwig_experiment_report_test_breast.html" compare="sim_size" delta="20000" >
+                <assert_contents>
+                    <has_text text="Feature Importance" />
+                </assert_contents>
+            </output>
+            <output_collection name="output_pred_csv" type="list">
+                <element name="predictions_parquet.csv">
+                    <assert_contents>
+                        <has_n_columns n="1" />
+                    </assert_contents>
+                </element>
+            </output_collection>
+        </test>
     </tests>
     <help>
         <![CDATA[
