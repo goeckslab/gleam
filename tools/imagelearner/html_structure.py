@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 from constants import METRIC_DISPLAY_NAMES
 from utils import detect_output_type, extract_metrics_from_json
 
+
 def generate_table_row(cells, styles):
     """Helper function to generate an HTML table row."""
     return (
@@ -174,6 +175,7 @@ def format_config_table_html(
         </p><hr>
         """
     return html
+
 
 def get_html_template():
     """

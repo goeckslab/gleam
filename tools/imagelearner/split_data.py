@@ -74,6 +74,7 @@ def split_data_0_2(
     out[split_column] = out[split_column].astype(int)
     return out
 
+
 def create_stratified_random_split(
     df: pd.DataFrame,
     split_column: str,

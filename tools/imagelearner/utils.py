@@ -12,6 +12,7 @@ def load_metadata_table(file_path: Path) -> pd.DataFrame:
     logger.info("Loading metadata table from %s", file_path)
     return pd.read_csv(file_path, sep=None, engine="python")
 
+
 def detect_output_type(test_stats):
     """Detects if the output type is 'binary' or 'category' based on test statistics."""
     label_stats = test_stats.get("label", {})
@@ -21,6 +22,7 @@ def detect_output_type(test_stats):
     if len(per_class) == 2:
         return "binary"
     return "category"
+
 
 def aug_parse(aug_string: str):
     """
@@ -46,6 +48,7 @@ def aug_parse(aug_string: str):
         aug_list.append(mapping[key])
     return aug_list
 
+
 def argument_checker(args, parser):
   if not 0.0 <= args.validation_size <= 1.0:
     parser.error("validation-size must be between 0.0 and 1.0")
@@ -60,11 +63,13 @@ def argument_checker(args, parser):
     except ValueError as e:
       parser.error(str(e))
 
+
 def parse_learning_rate(s):
     try:
         return float(s)
     except (TypeError, ValueError):
         return None
+
 
 def extract_metrics_from_json(
     train_stats: dict,

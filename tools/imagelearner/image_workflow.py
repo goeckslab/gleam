@@ -1,3 +1,4 @@
+import argparse
 import logging
 import os
 import shutil
@@ -7,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
+import pandas.api.types as ptypes
 
 from constants import (
     IMAGE_PATH_COLUMN_NAME,
@@ -32,6 +34,8 @@ class ImageLearnerCLI:
         self.backend = backend
         self.temp_dir: Optional[Path] = None
         self.image_extract_dir: Optional[Path] = None
+        self.label_metadata: Dict[str, Any] = {}
+        self.output_type_hint: Optional[str] = None
         logger.info(f"Orchestrator initialized with backend: {type(backend).__name__}")
 
     def _create_temp_dirs(self) -> None:
@@ -162,14 +166,45 @@ class ImageLearnerCLI:
         final_csv = self.temp_dir / TEMP_CSV_FILENAME
 
         try:
-
             df.to_csv(final_csv, index=False)
             logger.info(f"Saved prepared data to {final_csv}")
         except Exception:
             logger.error("Error saving prepared CSV", exc_info=True)
             raise
 
+        self._capture_label_metadata(df)
+
         return final_csv, split_config, split_info
+
+    def _capture_label_metadata(self, df: pd.DataFrame) -> None:
+        """Record basic statistics about the label column for downstream hints."""
+        metadata: Dict[str, Any] = {}
+        try:
+            series = df[LABEL_COLUMN_NAME]
+            non_na = series.dropna()
+            unique_values = non_na.unique().tolist()
+            num_unique = int(len(unique_values))
+            is_numeric = bool(ptypes.is_numeric_dtype(series.dtype))
+            metadata = {
+                "num_unique": num_unique,
+                "dtype": str(series.dtype),
+                "unique_values_preview": [str(v) for v in unique_values[:10]],
+                "is_numeric": is_numeric,
+                "is_binary": num_unique == 2,
+                "is_numeric_binary": is_numeric and num_unique == 2,
+                "likely_regression": bool(is_numeric and num_unique > 10),
+            }
+            if metadata["is_binary"]:
+                logger.info(
+                    "Detected binary label column with unique values: %s",
+                    metadata["unique_values_preview"],
+                )
+        except Exception:
+            logger.warning("Unable to capture label metadata.", exc_info=True)
+            metadata = {}
+
+        self.label_metadata = metadata
+        self.output_type_hint = "binary" if metadata.get("is_binary") else None
 
 # Removed duplicate method
 
@@ -239,6 +274,8 @@ class ImageLearnerCLI:
                 "image_resize": self.args.image_resize,
                 "image_zip": self.args.image_zip,
                 "threshold": self.args.threshold,
+                "label_metadata": self.label_metadata,
+                "output_type_hint": self.output_type_hint,
             }
             yaml_str = self.backend.prepare_config(backend_args, split_cfg)
 

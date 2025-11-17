@@ -239,9 +239,11 @@ class LudwigDirectBackend:
 
         label_column_path = config_params.get("label_column_data_path")
         label_series = None
-        num_unique_labels = 2
-        numeric_binary_labels = False
-        likely_regression = False
+        label_metadata_hint = config_params.get("label_metadata") or {}
+        output_type_hint = config_params.get("output_type_hint")
+        num_unique_labels = int(label_metadata_hint.get("num_unique", 2))
+        numeric_binary_labels = bool(label_metadata_hint.get("is_numeric_binary", False))
+        likely_regression = bool(label_metadata_hint.get("likely_regression", False))
         if label_column_path is not None and Path(label_column_path).exists():
             try:
                 label_series = pd.read_csv(label_column_path)[LABEL_COLUMN_NAME]
@@ -260,6 +262,12 @@ class LudwigDirectBackend:
                     )
             except Exception as e:
                 logger.warning(f"Could not read label column for task detection: {e}")
+
+        if output_type_hint == "binary":
+            num_unique_labels = 2
+            numeric_binary_labels = numeric_binary_labels or bool(
+                label_metadata_hint.get("is_numeric", False)
+            )
 
         if numeric_binary_labels:
             task_type = "classification"
@@ -351,18 +359,16 @@ class LudwigDirectBackend:
                 output_feat = {
                     "name": LABEL_COLUMN_NAME,
                     "type": "binary",
-                    "decoder": {"type": "classifier"},
-                    "loss": {"type": "sigmoid_cross_entropy"},
+                    "loss": {"type": "binary_weighted_cross_entropy"},
                 }
+                if config_params.get("threshold") is not None:
+                    output_feat["threshold"] = float(config_params["threshold"])
             else:
                 output_feat = {
                     "name": LABEL_COLUMN_NAME,
                     "type": "category",
-                    "decoder": {"type": "classifier"},
                     "loss": {"type": "softmax_cross_entropy"},
                 }
-            if output_type == "binary" and config_params.get("threshold") is not None:
-                output_feat["threshold"] = float(config_params["threshold"])
             val_metric = None
 
         conf: Dict[str, Any] = {
@@ -748,6 +754,23 @@ class LudwigDirectBackend:
                 "confusion_matrix_entropy__label_top10.png",  # Keep only top5
                 "confusion_matrix_entropy__label_top6.png",   # Keep only top5
             }
+            title_is_test = title.lower().startswith("test")
+            if title_is_test and output_type == "binary":
+                default_exclude.update(
+                    {
+                        "confusion_matrix__label_top2.png",
+                        "confusion_matrix_entropy__label_top2.png",
+                        "roc_curves_from_prediction_statistics.png",
+                    }
+                )
+            elif title_is_test and output_type == "category":
+                default_exclude.update(
+                    {
+                        "compare_classifiers_multiclass_multimetric__label_best10.png",
+                        "compare_classifiers_multiclass_multimetric__label_sorted.png",
+                        "compare_classifiers_multiclass_multimetric__label_worst10.png",
+                    }
+                )
 
             imgs = [
                 img
@@ -763,9 +786,14 @@ class LudwigDirectBackend:
             imgs = sorted(imgs, key=lambda x: x.name)
 
             html_section = ""
+            custom_titles = {
+                "compare_classifiers_multiclass_multimetric__label_top10": "Metric Comparison by Label",
+                "compare_classifiers_performance_from_prob": "Label Metric Comparison by Probability",
+            }
             for img in imgs:
                 b64 = encode_image_to_base64(str(img))
-                img_title = img.stem.replace("_", " ").title()
+                default_title = img.stem.replace("_", " ").title()
+                img_title = custom_titles.get(img.stem, default_title)
                 html_section += (
                     f"<h2 style='text-align: center;'>{img_title}</h2>"
                     f'<div class="plot" style="margin-bottom:20px;text-align:center;">'
