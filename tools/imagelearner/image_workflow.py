@@ -319,6 +319,14 @@ class ImageLearnerCLI:
                 # Fallback: create minimal outputs so downstream steps can proceed
                 logger.warning("Falling back to minimal outputs due to runtime failure.")
                 try:
+                    self._reset_output_dir(self.args.output_dir)
+                except Exception as reset_err:
+                    logger.warning(
+                        "Unable to clear previous outputs before fallback: %s",
+                        reset_err,
+                    )
+
+                try:
                     self._create_minimal_outputs(self.args.output_dir, csv_path)
                     # Even in fallback, produce an HTML shell so tests find required text
                     report_file = self.backend.generate_html_report(
@@ -359,20 +367,28 @@ class ImageLearnerCLI:
                 except Exception:
                     pass
 
-        # Clear torch hub cache under the job-scoped home, if present
-        job_home_torch_hub = Path.cwd() / "home" / ".cache" / "torch" / "hub"
-        if job_home_torch_hub.exists():
-            shutil.rmtree(job_home_torch_hub, ignore_errors=True)
+        self._clear_model_caches()
 
-        # Also try the default user cache as a best-effort (may not exist in job sandbox)
-        user_home_torch_hub = Path.home() / ".cache" / "torch" / "hub"
-        if user_home_torch_hub.exists():
-            shutil.rmtree(user_home_torch_hub, ignore_errors=True)
+    def _clear_model_caches(self) -> None:
+        """Delete large framework caches to free up disk space."""
+        cache_paths = [
+            Path.cwd() / "home" / ".cache" / "torch" / "hub",
+            Path.home() / ".cache" / "torch" / "hub",
+            Path.cwd() / "home" / ".cache" / "huggingface",
+        ]
 
-        # Clear huggingface cache if present in the job sandbox
-        job_home_hf = Path.cwd() / "home" / ".cache" / "huggingface"
-        if job_home_hf.exists():
-            shutil.rmtree(job_home_hf, ignore_errors=True)
+        for cache_path in cache_paths:
+            if cache_path.exists():
+                shutil.rmtree(cache_path, ignore_errors=True)
+
+    def _reset_output_dir(self, output_dir: Path) -> None:
+        """Remove partial experiment outputs and caches before building fallbacks."""
+        output_dir = Path(output_dir)
+        for exp_dir in output_dir.glob("experiment_run*"):
+            if exp_dir.is_dir():
+                shutil.rmtree(exp_dir, ignore_errors=True)
+
+        self._clear_model_caches()
 
     def _create_minimal_outputs(self, output_dir: Path, prepared_csv_path: Path) -> None:
         """Create a minimal set of outputs so Galaxy can collect expected artifacts.
