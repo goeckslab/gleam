@@ -56,6 +56,20 @@ class BaseModelTrainer:
             setattr(self, key, value)
         if not hasattr(self, "plot_feature_limit"):
             self.plot_feature_limit = 30
+        self._shap_row_cap = None
+        if getattr(self, "polynomial_features", False):
+            # Keep feature importance responsive by trimming plots/SHAP rows
+            try:
+                limit_val = int(self.plot_feature_limit)
+            except (TypeError, ValueError):
+                limit_val = 30
+            self.plot_feature_limit = min(limit_val, 15)
+            self._shap_row_cap = 200
+            LOG.info(
+                "Polynomial features enabled; limiting feature plots to %s and SHAP rows to %s",
+                self.plot_feature_limit,
+                self._shap_row_cap,
+            )
         self.imputed_training_data = None
         self._best_model_metric_used = None
         self.setup_params = {}
@@ -719,6 +733,7 @@ class BaseModelTrainer:
             best_model=self.best_model,
             max_plot_features=self.plot_feature_limit,
             processed_data=self.imputed_training_data,
+            max_shap_rows=self._shap_row_cap,
         ).run()
 
         # 6b) Explainer SHAP importances

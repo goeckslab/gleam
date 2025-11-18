@@ -24,6 +24,7 @@ class FeatureImportanceAnalyzer:
         best_model=None,
         max_plot_features=None,
         processed_data=None,
+        max_shap_rows=None,
     ):
         self.task_type = task_type
         self.output_dir = output_dir
@@ -61,6 +62,7 @@ class FeatureImportanceAnalyzer:
             self.data = processed_data
 
         self.plots = {}
+        self.max_shap_rows = max_shap_rows
 
     def _get_feature_names_from_model(self, model):
         """Best-effort extraction of feature names seen by the estimator."""
@@ -251,6 +253,9 @@ class FeatureImportanceAnalyzer:
                 max_samples = 500
             else:
                 max_samples = min(1000, int(n_rows * 0.1))
+
+        if self.max_shap_rows is not None:
+            max_samples = min(max_samples, self.max_shap_rows)
 
         if n_rows > max_samples:
             LOG.info(f"Subsampling SHAP rows: {max_samples} of {n_rows}")
