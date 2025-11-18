@@ -6,11 +6,11 @@ from typing import Any, Dict, Optional, Protocol, Tuple
 import pandas as pd
 import pandas.api.types as ptypes
 import yaml
-
 from constants import (
     IMAGE_PATH_COLUMN_NAME,
     LABEL_COLUMN_NAME,
     MODEL_ENCODER_TEMPLATES,
+    SPLIT_COLUMN_NAME,
 )
 from html_structure import (
     build_tabbed_html,
@@ -30,7 +30,7 @@ from ludwig.globals import (
     TRAIN_SET_METADATA_FILE_NAME,
 )
 from ludwig.utils.data_utils import get_split_path
-from metaformer_setup import META_DEFAULT_CFGS, get_visualizations_registry
+from metaformer_setup import get_visualizations_registry, META_DEFAULT_CFGS
 from plotly_plots import build_classification_plots
 from utils import detect_output_type, extract_metrics_from_json
 
@@ -354,7 +354,6 @@ class LudwigDirectBackend:
             val_metric = config_params.get("validation_metric", "mean_squared_error")
 
         else:
-            output_type = "binary" if num_unique_labels == 2 else "category"
             if num_unique_labels == 2:
                 output_feat = {
                     "name": LABEL_COLUMN_NAME,

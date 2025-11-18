@@ -1,6 +1,6 @@
 import base64
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from constants import METRIC_DISPLAY_NAMES
 from utils import detect_output_type, extract_metrics_from_json
@@ -707,6 +707,8 @@ def get_metrics_help_modal() -> str:
 # -----------------------------------------
 # MODEL PERFORMANCE (Train/Val/Test) TABLE
 # -----------------------------------------
+
+
 def format_stats_table_html(train_stats: dict, test_stats: dict, output_type: str) -> str:
     """Formats a combined HTML table for training, validation, and test metrics."""
     all_metrics = extract_metrics_from_json(train_stats, test_stats, output_type)
@@ -751,6 +753,8 @@ def format_stats_table_html(train_stats: dict, test_stats: dict, output_type: st
 # -------------------------------------------
 # TRAIN/VALIDATION PERFORMANCE SUMMARY TABLE
 # -------------------------------------------
+
+
 def format_train_val_stats_table_html(train_stats: dict, test_stats: dict) -> str:
     """Format train/validation metrics into an HTML table."""
     all_metrics = extract_metrics_from_json(train_stats, test_stats, detect_output_type(test_stats))
@@ -790,6 +794,8 @@ def format_train_val_stats_table_html(train_stats: dict, test_stats: dict) -> st
 # -----------------------------------------
 # TEST‐ONLY PERFORMANCE SUMMARY TABLE
 # -----------------------------------------
+
+
 def format_test_merged_stats_table_html(
     test_metrics: Dict[str, Any], output_type: str
 ) -> str:

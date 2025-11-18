@@ -9,7 +9,6 @@ from typing import Any, Dict, Optional, Tuple
 
 import pandas as pd
 import pandas.api.types as ptypes
-
 from constants import (
     IMAGE_PATH_COLUMN_NAME,
     LABEL_COLUMN_NAME,

@@ -1,6 +1,5 @@
 import logging
 from pathlib import Path
-from typing import Any, Dict
 
 import pandas as pd
 
@@ -50,18 +49,18 @@ def aug_parse(aug_string: str):
 
 
 def argument_checker(args, parser):
-  if not 0.0 <= args.validation_size <= 1.0:
-    parser.error("validation-size must be between 0.0 and 1.0")
-  if not args.csv_file.is_file():
-    parser.error(f"Metada file not found: {args.csv_file}")
-  if not (args.image_zip.is_file() or args.image_zip.is_dir()):
-    parser.error(f"ZIP or directory not found: {args.image_zip}")
-  if args.augmentation is not None:
-    try:
-      augmentation_setup = aug_parse(args.augmentation)
-      setattr(args, "augmentation", augmentation_setup)
-    except ValueError as e:
-      parser.error(str(e))
+    if not 0.0 <= args.validation_size <= 1.0:
+        parser.error("validation-size must be between 0.0 and 1.0")
+    if not args.csv_file.is_file():
+        parser.error(f"Metada file not found: {args.csv_file}")
+    if not (args.image_zip.is_file() or args.image_zip.is_dir()):
+        parser.error(f"ZIP or directory not found: {args.image_zip}")
+    if args.augmentation is not None:
+        try:
+            augmentation_setup = aug_parse(args.augmentation)
+            setattr(args, "augmentation", augmentation_setup)
+        except ValueError as e:
+            parser.error(str(e))
 
 
 def parse_learning_rate(s):

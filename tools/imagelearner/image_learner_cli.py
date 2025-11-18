@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import matplotlib
-
 from constants import MODEL_ENCODER_TEMPLATES
 from image_workflow import ImageLearnerCLI
 from ludwig_backend import LudwigDirectBackend
