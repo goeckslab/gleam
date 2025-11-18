@@ -637,7 +637,6 @@ class BaseModelTrainer:
                 "roc_auc",
                 "pr_auc",
                 "lift_curve",
-                "threshold",
                 "cumulative_precision",
             ]
         for key in test_order:
@@ -661,7 +660,6 @@ class BaseModelTrainer:
             # skipping anything
             if self.task_type == "classification" and (
                 name in {
-                    "threshold",
                     "pr_auc",
                     "class_report",
                 }

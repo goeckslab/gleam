@@ -62,6 +62,50 @@ class FeatureImportanceAnalyzer:
 
         self.plots = {}
 
+    def _get_feature_names_from_model(self, model):
+        """Best-effort extraction of feature names seen by the estimator."""
+        if model is None:
+            return None
+
+        candidates = [model]
+        if hasattr(model, "named_steps"):
+            candidates.extend(model.named_steps.values())
+        elif hasattr(model, "steps"):
+            candidates.extend(step for _, step in model.steps)
+
+        for candidate in candidates:
+            names = getattr(candidate, "feature_names_in_", None)
+            if names is not None:
+                return list(names)
+        return None
+
+    def _get_transformed_frame(self, model=None, prefer_test=True):
+        """Return a DataFrame that mirrors the matrix fed to the estimator."""
+        key_order = ["X_test_transformed", "X_train_transformed"]
+        if not prefer_test:
+            key_order.reverse()
+        key_order.append("X_transformed")
+
+        feature_names = self._get_feature_names_from_model(model)
+        for key in key_order:
+            try:
+                frame = self.exp.get_config(key)
+            except KeyError:
+                continue
+            if frame is None:
+                continue
+            if isinstance(frame, pd.DataFrame):
+                return frame.copy()
+            try:
+                n_features = frame.shape[1]
+            except Exception:
+                continue
+            if feature_names and len(feature_names) == n_features:
+                return pd.DataFrame(frame, columns=feature_names)
+            # Fallback to positional names so downstream logic still works
+            return pd.DataFrame(frame, columns=[f"f{i}" for i in range(n_features)])
+        return None
+
     def setup_pycaret(self):
         if self.exp is not None and hasattr(self.exp, "is_setup") and self.exp.is_setup:
             LOG.info("Experiment already set up. Skipping PyCaret setup.")
@@ -78,7 +122,14 @@ class FeatureImportanceAnalyzer:
 
     def save_tree_importance(self):
         model = self.best_model or self.exp.get_config("best_model")
-        processed_features = self.exp.get_config("X_transformed").columns
+        processed_frame = self._get_transformed_frame(model, prefer_test=False)
+        if processed_frame is None:
+            LOG.warning(
+                "Unable to determine transformed feature names; skipping tree importance plot."
+            )
+            self.tree_model_name = None
+            return
+        processed_features = list(processed_frame.columns)
 
         importances = None
         model_type = model.__class__.__name__
@@ -96,11 +147,17 @@ class FeatureImportanceAnalyzer:
             return
 
         if len(importances) != len(processed_features):
-            LOG.warning(
-                f"Importances ({len(importances)}) != features ({len(processed_features)}). Skipping tree importance."
-            )
-            self.tree_model_name = None
-            return
+            model_feature_names = self._get_feature_names_from_model(model)
+            if model_feature_names and len(model_feature_names) == len(importances):
+                processed_features = model_feature_names
+            else:
+                LOG.warning(
+                    "Importances (%s) != features (%s). Skipping tree importance.",
+                    len(importances),
+                    len(processed_features),
+                )
+                self.tree_model_name = None
+                return
 
         feature_importances = pd.DataFrame(
             {"Feature": processed_features, "Importance": importances}
@@ -133,13 +190,7 @@ class FeatureImportanceAnalyzer:
     def save_shap_values(self, max_samples=None, max_display=None, max_features=None):
         model = self.best_model or self.exp.get_config("best_model")
 
-        X_data = None
-        for key in ("X_test_transformed", "X_train_transformed"):
-            try:
-                X_data = self.exp.get_config(key)
-                break
-            except KeyError:
-                continue
+        X_data = self._get_transformed_frame(model)
         if X_data is None:
             raise RuntimeError("No transformed dataset found for SHAP.")
 
@@ -169,13 +220,23 @@ class FeatureImportanceAnalyzer:
                 variances = X_data.var()
                 top_features = variances.nlargest(max_features).index
 
-            display_features = list(top_features)
-            if len(display_features) < n_features:
+            candidate_features = list(top_features)
+            missing = [f for f in candidate_features if f not in X_data.columns]
+            display_features = [f for f in candidate_features if f in X_data.columns]
+            if missing:
+                LOG.warning(
+                    "Dropping %s transformed feature(s) not present in SHAP frame: %s",
+                    len(missing),
+                    missing[:5],
+                )
+            if display_features and len(display_features) < n_features:
                 LOG.info(
                     "Restricting SHAP display to top %s of %s features",
                     len(display_features),
                     n_features,
                 )
+            elif not display_features:
+                display_features = list(X_data.columns)
         except Exception as e:
             LOG.warning(
                 f"Feature limiting failed: {e}. Using all {n_features} features."
