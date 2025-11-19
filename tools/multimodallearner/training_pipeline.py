@@ -113,6 +113,25 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
     else:
         text_cols = inferred_text_cols
 
+    ag_version = None
+    try:
+        ag_mod = importlib.import_module("autogluon")
+        ag_ver = getattr(ag_mod, "__version__", None)
+        if ag_ver:
+            ag_version = Version(str(ag_ver))
+    except Exception:
+        ag_mod = None
+
+    supports_tabular_override = bool(ag_version and ag_version >= Version("1.1.0"))
+    supports_fusion_override = bool(ag_version and ag_version >= Version("1.1.0"))
+
+    def _log_missing_support(key: str) -> None:
+        logger.info(
+            "AutoGluon version %s does not expose '%s'; skipping override.",
+            ag_version or "unknown",
+            key,
+        )
+
     hp = {}
     
     # Setup environment
@@ -122,9 +141,10 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
     
     # Set eval metric through model config
     if args.eval_metric:
-        # Ensure model config exists and set metric through model.metric_learning
-        hp.setdefault("model", {})
-        hp["model"].setdefault("metric_learning", {})["metric"] = str(args.eval_metric)
+        model_block = hp.setdefault("model", {})
+        model_block.setdefault("metric_learning", {})["metric"] = str(args.eval_metric)
+    else:
+        model_block = hp.setdefault("model", {})
 
     if text_cols and Version(torch.__version__) < Version("2.6"):
         safe_ckpt = "distilbert-base-uncased"
@@ -174,54 +194,94 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
     try:
         has_text_cols = bool(text_cols)
         has_image_cols = bool(image_columns)
+        model_names_cache: Optional[List[str]] = None
+        model_names_modified = False
+
+        def _dedupe_preserve(seq: List[str]) -> List[str]:
+            seen = set()
+            ordered = []
+            for item in seq:
+                if item in seen:
+                    continue
+                seen.add(item)
+                ordered.append(item)
+            return ordered
+
+        def _get_model_names() -> List[str]:
+            nonlocal model_names_cache
+            if model_names_cache is not None:
+                return model_names_cache
+            names = model_block.get("names")
+            if isinstance(names, list):
+                model_names_cache = list(names)
+            else:
+                model_names_cache = []
+                if has_text_cols:
+                    model_names_cache.append("hf_text")
+                if has_image_cols:
+                    model_names_cache.append("timm_image")
+                model_names_cache.extend(["numerical_mlp", "categorical_mlp"])
+                model_names_cache.append("fusion_mlp")
+            return model_names_cache
+
+        def _set_model_names(new_names: List[str]) -> None:
+            nonlocal model_names_cache, model_names_modified
+            model_names_cache = new_names
+            model_names_modified = True
+
         if has_text_cols and getattr(args, "backbone_text", None):
             # nested dict
             hp.setdefault("model.hf_text", {})["checkpoint_name"] = str(args.backbone_text)
             # dotted flat keys
-            hp.setdefault("model", {})["hf_text.checkpoint_name"] = str(args.backbone_text)
+            model_block["hf_text.checkpoint_name"] = str(args.backbone_text)
             hp["model.hf_text.checkpoint_name"] = str(args.backbone_text)
         if has_image_cols and getattr(args, "backbone_image", None):
             hp.setdefault("model.timm_image", {})["checkpoint_name"] = str(args.backbone_image)
-            hp.setdefault("model", {})["timm_image.checkpoint_name"] = str(args.backbone_image)
+            model_block["timm_image.checkpoint_name"] = str(args.backbone_image)
             hp["model.timm_image.checkpoint_name"] = str(args.backbone_image)
-        if getattr(args, "backbone_tabular", None):
-            hp.setdefault("model", {})["tabular.backbone"] = str(args.backbone_tabular)
-            hp["model.tabular.backbone"] = str(args.backbone_tabular)
+        tab_choice = getattr(args, "backbone_tabular", None)
+        if tab_choice:
+            tab_choice = str(tab_choice)
+            if supports_tabular_override:
+                model_block["tabular.backbone"] = tab_choice
+                hp["model.tabular.backbone"] = tab_choice
+            else:
+                _log_missing_support("model.tabular.backbone")
+            tabular_module_map = {
+                "ft_transformer": ["ft_transformer"],
+                "numerical_mlp": ["numerical_mlp"],
+                "categorical_mlp": ["categorical_mlp"],
+            }
+            desired_modules = tabular_module_map.get(tab_choice, [])
+            if desired_modules:
+                names = _get_model_names()
+                filtered = [n for n in names if n not in {"numerical_mlp", "categorical_mlp", "ft_transformer"}]
+                filtered.extend(desired_modules)
+                _set_model_names(_dedupe_preserve(filtered))
         fusion_choice = getattr(args, "backbone_fusion", None)
         if fusion_choice:
             fusion_choice = str(fusion_choice)
-            model_block = hp.setdefault("model", {})
-            model_block["fusion.backbone"] = fusion_choice
-            model_block["fusion"] = fusion_choice
-            hp["model.fusion.backbone"] = fusion_choice
-            hp["model.fusion"] = fusion_choice
-            hp["model.fusion_backbone"] = fusion_choice
-            names = model_block.get("names")
-            if isinstance(names, list):
-                names = [n for n in names if n not in ("fusion_mlp", "fusion_transformer")]
+            if supports_fusion_override:
+                model_block["fusion.backbone"] = fusion_choice
+                model_block["fusion"] = fusion_choice
+                hp["model.fusion.backbone"] = fusion_choice
+                hp["model.fusion"] = fusion_choice
+                hp["model.fusion_backbone"] = fusion_choice
             else:
-                names = []
-                if has_text_cols:
-                    names.append("hf_text")
-                if has_image_cols:
-                    names.append("timm_image")
-                names.extend(["numerical_mlp", "categorical_mlp"])
-            names.append(fusion_choice)
-            model_block["names"] = names
+                _log_missing_support("model.fusion.backbone")
+            names = _get_model_names()
+            filtered = [n for n in names if n not in ("fusion_mlp", "fusion_transformer")]
+            filtered.append(fusion_choice)
+            _set_model_names(_dedupe_preserve(filtered))
+
+        if model_names_modified and model_names_cache is not None:
+            model_block["names"] = model_names_cache
     except Exception:
         logger.warning("Failed to attach backbone selections to mm_hparams; continuing without them.")
 
     # If AutoGluon is installed, detect version and (optionally) adapt canonical keys
-    try:
-        ag_mod = importlib.import_module("autogluon")
-        ag_ver = getattr(ag_mod, "__version__", None)
-        if ag_ver:
-            ag_v = Version(str(ag_ver))
-            # If needed, we could adapt key names per version here. For now, we just log.
-            logger.info(f"Detected AutoGluon version: {ag_v}; applied robust hyperparameter mappings.")
-    except Exception:
-        # AutoGluon not present in this environment; leave mappings as-is
-        pass
+    if ag_version:
+        logger.info(f"Detected AutoGluon version: {ag_version}; applied robust hyperparameter mappings.")
 
     return hp
 
