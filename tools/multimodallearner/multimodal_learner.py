@@ -139,6 +139,10 @@ def parse_args(argv=None):
     parser.add_argument("--image_columns", dest="image_columns", nargs="+", default=None)
     parser.add_argument("--images_zips", dest="images_zips", nargs="*", default=None)
     parser.add_argument("--image_folders", dest="image_folders", nargs="*", default=None)
+    parser.add_argument("--text_columns", dest="text_columns", nargs="+", default=None,
+                        help="Optional list of columns that contain free-form text inputs")
+    parser.add_argument("--use_text", dest="use_text", type=str, default="true",
+                        help="true/false: whether to enable text modalities (default: true)")
 
     # How to handle missing images: if true -> remove rows with missing images; if false -> inject placeholder image path
     parser.add_argument("--missing_image_strategy", dest="missing_image_strategy", default="false",
@@ -199,6 +203,7 @@ def parse_args(argv=None):
 
     args.cross_validation = _str2bool(args.cross_validation)
     args.missing_image_strategy = _str2bool(args.missing_image_strategy)
+    args.use_text = _str2bool(args.use_text)
     # If user provided single --preset, prefer that and expose as args.presets for downstream compatibility
     if getattr(args, "preset", None):
         args.presets = [args.preset]
@@ -306,11 +311,12 @@ def main():
 
     # Load + split
     try:
-        df_train, df_val, df_test, df_train_full, label_col, image_cols = load_and_split(
+        df_train, df_val, df_test, df_train_full, label_col, image_cols, text_cols = load_and_split(
             train_csv=args.train_csv,
             test_csv=args.test_csv,
             label_column=args.label_column,
             image_columns=args.image_columns,
+            text_columns=args.text_columns,
             random_seed=args.random_seed,
             validation_size=args.validation_size,
             split_probabilities=args.split_probabilities,
@@ -318,6 +324,7 @@ def main():
         )
         args.label_column = label_col
         args.image_columns = image_cols
+        args.text_columns = text_cols
     except Exception as e:
         logger.error(f"Failed to read/split input CSVs: {e}")
         sys.exit(1)
@@ -331,6 +338,11 @@ def main():
             for c in args.image_columns:
                 if c not in df_.columns:
                     logger.error(f"Missing image column '{c}' in {name} CSV")
+                    sys.exit(1)
+        if args.text_columns:
+            for c in args.text_columns:
+                if c not in df_.columns:
+                    logger.error(f"Missing text column '{c}' in {name} CSV")
                     sys.exit(1)
 
     # Expand image paths to absolute locations for every dataframe copy we use downstream

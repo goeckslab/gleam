@@ -93,12 +93,25 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
     Handles text checkpoints for torch<2.6 and merges user overrides.
     """
     img_set = set(image_columns or [])
-    text_cols = [
+    inferred_text_cols = [
         c for c in df_train.columns
         if c not in img_set | {args.label_column}
         and str(df_train[c].dtype) == "object"
         and df_train[c].notna().any()
     ]
+    explicit_text_cols = getattr(args, "text_columns", None)
+    use_text = getattr(args, "use_text", True)
+    if not use_text:
+        text_cols: List[str] = []
+    elif explicit_text_cols is not None:
+        seen = set()
+        text_cols = []
+        for c in explicit_text_cols:
+            if c in df_train.columns and c not in seen:
+                text_cols.append(c)
+                seen.add(c)
+    else:
+        text_cols = inferred_text_cols
 
     hp = {}
     

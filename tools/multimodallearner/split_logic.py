@@ -254,14 +254,15 @@ def load_and_split(
     test_csv: Optional[str],
     label_column: str,
     image_columns: Optional[List[str]],  # list, not single
+    text_columns: Optional[List[str]],   # list, not single
     random_seed: int,
     validation_size: float,
     split_probabilities: List[float],
     val_size_with_test: float,
-) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, str, Optional[List[str]]]:
+) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, str, Optional[List[str]], Optional[List[str]]]:
     """
     Reads CSV(s), maps column arguments, drops rows with NaN targets (with logs), and returns:
-      (df_train, df_val, df_test, df_train_full, label_col, image_cols)
+      (df_train, df_val, df_test, df_train_full, label_col, image_cols, text_cols)
 
     Behavior:
       - If 'split' column exists: use it; if only {0,2}, create validation from 0's using validation_size.
@@ -275,6 +276,7 @@ def load_and_split(
 
         label_col = map_column_arg(label_column, df_train_full, "target_column")
         img_cols = map_column_args(image_columns, df_train_full, "image_columns")
+        text_cols = map_column_args(text_columns, df_train_full, "text_columns")
 
         logger.info(f"[load] resolved label column: '{label_col}' | dtype={df_train_full[label_col].dtype}")
         # Pre-drop logs
@@ -299,13 +301,14 @@ def load_and_split(
         _log_class_counts(df_train, label_col, "train after split")
         _log_class_counts(df_val,   label_col, "val   after split")
 
-        return df_train, df_val, df_test, df_train_full, label_col, img_cols
+        return df_train, df_val, df_test, df_train_full, label_col, img_cols, text_cols
 
     # Single-file mode
     df_full = pd.read_csv(train_csv)
 
     label_col = map_column_arg(label_column, df_full, "target_column")
     img_cols = map_column_args(image_columns, df_full, "image_columns")
+    text_cols = map_column_args(text_columns, df_full, "text_columns")
 
     logger.info(f"[load] resolved label column: '{label_col}' | dtype={df_full[label_col].dtype}")
     _log_class_counts(df_full, label_col, "train_csv (pre-drop)")
@@ -330,4 +333,4 @@ def load_and_split(
             df_full, label_col, split_probabilities, int(random_seed)
         )
 
-    return df_train, df_val, df_test, df_train_full, label_col, img_cols
+    return df_train, df_val, df_test, df_train_full, label_col, img_cols, text_cols
