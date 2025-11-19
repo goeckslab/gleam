@@ -28,6 +28,7 @@
     #set $learning_rate = getattr($customize_defaults_conditional, 'learning_rate', None)
     #set $batch_size = getattr($customize_defaults_conditional, 'batch_size', None)
     #set $hyperparameters = getattr($customize_defaults_conditional, 'hyperparameters', None)
+    #set $backbone_image = getattr($use_images_conditional, 'backbone_image', None)
     #set $image_columns_block = getattr($use_images_conditional, 'image_columns_block', None)
     #set $image_column_names = []
     #if $image_columns_block
@@ -83,6 +84,7 @@
     #else
       #set $use_text_cli = 'false'
     #end if
+    #set $backbone_text = getattr($use_text_conditional, 'backbone_text', None)
     #set $text_columns_block = getattr($use_text_conditional, 'text_columns_block', None)
     #set $text_column_names = []
     #if $text_columns_block
@@ -218,6 +220,9 @@
       #if $backbone_tabular
       --backbone_tabular '$backbone_tabular'
       #end if
+      #if $backbone_fusion
+      --backbone_fusion '$backbone_fusion'
+      #end if
 
       #if $preset
       --preset '$preset'
@@ -247,7 +252,11 @@
   <inputs>
     <param name='input_csv' type='data' format='csv' label='Multimodal input dataset' help='CSV with features (and optional image paths)'/>
     <param name='target_column' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Target Column' help='Column to predict'/>
-    <param name='backbone_tabular' type='text' optional='true' label='Structured backbone' help='Structured/tabular backbone selection (informational)'/>
+    <param name='backbone_tabular' type='select' optional='true' label='Structured backbone' help='Structured/tabular backbone selection for AutoGluon'>
+      <option value='categorical_mlp'>categorical_mlp - Custom MLP (no pretrained checkpoint; architecture only)</option>
+      <option value='numerical_mlp'>numerical_mlp - Custom MLP (no pretrained checkpoint; architecture only)</option>
+      <option value='ft_transformer' selected='true'>ft_transformer - Feature Tokenizer + Transformer</option>
+    </param>
     <conditional name='test_dataset_conditional'>
       <param name='has_test_dataset' type='boolean' truevalue='yes' falsevalue='no' checked='false'
              label='Do you have a separate test dataset?' help='Switch to "Yes" to upload a dedicated test CSV; keep "No" to create a train/val split from the input dataset.'/>
@@ -259,8 +268,25 @@
     <conditional name='use_images_conditional'>
       <param name='use_images' type='boolean' label='Use Images?' truevalue='yes' falsevalue='no' checked='false' help='Enable image processing'/>
       <when value='yes'>
+        <param name='backbone_image' type='select' optional='true' label='Image backbone' help='Image backbone / timm checkpoint name'>
+          <option value='swin_base_patch4_window7_224' selected='true'>swin_base_patch4_window7_224</option>
+          <option value='swin_large_patch4_window12_384.in22k_ft_in1k'>swin_large_patch4_window12_384.in22k_ft_in1k</option>
+          <option value='swin_small_patch4_window7_224'>swin_small_patch4_window7_224</option>
+          <option value='swin_tiny_patch4_window7_224'>swin_tiny_patch4_window7_224</option>
+          <option value='caformer_b36.in21k_ft_in1k'>caformer_b36.in21k_ft_in1k</option>
+          <option value='caformer_m36.in21k_ft_in1k'>caformer_m36.in21k_ft_in1k</option>
+          <option value='caformer_s36.in21k_ft_in1k'>caformer_s36.in21k_ft_in1k</option>
+          <option value='caformer_s18.in1k'>caformer_s18.in1k</option>
+          <option value='caformer_b36.sail_in22k_ft_in1k'>caformer_b36.sail_in22k_ft_in1k</option>
+          <option value='caformer_m36.sail_in22k_ft_in1k'>caformer_m36.sail_in22k_ft_in1k</option>
+          <option value='caformer_s36.sail_in22k_ft_in1k'>caformer_s36.sail_in22k_ft_in1k</option>
+          <option value='vit_base_patch16_224'>vit_base_patch16_224</option>
+          <option value='vit_large_patch14_224'>vit_large_patch14_224</option>
+          <option value='convnext_base'>convnext_base</option>
+          <option value='eva02_base_patch14_448.mim_in22k_ft_in22k_in1k'>eva02_base_patch14_448.mim_in22k_ft_in22k_in1k</option>
+          <option value='resnet50'>resnet50</option>
+        </param>
         <conditional name='image_columns_block'>
-          <param name='backbone_image' type='text' optional='true' label='Image backbone' help='Image backbone / timm checkpoint name (e.g., resnet50)'/>
           <param name='image_column_count' type='select' label='How many columns store image paths?'>
             <option value='1' selected='true'>1</option>
             <option value='2'>2</option>
@@ -359,8 +385,17 @@
     <conditional name='use_text_conditional'>
       <param name='use_text' type='boolean' label='Use Text?' truevalue='yes' falsevalue='no' checked='false' help='Enable text processing'/>
       <when value='yes'>
+        <param name='backbone_text' type='select' optional='true' label='Text backbone' help='Text backbone / HF checkpoint'>
+          <option value='microsoft/deberta-v3-base' selected='true'>microsoft/deberta-v3-base</option>
+          <option value='microsoft/deberta-v3-small'>microsoft/deberta-v3-small</option>
+          <option value='google/electra-base-discriminator'>google/electra-base-discriminator</option>
+          <option value='google/electra-small-discriminator'>google/electra-small-discriminator</option>
+          <option value='roberta-base'>roberta-base</option>
+          <option value='bert-base-uncased'>bert-base-uncased</option>
+          <option value='distilroberta-base'>distilroberta-base</option>
+          <option value='albert-base-v2'>albert-base-v2</option>
+        </param>
         <conditional name='text_columns_block'>
-          <param name='backbone_text' type='text' optional='true' label='Text backbone' help='Text backbone / HF checkpoint (e.g., bert-base-uncased)'/>
           <param name='text_column_count' type='select' label='How many columns store text?'>
             <option value='1' selected='true'>1</option>
             <option value='2'>2</option>
@@ -452,13 +487,44 @@
       </when>
       <when value='no'/>
     </conditional>
-
+    <param name='backbone_fusion' type='select' label='Fusion backbone' help='Fusion module that combines modalities before the prediction head'>
+      <option value='fusion_mlp'>fusion_mlp</option>
+      <option value='fusion_transformer' selected='true'>fusion_transformer</option>
+    </param>
     <param name='preset' type='select' label='Single preset' optional='true'>
       <option value='medium_quality'>medium_quality</option>
       <option value='high_quality'>high_quality</option>
       <option value='best_quality'>best_quality</option>
     </param>
-    <param name='eval_metric' type='text' value='roc_auc' label='Evaluation metric' help='Eval metric for training/evaluation'/>
+    <param name='eval_metric' type='select' label='Evaluation metric' help='Choose the AutoGluon metric used to select the best performing model'>
+      <option value='roc_auc' selected='true'>roc_auc (default)</option>
+      <option value='auto'>auto</option>
+      <option value='accuracy'>accuracy</option>
+      <option value='balanced_accuracy'>balanced_accuracy</option>
+      <option value='f1'>f1</option>
+      <option value='f1_macro'>f1_macro</option>
+      <option value='f1_micro'>f1_micro</option>
+      <option value='f1_weighted'>f1_weighted</option>
+      <option value='precision'>precision</option>
+      <option value='precision_macro'>precision_macro</option>
+      <option value='precision_micro'>precision_micro</option>
+      <option value='precision_weighted'>precision_weighted</option>
+      <option value='recall'>recall</option>
+      <option value='recall_macro'>recall_macro</option>
+      <option value='recall_micro'>recall_micro</option>
+      <option value='recall_weighted'>recall_weighted</option>
+      <option value='average_precision'>average_precision</option>
+      <option value='roc_auc_ovo_macro'>roc_auc_ovo_macro</option>
+      <option value='roc_auc_ovo_weighted'>roc_auc_ovo_weighted</option>
+      <option value='roc_auc_ovr_macro'>roc_auc_ovr_macro</option>
+      <option value='roc_auc_ovr_weighted'>roc_auc_ovr_weighted</option>
+      <option value='log_loss'>log_loss</option>
+      <option value='mse'>mse</option>
+      <option value='rmse'>rmse</option>
+      <option value='mae'>mae</option>
+      <option value='msle'>msle</option>
+      <option value='r2'>r2</option>
+    </param>
 
     <param name='random_seed' type='integer' value='42' label='Random Seed' help='For reproducible results'/>
     <param name='time_limit' type='integer' optional='true' label='Time Limit (seconds)' help='Maximum training time'/>

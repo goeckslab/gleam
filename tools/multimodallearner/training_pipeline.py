@@ -172,19 +172,42 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
 
     # Map backbone selections into mm_hparams if provided
     try:
-        if getattr(args, "backbone_text", None):
+        has_text_cols = bool(text_cols)
+        has_image_cols = bool(image_columns)
+        if has_text_cols and getattr(args, "backbone_text", None):
             # nested dict
             hp.setdefault("model.hf_text", {})["checkpoint_name"] = str(args.backbone_text)
             # dotted flat keys
             hp.setdefault("model", {})["hf_text.checkpoint_name"] = str(args.backbone_text)
             hp["model.hf_text.checkpoint_name"] = str(args.backbone_text)
-        if getattr(args, "backbone_image", None):
+        if has_image_cols and getattr(args, "backbone_image", None):
             hp.setdefault("model.timm_image", {})["checkpoint_name"] = str(args.backbone_image)
             hp.setdefault("model", {})["timm_image.checkpoint_name"] = str(args.backbone_image)
             hp["model.timm_image.checkpoint_name"] = str(args.backbone_image)
         if getattr(args, "backbone_tabular", None):
             hp.setdefault("model", {})["tabular.backbone"] = str(args.backbone_tabular)
             hp["model.tabular.backbone"] = str(args.backbone_tabular)
+        fusion_choice = getattr(args, "backbone_fusion", None)
+        if fusion_choice:
+            fusion_choice = str(fusion_choice)
+            model_block = hp.setdefault("model", {})
+            model_block["fusion.backbone"] = fusion_choice
+            model_block["fusion"] = fusion_choice
+            hp["model.fusion.backbone"] = fusion_choice
+            hp["model.fusion"] = fusion_choice
+            hp["model.fusion_backbone"] = fusion_choice
+            names = model_block.get("names")
+            if isinstance(names, list):
+                names = [n for n in names if n not in ("fusion_mlp", "fusion_transformer")]
+            else:
+                names = []
+                if has_text_cols:
+                    names.append("hf_text")
+                if has_image_cols:
+                    names.append("timm_image")
+                names.extend(["numerical_mlp", "categorical_mlp"])
+            names.append(fusion_choice)
+            model_block["names"] = names
     except Exception:
         logger.warning("Failed to attach backbone selections to mm_hparams; continuing without them.")
 

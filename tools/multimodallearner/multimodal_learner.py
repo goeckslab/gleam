@@ -166,12 +166,14 @@ def parse_args(argv=None):
     parser.add_argument("--batch_size", dest="batch_size", type=int, default=None,
                         help="Batch size for training (optional)")
     # Backbone selection per modality
-    parser.add_argument("--backbone_image", dest="backbone_image", type=str, default=None,
-                        help="Image backbone / timm checkpoint name for AutoMM (e.g., resnet50)")
-    parser.add_argument("--backbone_text", dest="backbone_text", type=str, default=None,
-                        help="Text backbone / HF checkpoint for AutoMM (e.g., bert-base-uncased)")
-    parser.add_argument("--backbone_tabular", dest="backbone_tabular", type=str, default=None,
-                        help="Structured backbone selection (informational; mapped to mm_hparams.model.tabular.backbone)")
+    parser.add_argument("--backbone_image", dest="backbone_image", type=str, default="swin_base_patch4_window7_224",
+                        help="Image backbone / timm checkpoint name for AutoMM (default: swin_base_patch4_window7_224)")
+    parser.add_argument("--backbone_text", dest="backbone_text", type=str, default="microsoft/deberta-v3-base",
+                        help="Text backbone / HF checkpoint for AutoMM (default: microsoft/deberta-v3-base)")
+    parser.add_argument("--backbone_tabular", dest="backbone_tabular", type=str, default="ft_transformer",
+                        help="Structured backbone selection mapped to mm_hparams.model.tabular.backbone (default: ft_transformer)")
+    parser.add_argument("--backbone_fusion", dest="backbone_fusion", type=str, default="fusion_transformer",
+                        help="Fusion backbone that combines modalities before the prediction head (fusion_mlp or fusion_transformer)")
 
     # Split knobs
     parser.add_argument("--validation_size", type=float, default=0.125)
