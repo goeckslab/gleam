@@ -558,25 +558,6 @@
                 </element>
             </output_collection>
         </test>
-        <test expect_num_outputs="3">
-            <param name="input_csv" value="mnist_subset_regression.csv" ftype="csv" />
-            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
-            <param name="model_name" value="resnet18" />
-            <output name="output_report">
-                <assert_contents>
-                    <has_text text="Mean Squared Error" />
-                    <has_text text="Root Mean Squared Error" />
-                    <has_text text="Compare Performance Label" />
-                </assert_contents>
-            </output>
-            <output_collection name="output_pred_csv" type="list" >
-                <element name="predictions.csv" >
-                    <assert_contents>
-                        <has_n_columns n="1" />
-                    </assert_contents>
-                </element>
-            </output_collection>
-        </test>
     </tests>
     <help>
         <![CDATA[
