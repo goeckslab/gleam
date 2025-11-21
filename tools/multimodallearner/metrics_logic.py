@@ -185,6 +185,36 @@ def _compute_multiclass_metrics(
     return metrics
 
 
+def aggregate_metrics(list_of_dicts):
+    """Aggregate a list of metrics dicts (per split) into mean/std."""
+    agg_mean = {}
+    agg_std = {}
+    for split in ("Train", "Validation", "Test", "Test (external)"):
+        keys = set()
+        for m in list_of_dicts:
+            if isinstance(m, dict) and split in m:
+                keys.update(m[split].keys())
+        if not keys:
+            continue
+        agg_mean[split] = {}
+        agg_std[split] = {}
+        for k in keys:
+            vals = [m[split][k] for m in list_of_dicts if split in m and k in m[split]]
+            numeric_vals = []
+            for v in vals:
+                try:
+                    numeric_vals.append(float(v))
+                except Exception:
+                    pass
+            if numeric_vals:
+                agg_mean[split][k] = float(np.mean(numeric_vals))
+                agg_std[split][k] = float(np.std(numeric_vals, ddof=0))
+            else:
+                agg_mean[split][k] = vals[-1] if vals else None
+                agg_std[split][k] = None
+    return agg_mean, agg_std
+
+
 def compute_metrics_for_split(
     predictor,
     df: pd.DataFrame,

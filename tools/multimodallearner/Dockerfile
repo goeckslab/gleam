@@ -54,8 +54,8 @@ RUN pip install --no-cache-dir 'setuptools<81.0.0'
 # Upgrade pip and wheel
 RUN pip install --no-cache-dir --upgrade pip wheel
 
-# Install AutoGluon
-RUN pip install --no-cache-dir autogluon==1.2.0
+# Install AutoGluon 1.4.0
+RUN pip install --no-cache-dir autogluon==1.4.0
 
 # Install pyarrow
 RUN pip install --no-cache-dir pyarrow==20.0.0

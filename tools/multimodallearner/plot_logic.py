@@ -21,7 +21,7 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import learning_curve as skl_learning_curve
 from sklearn.preprocessing import label_binarize
-from utils import (
+from report_utils import (
     get_html_template,
     get_html_closing,
     build_tabbed_html,

@@ -1,3 +1,4 @@
+import logging
 import os
 import sys
 import html
@@ -10,9 +11,618 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+import tempfile
 
+from utils import verify_outputs
+
+logger = logging.getLogger(__name__)
 def _escape(s: Any) -> str:
     return html.escape(str(s))
+
+
+def _write_predictor_path(predictor):
+    try:
+        pred_path = getattr(predictor, "path", None)
+        if pred_path:
+            with open("predictor_path.txt", "w") as pf:
+                pf.write(str(pred_path))
+            logger.info("Wrote predictor path → predictor_path.txt")
+        return pred_path
+    except Exception:
+        logger.warning("Could not write predictor_path.txt")
+        return None
+
+
+def _copy_config_if_available(pred_path: Optional[str], output_config: Optional[str]):
+    if not output_config:
+        return
+    try:
+        config_yaml_path = os.path.join(pred_path, "config.yaml") if pred_path else None
+        if config_yaml_path and os.path.isfile(config_yaml_path):
+            shutil.copy2(config_yaml_path, output_config)
+            logger.info(f"Wrote AutoGluon config → {output_config}")
+        else:
+            with open(output_config, "w") as cfg_out:
+                cfg_out.write("# config.yaml not found for this run\n")
+            logger.warning(f"AutoGluon config.yaml not found; created placeholder at {output_config}")
+    except Exception as e:
+        logger.error(f"Failed to write config output '{output_config}': {e}")
+        try:
+            with open(output_config, "w") as cfg_out:
+                cfg_out.write(f"# Failed to copy config.yaml: {e}\n")
+        except Exception:
+            pass
+
+
+def write_outputs(
+    args,
+    predictor,
+    problem_type: str,
+    eval_results: dict,
+    data_ctx: dict,
+    raw_folds=None,
+    ag_folds=None,
+    raw_metrics_std=None,
+    ag_by_split_std=None,
+):
+    from plot_logic import (
+        build_summary_html,
+        build_test_html_and_plots,
+        build_feature_html,
+        assemble_full_html_report,
+        build_train_html_and_plots,
+    )
+    from feature_importance import build_feature_importance_html
+    from autogluon.multimodal import MultiModalPredictor
+    from metrics_logic import aggregate_metrics
+
+    raw_metrics = eval_results.get("raw_metrics", {})
+    ag_by_split = eval_results.get("ag_eval", {})
+    fit_summary_obj = eval_results.get("fit_summary")
+
+    df_train = data_ctx.get("train")
+    df_val = data_ctx.get("val")
+    df_test_internal = data_ctx.get("test_internal")
+    df_test_external = data_ctx.get("test_external")
+    df_test = df_test_external if df_test_external is not None else df_test_internal
+    df_train_full = df_train if df_val is None else pd.concat([df_train, df_val], ignore_index=True)
+
+    # Aggregate folds if provided without stds
+    if raw_folds and raw_metrics_std is None:
+        raw_metrics, raw_metrics_std = aggregate_metrics(raw_folds)
+    if ag_folds and ag_by_split_std is None:
+        ag_by_split, ag_by_split_std = aggregate_metrics(ag_folds)
+
+    # Inject AG eval into raw metrics for visibility
+    def _inject_ag(src: dict, dst: dict):
+        for k, v in (src or {}).items():
+            try:
+                dst[f"AG_{k}"] = float(v)
+            except Exception:
+                dst[f"AG_{k}"] = v
+    if "Train" in raw_metrics and "Train" in ag_by_split:
+        _inject_ag(ag_by_split["Train"], raw_metrics["Train"])
+    if "Validation" in raw_metrics and "Validation" in ag_by_split:
+        _inject_ag(ag_by_split["Validation"], raw_metrics["Validation"])
+    if "Test" in raw_metrics and "Test" in ag_by_split:
+        _inject_ag(ag_by_split["Test"], raw_metrics["Test"])
+
+    # CSV
+    all_keys: List[str] = []
+    for split in ("Train", "Validation", "Test", "Test (external)"):
+        if split in raw_metrics:
+            for k in raw_metrics[split].keys():
+                if k not in all_keys:
+                    all_keys.append(k)
+    rows = []
+    if "Train" in raw_metrics:
+        rows.append({"phase": "train", **{k: raw_metrics["Train"].get(k, np.nan) for k in all_keys}})
+    if "Validation" in raw_metrics:
+        rows.append({"phase": "validation", **{k: raw_metrics["Validation"].get(k, np.nan) for k in all_keys}})
+    if "Test" in raw_metrics:
+        rows.append({"phase": "test", **{k: raw_metrics["Test"].get(k, np.nan) for k in all_keys}})
+    if "Test (external)" in raw_metrics:
+        rows.append({"phase": "test_external", **{k: raw_metrics["Test (external)"].get(k, np.nan) for k in all_keys}})
+    pd.DataFrame(rows).to_csv(args.output_csv, index=False)
+    logger.info(f"Wrote metrics CSV → {args.output_csv}")
+
+    # JSON
+    with open(args.output_json, "w") as f:
+        json.dump(
+            {
+                "train": raw_metrics.get("Train", {}),
+                "val": raw_metrics.get("Validation", {}),
+                "test": raw_metrics.get("Test", {}),
+                "test_external": raw_metrics.get("Test (external)", {}),
+                "ag_eval": ag_by_split,
+                "ag_eval_std": ag_by_split_std,
+                "fit_summary": fit_summary_obj,
+                "problem_type": problem_type,
+                "predictor_path": getattr(predictor, "path", None),
+                "threshold": args.threshold,
+                "threshold_test": args.threshold,
+                "preset": args.preset,
+                "eval_metric": args.eval_metric,
+                "folds": {
+                    "raw_folds": raw_folds,
+                    "ag_folds": ag_folds,
+                    "summary_mean": raw_metrics if raw_folds else None,
+                    "summary_std": raw_metrics_std,
+                    "ag_summary_mean": ag_by_split,
+                    "ag_summary_std": ag_by_split_std,
+                },
+            },
+            f,
+            indent=2,
+            default=str,
+        )
+    logger.info(f"Wrote full JSON → {args.output_json}")
+
+    # HTML report assembly
+    label_col = args.target_column
+    image_cols = args.image_columns or []
+    include_text = bool(getattr(args, "text_columns", None))
+
+    class_balance_block_html = build_class_balance_html(df_train_full, label_col)
+    summary_perf_table_html = build_model_performance_summary_table(
+        train_scores=raw_metrics.get("Train", {}),
+        val_scores=raw_metrics.get("Validation", {}),
+        test_scores=raw_metrics.get("Test", {}),
+        include_test=True,
+        title=None,
+        show_title=False,
+    )
+
+    try:
+        feature_importance_html = build_feature_importance_html(predictor, df_train_full, label_col)
+    except Exception as e:
+        feature_importance_html = f"<p>Feature importance unavailable: {e}</p>"
+
+    extra_run_rows = [
+        ("Target column", label_col),
+        ("Model evaluation metric", args.eval_metric or "AutoGluon default"),
+        ("Experiment quality", args.preset or "AutoGluon default"),
+        ("Tabular backbone", getattr(args, "backbone_tabular", None) or "—"),
+        ("Image backbone", args.backbone_image or "—"),
+        ("Text backbone", args.backbone_text or "—"),
+        ("Fusion backbone", getattr(args, "backbone_fusion", None) or "—"),
+    ]
+
+    summary_html = build_summary_html(
+        predictor=predictor,
+        df_train=df_train_full,
+        df_val=df_val,
+        df_test=df_test,
+        label_column=label_col,
+        extra_run_rows=extra_run_rows,
+        class_balance_html=class_balance_block_html,
+        perf_table_html=summary_perf_table_html,
+        feature_html=feature_importance_html,
+    )
+
+    train_tab_perf_html = build_model_performance_summary_table(
+        train_scores=raw_metrics.get("Train", {}),
+        val_scores=raw_metrics.get("Validation", {}),
+        test_scores=raw_metrics.get("Test", {}),
+        include_test=False,
+        title=None,
+        show_title=False,
+    )
+
+    train_html = build_train_html_and_plots(
+        predictor=predictor,
+        problem_type=problem_type,
+        df_train=df_train,
+        label_column=label_col,
+        tmpdir=tempfile.mkdtemp(),
+        seed=int(args.random_seed),
+        perf_table_html=train_tab_perf_html,
+        threshold=None,
+    )
+
+    test_html_template, plots = build_test_html_and_plots(
+        predictor,
+        problem_type,
+        df_test,
+        label_col,
+        tempfile.mkdtemp(),
+        threshold=args.threshold,
+    )
+
+    def _fmt_val(v):
+        if isinstance(v, (int, np.integer)):
+            return f"{int(v)}"
+        if isinstance(v, (float, np.floating)):
+            return f"{v:.6f}"
+        return str(v)
+
+    test_scores = raw_metrics.get("Test", {})
+    metric_rows = "".join(
+        f"<tr><td>{k.replace('_',' ').replace('(TNR)','(TNR)').replace('(Sensitivity/TPR)', '(Sensitivity/TPR)')}</td>"
+        f"<td>{_fmt_val(v)}</td></tr>"
+        for k, v in test_scores.items()
+    )
+    test_html_filled = test_html_template.format(metric_rows)
+
+    is_multimodal = isinstance(predictor, MultiModalPredictor)
+    leaderboard_html = "" if is_multimodal else build_leaderboard_html(predictor)
+    inputs_html = ""
+    ignored_features_html = "" if is_multimodal else build_ignored_features_html(predictor, df_train_full)
+    presets_hparams_html = build_presets_hparams_html(predictor)
+    notices: List[str] = []
+    if args.threshold is not None and problem_type == "binary":
+        notices.append(f"Using decision threshold = {float(args.threshold):.3f} on Test.")
+    warnings_html = build_warnings_html([], notices)
+    repro_html = build_reproducibility_html(args, {}, getattr(predictor, "path", None))
+
+    transparency_blocks = "\n".join(
+        [
+            leaderboard_html,
+            inputs_html,
+            ignored_features_html,
+            presets_hparams_html,
+            warnings_html,
+            repro_html,
+        ]
+    )
+
+    try:
+        feature_text = build_feature_html(predictor, df_test, label_col, tempfile.mkdtemp(), args.random_seed) if df_test is not None else ""
+    except Exception:
+        feature_text = "<p>Feature analysis unavailable for this model.</p>"
+
+    full_html = assemble_full_html_report(
+        summary_html,
+        train_html,
+        test_html_filled,
+        plots,
+        feature_text + transparency_blocks,
+    )
+    with open(args.output_html, "w") as f:
+        f.write(full_html)
+    logger.info(f"Wrote HTML report → {args.output_html}")
+
+    pred_path = _write_predictor_path(predictor)
+    _copy_config_if_available(pred_path, args.output_config)
+
+    outputs_to_check = [
+        (args.output_csv, "CSV metrics"),
+        (args.output_json, "JSON results"),
+        (args.output_html, "HTML report"),
+    ]
+    if args.output_config:
+        outputs_to_check.append((args.output_config, "AutoGluon config"))
+    verify_outputs(outputs_to_check)
+
+
+def get_html_template() -> str:
+    """
+    Returns the opening HTML, <head> (with CSS/JS), and opens <body> + .container.
+    Includes:
+      - Base styling for layout and tables
+      - Sortable table headers with 3-state arrows (none ⇅, asc ↑, desc ↓)
+      - A scroll helper class (.scroll-rows-30) that approximates ~30 visible rows
+      - A guarded script so initializing runs only once even if injected twice
+    """
+    return """
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Galaxy-Ludwig Report</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #f4f4f4;
+    }
+    .container {
+      max-width: 1200px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+      overflow-x: auto;
+    }
+    h1 {
+      text-align: center;
+      color: #333;
+    }
+    h2 {
+      border-bottom: 2px solid #4CAF50;
+      color: #4CAF50;
+      padding-bottom: 5px;
+      margin-top: 28px;
+    }
+
+    /* baseline table setup */
+    table {
+      border-collapse: collapse;
+      margin: 20px 0;
+      width: 100%;
+      table-layout: fixed;
+      background: #fff;
+    }
+    table, th, td {
+      border: 1px solid #ddd;
+    }
+    th, td {
+      padding: 10px;
+      text-align: center;
+      vertical-align: middle;
+      word-break: break-word;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    th {
+      background-color: #4CAF50;
+      color: white;
+    }
+
+    .plot {
+      text-align: center;
+      margin: 20px 0;
+    }
+    .plot img {
+      max-width: 100%;
+      height: auto;
+      border: 1px solid #ddd;
+    }
+
+    /* -------------------
+       sortable columns (3-state: none ⇅, asc ↑, desc ↓)
+       ------------------- */
+    table.performance-summary th.sortable {
+      cursor: pointer;
+      position: relative;
+      user-select: none;
+    }
+    /* default icon space */
+    table.performance-summary th.sortable::after {
+      content: '⇅';
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 0.8em;
+      color: #eaf5ea; /* light on green */
+      text-shadow: 0 0 1px rgba(0,0,0,0.15);
+    }
+    /* three states override the default */
+    table.performance-summary th.sortable.sorted-none::after { content: '⇅'; color: #eaf5ea; }
+    table.performance-summary th.sortable.sorted-asc::after  { content: '↑';  color: #ffffff; }
+    table.performance-summary th.sortable.sorted-desc::after { content: '↓';  color: #ffffff; }
+
+    /* show ~30 rows with a scrollbar (tweak if you want) */
+    .scroll-rows-30 {
+      max-height: 900px;       /* ~30 rows depending on row height */
+      overflow-y: auto;        /* vertical scrollbar (“sidebar”) */
+      overflow-x: auto;
+    }
+
+    /* Tabs + Help button (used by build_tabbed_html) */
+    .tabs {
+      display: flex;
+      align-items: center;
+      border-bottom: 2px solid #ccc;
+      margin-bottom: 1rem;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .tab {
+      padding: 10px 20px;
+      cursor: pointer;
+      border: 1px solid #ccc;
+      border-bottom: none;
+      background: #f9f9f9;
+      margin-right: 5px;
+      border-top-left-radius: 8px;
+      border-top-right-radius: 8px;
+    }
+    .tab.active {
+      background: white;
+      font-weight: bold;
+    }
+    .help-btn {
+      margin-left: auto;
+      padding: 6px 12px;
+      font-size: 0.9rem;
+      border: 1px solid #4CAF50;
+      border-radius: 4px;
+      background: #4CAF50;
+      color: white;
+      cursor: pointer;
+    }
+    .tab-content {
+      display: none;
+      padding: 20px;
+      border: 1px solid #ccc;
+      border-top: none;
+      background: #fff;
+    }
+    .tab-content.active {
+      display: block;
+    }
+
+    /* Modal (used by get_metrics_help_modal) */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 9999;
+      left: 0; top: 0;
+      width: 100%; height: 100%;
+      overflow: auto;
+      background-color: rgba(0,0,0,0.4);
+    }
+    .modal-content {
+      background-color: #fefefe;
+      margin: 8% auto;
+      padding: 20px;
+      border: 1px solid #888;
+      width: 90%;
+      max-width: 900px;
+      border-radius: 8px;
+    }
+    .modal .close {
+      color: #777;
+      float: right;
+      font-size: 28px;
+      font-weight: bold;
+      line-height: 1;
+      margin-left: 8px;
+    }
+    .modal .close:hover,
+    .modal .close:focus {
+      color: black;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .metrics-guide h3 { margin-top: 20px; }
+    .metrics-guide p { margin: 6px 0; }
+    .metrics-guide ul { margin: 10px 0; padding-left: 20px; }
+  </style>
+
+  <script>
+    // Guard to avoid double-initialization if this block is included twice
+    (function(){
+      if (window.__perfSummarySortInit) return;
+      window.__perfSummarySortInit = true;
+
+      function initPerfSummarySorting() {
+        // Record original order for "back to original"
+        document.querySelectorAll('table.performance-summary tbody').forEach(tbody => {
+          Array.from(tbody.rows).forEach((row, i) => { row.dataset.originalOrder = i; });
+        });
+
+        const getText = td => (td?.innerText || '').trim();
+        const cmp = (idx, asc) => (a, b) => {
+          const v1 = getText(a.children[idx]);
+          const v2 = getText(b.children[idx]);
+          const n1 = parseFloat(v1), n2 = parseFloat(v2);
+          if (!isNaN(n1) && !isNaN(n2)) return asc ? n1 - n2 : n2 - n1; // numeric
+          return asc ? v1.localeCompare(v2) : v2.localeCompare(v1);       // lexical
+        };
+
+        document.querySelectorAll('table.performance-summary th.sortable').forEach(th => {
+          // initialize to “none”
+          th.classList.remove('sorted-asc','sorted-desc');
+          th.classList.add('sorted-none');
+
+          th.addEventListener('click', () => {
+            const table = th.closest('table');
+            const headerRow = th.parentNode;
+            const allTh = headerRow.querySelectorAll('th.sortable');
+            const tbody = table.querySelector('tbody');
+
+            // Determine current state BEFORE clearing
+            const isAsc  = th.classList.contains('sorted-asc');
+            const isDesc = th.classList.contains('sorted-desc');
+
+            // Reset all headers in this row
+            allTh.forEach(x => x.classList.remove('sorted-asc','sorted-desc','sorted-none'));
+
+            // Compute next state
+            let next;
+            if (!isAsc && !isDesc) {
+              next = 'asc';
+            } else if (isAsc) {
+              next = 'desc';
+            } else {
+              next = 'none';
+            }
+            th.classList.add('sorted-' + next);
+
+            // Sort rows according to the chosen state
+            const rows = Array.from(tbody.rows);
+            if (next === 'none') {
+              rows.sort((a, b) => (a.dataset.originalOrder - b.dataset.originalOrder));
+            } else {
+              const idx = Array.from(headerRow.children).indexOf(th);
+              rows.sort(cmp(idx, next === 'asc'));
+            }
+            rows.forEach(r => tbody.appendChild(r));
+          });
+        });
+      }
+
+      // Run after DOM is ready
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initPerfSummarySorting);
+      } else {
+        initPerfSummarySorting();
+      }
+    })();
+  </script>
+</head>
+<body>
+  <div class="container">
+"""
+
+
+def get_html_closing():
+    """Closes .container, body, and html."""
+    return """
+  </div>
+</body>
+</html>
+"""
+
+def build_tabbed_html(
+    summary_html: str,
+    train_html: str,
+    test_html: str,
+    feature_html: str,
+    explainer_html: Optional[str] = None,
+) -> str:
+    """
+    Renders the tab headers, contents, and JS to switch tabs.
+    """
+    tabs = [
+        '<div class="tabs">',
+        '<div class="tab active" onclick="showTab(\'summary\')">Model Summary & Config</div>',
+        '<div class="tab" onclick="showTab(\'train\')">Train/Validation Summary</div>',
+        '<div class="tab" onclick="showTab(\'test\')">Test Summary</div>',
+    ]
+    if explainer_html:
+        tabs.append('<div class="tab" onclick="showTab(\'explainer\')">Explainer Plots</div>')
+    tabs.append('<button id="openMetricsHelp" class="help-btn">Help</button>')
+    tabs.append('</div>')
+    tabs_section = "\n".join(tabs)
+
+    contents = [
+        f'<div id="summary" class="tab-content active">{summary_html}</div>',
+        f'<div id="train" class="tab-content">{train_html}</div>',
+        f'<div id="test" class="tab-content">{test_html}</div>',
+    ]
+    if explainer_html:
+        contents.append(f'<div id="explainer" class="tab-content">{explainer_html}</div>')
+    content_section = "\n".join(contents)
+
+    js = """
+<script>
+function showTab(id) {
+  document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  document.querySelector(`.tab[onclick*="${id}"]`).classList.add('active');
+}
+</script>
+"""
+    return tabs_section + "\n" + content_section + "\n" + js
+
+def encode_image_to_base64(image_path: str) -> str:
+    """
+    Reads an image file from disk and returns a base64-encoded string
+    for embedding directly in HTML <img> tags.
+    """
+    try:
+        with open(image_path, "rb") as img_f:
+            return base64.b64encode(img_f.read()).decode("utf-8")
+    except Exception as e:
+        LOG.error(f"Failed to encode image '{image_path}': {e}")
+        return ""
+
 
 def get_model_architecture(predictor: Any) -> str:
     """
