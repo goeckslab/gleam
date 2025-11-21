@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import random
+import shutil
 import sys
 import tempfile
 import zipfile
@@ -134,15 +135,25 @@ def parse_args(argv=None):
     parser.add_argument("--output_csv", dest="output_csv", required=True)
     parser.add_argument("--output_json", dest="output_json", default="results.json")
     parser.add_argument("--output_html", dest="output_html", default="report.html")
+    parser.add_argument("--output_config", dest="output_config", default=None)
 
     # Images (lists + legacy)
     parser.add_argument("--image_columns", dest="image_columns", nargs="+", default=None)
-    parser.add_argument("--images_zips", dest="images_zips", nargs="*", default=None)
+    parser.add_argument(
+        "--images_zips",
+        "--images_zip",
+        dest="images_zips",
+        nargs="*",
+        default=None,
+        help="One or more ZIP files that contain image assets",
+    )
     parser.add_argument("--image_folders", dest="image_folders", nargs="*", default=None)
     parser.add_argument("--text_columns", dest="text_columns", nargs="+", default=None,
                         help="Optional list of columns that contain free-form text inputs")
     parser.add_argument("--use_text", dest="use_text", type=str, default="true",
                         help="true/false: whether to enable text modalities (default: true)")
+    parser.add_argument("--use_images", dest="use_images", type=str, default=None,
+                        help="true/false: whether to enable image modalities (requires --image_columns when true)")
 
     # How to handle missing images: if true -> remove rows with missing images; if false -> inject placeholder image path
     parser.add_argument("--missing_image_strategy", dest="missing_image_strategy", default="false",
@@ -189,7 +200,9 @@ def parse_args(argv=None):
                         help="Evaluation metric to use for training/evaluation (default: roc_auc)")
     parser.add_argument("--hyperparameters", default=None)
 
-    args = parser.parse_args(argv)
+    args, unknown = parser.parse_known_args(argv)
+    if unknown:
+        logger.warning("Ignoring unknown CLI tokens: %s", unknown)
 
     # Normalize legacy/plural image arguments
     normalize_image_args(args)
@@ -206,6 +219,15 @@ def parse_args(argv=None):
     args.cross_validation = _str2bool(args.cross_validation)
     args.missing_image_strategy = _str2bool(args.missing_image_strategy)
     args.use_text = _str2bool(args.use_text)
+    use_images_raw = getattr(args, "use_images", None)
+    if use_images_raw is None:
+        args.use_images = bool(args.image_columns)
+    else:
+        args.use_images = _str2bool(use_images_raw)
+    if args.use_images and not args.image_columns:
+        parser.error("Use Images is enabled but no image columns were selected.")
+    if not args.use_images:
+        args.image_columns = None
     # If user provided single --preset, prefer that and expose as args.presets for downstream compatibility
     if getattr(args, "preset", None):
         args.presets = [args.preset]
@@ -325,7 +347,13 @@ def main():
             val_size_with_test=args.val_size_with_test,
         )
         args.label_column = label_col
-        args.image_columns = image_cols
+        image_cols = image_cols or []
+        text_cols = text_cols or []
+        if not args.use_images:
+            image_cols = []
+        if not args.use_text:
+            text_cols = []
+        args.image_columns = image_cols if image_cols else None
         args.text_columns = text_cols
     except Exception as e:
         logger.error(f"Failed to read/split input CSVs: {e}")
@@ -349,6 +377,7 @@ def main():
 
     # Expand image paths to absolute locations for every dataframe copy we use downstream
     if args.image_columns:
+        logger.info(f"Resolving image paths for columns {args.image_columns} using base folders: {base_folders}")
         for df_ in (df_train, df_val, df_test, df_train_full):
             if df_ is None:
                 continue
@@ -740,21 +769,22 @@ def main():
 
     label_col = args.label_column
     image_cols = args.image_columns or []
-    img_cols_display = ", ".join(image_cols) if image_cols else "—"
+    include_text = bool(getattr(args, "use_text", True))
 
-    exclude_cols = set(image_cols) | {label_col}
-    text_cols = [
-        c for c in df_train_full.columns
-        if c not in exclude_cols
-        and str(df_train_full[c].dtype) == "object"
-        and df_train_full[c].notna().any()
-    ]
-    text_cols_display = ", ".join(text_cols) if text_cols else "—"
+    base_exclude_cols = set(image_cols) | {label_col}
+    text_cols_detected = []
+    if include_text:
+        text_cols_detected = [
+            c for c in df_train_full.columns
+            if c not in base_exclude_cols
+            and str(df_train_full[c].dtype) == "object"
+            and df_train_full[c].notna().any()
+        ]
+    exclude_cols = base_exclude_cols | (set(text_cols_detected) if include_text else set())
     tabular_cols = [c for c in df_train_full.columns if c not in exclude_cols]
     tabular_count = len(tabular_cols)
 
     presets_used = " ".join(args.presets) if args.presets else "AutoGluon default"
-    time_limit_val = "None" if args.time_limit is None else str(int(args.time_limit))
 
     # --- Custom: Extract model names, backbones, and training knobs from config.yaml in predictor_path.txt ---
     model_arch_names = None
@@ -768,6 +798,7 @@ def main():
     cfg_lr = None
     cfg_batch = None
     config_data = None
+    config_yaml_path = None
     try:
         pred_path_file = "predictor_path.txt"
         if os.path.exists(pred_path_file):
@@ -775,6 +806,7 @@ def main():
                 pred_path = pf.read().strip()
             config_path = os.path.join(pred_path, "config.yaml")
             if os.path.exists(config_path):
+                config_yaml_path = config_path
                 import yaml
                 with open(config_path, "r") as cf:
                     config_data = yaml.safe_load(cf) or {}
@@ -831,6 +863,8 @@ def main():
         image_modality_present = bool(image_cols)
     if not structured_modality_present:
         structured_modality_present = tabular_count > 0
+    if not text_modality_present:
+        text_modality_present = bool(include_text and text_cols_detected)
 
     # Determine presets used (prefer single --preset then --presets list)
     if getattr(args, "preset", None):
@@ -838,40 +872,87 @@ def main():
     else:
         presets_used = " ".join(args.presets) if args.presets else "AutoGluon default"
 
-    # Build the extra run rows in the requested order and with renames
-    extra_run_rows = []
-    extra_run_rows.append(("Model architecture", arch_str))
-    # Insert backbones immediately after model architecture if present
-    if image_backbone:
-        extra_run_rows.append(("Image backbone", image_backbone))
-    if text_modality_present:
-        extra_run_rows.append(("Text backbone", text_backbone or "—"))
-    if structured_backbone:
-        extra_run_rows.append(("Structured backbone", structured_backbone))
-
-    # Modalities (renamed)
-    extra_run_rows.append(("Modalities", "MultiModalPredictor (images + structured/tabular)"))
-    extra_run_rows.append(("Label column", args.label_column))
-    if image_modality_present:
-        extra_run_rows.append(("Unstructured - Image", img_cols_display))
-    if text_cols or text_modality_present:
-        extra_run_rows.append(("Unstructured - Text", text_cols_display))
+    # Build Model Configuration rows in requested order
+    modalities_list = []
     if structured_modality_present:
-        extra_run_rows.append(("Structured - numeric/categorical", str(tabular_count)))
-    # Experiment quality (presets)
-    extra_run_rows.append(("Experiment quality", presets_used))
-    # Model evaluation metric (renamed)
-    extra_run_rows.append(("Model Evaluation Metric", args.eval_metric or "AutoGluon default"))
-    extra_run_rows.append(("Seed", str(int(args.random_seed))))
-    extra_run_rows.append(("time limit(s)", time_limit_val))
+        modalities_list.append("Tabular")
+    if image_modality_present:
+        modalities_list.append("Image")
+    if text_modality_present:
+        modalities_list.append("Text")
+    modalities_desc = " + ".join(modalities_list) if modalities_list else "—"
 
-    # Epochs / LR / Batch from config.yaml if present, else CLI knobs
-    epochs_val = cfg_epochs if cfg_epochs is not None else (args.epochs if args.epochs is not None else "—")
-    lr_val = cfg_lr if cfg_lr is not None else (args.learning_rate if args.learning_rate is not None else "—")
-    batch_val = cfg_batch if cfg_batch is not None else (args.batch_size if args.batch_size is not None else "—")
-    extra_run_rows.append(("Epochs", str(epochs_val)))
-    extra_run_rows.append(("Learning Rate", str(lr_val)))
-    extra_run_rows.append(("Batch Size", str(batch_val)))
+    tabular_backbone_display = structured_backbone or (args.backbone_tabular if structured_modality_present else None) or "—"
+    image_backbone_display = image_backbone or (args.backbone_image if image_modality_present else None) or "—"
+    text_backbone_display = text_backbone or (args.backbone_text if text_modality_present else None) or "—"
+    metric_display = args.eval_metric or "AutoGluon default"
+
+    extra_run_rows = [
+        ("Modalities", modalities_desc),
+        ("Tabular backbone", tabular_backbone_display),
+        ("Image backbone", image_backbone_display),
+        ("Text backbone", text_backbone_display),
+        ("Target column", args.label_column),
+        ("Model evaluation metric", metric_display),
+        ("Experiment quality", presets_used),
+    ]
+
+    # Additional options: list any optional arguments that were explicitly provided
+    def _values_equal(a, b):
+        if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+            if len(a) != len(b):
+                return False
+            for x, y in zip(a, b):
+                try:
+                    if abs(float(x) - float(y)) > 1e-9:
+                        return False
+                except Exception:
+                    if x != y:
+                        return False
+            return True
+        return a == b
+
+    other_option_rows = []
+
+    def _add_option(label, value, *, default=None, predicate=True, formatter=None):
+        if not predicate:
+            return
+        if value is None:
+            return
+        if default is not None and _values_equal(value, default):
+            return
+        formatted = formatter(value) if formatter else str(value)
+        if formatted is None:
+            return
+        if isinstance(formatted, str) and not formatted.strip():
+            return
+        other_option_rows.append((label, formatted))
+
+    _add_option("Fusion backbone", getattr(args, "backbone_fusion", None), default="fusion_transformer")
+    _add_option("Seed", args.random_seed, default=42)
+    _add_option("Time limit (s)", args.time_limit)
+    _add_option("Threshold", args.threshold)
+    _add_option("Cross-validation", "enabled", predicate=bool(args.cross_validation))
+    _add_option("Number of folds", args.num_folds, predicate=bool(args.cross_validation))
+    _add_option("Validation size", args.validation_size, default=0.125)
+    _add_option(
+        "Split probabilities",
+        args.split_probabilities,
+        default=[0.7, 0.1, 0.2],
+        formatter=lambda seq: ", ".join(str(x) for x in seq),
+    )
+    _add_option("Val size (with test)", args.val_size_with_test, default=0.2)
+
+    epochs_val = cfg_epochs if cfg_epochs is not None else args.epochs
+    lr_val = cfg_lr if cfg_lr is not None else args.learning_rate
+    batch_val = cfg_batch if cfg_batch is not None else args.batch_size
+
+    _add_option("Epochs", epochs_val)
+    _add_option("Learning rate", lr_val)
+    _add_option("Batch size", batch_val)
+    _add_option("Hyperparameters", args.hyperparameters)
+
+    extra_run_rows.extend(other_option_rows)
 
     class_balance_block_html = build_class_balance_html(df_train_full, label_col)
 
@@ -1058,13 +1139,28 @@ def main():
         f.write(full_html)
     logger.info(f"Wrote HTML report → {args.output_html}")
 
-    verify_outputs(
-        [
-            (args.output_csv, "CSV metrics"),
-            (args.output_json, "JSON results"),
-            (args.output_html, "HTML report"),
-        ]
-    )
+    if args.output_config:
+        try:
+            if config_yaml_path and os.path.isfile(config_yaml_path):
+                shutil.copy2(config_yaml_path, args.output_config)
+                logger.info(f"Wrote AutoGluon config → {args.output_config}")
+            else:
+                with open(args.output_config, "w") as cfg_out:
+                    cfg_out.write("# config.yaml not found for this run\n")
+                logger.warning(f"AutoGluon config.yaml not found; created placeholder at {args.output_config}")
+        except Exception as e:
+            logger.error(f"Failed to write config output '{args.output_config}': {e}")
+            with open(args.output_config, "w") as cfg_out:
+                cfg_out.write(f"# Failed to copy config.yaml: {e}\n")
+
+    outputs_to_check = [
+        (args.output_csv, "CSV metrics"),
+        (args.output_json, "JSON results"),
+        (args.output_html, "HTML report"),
+    ]
+    if args.output_config:
+        outputs_to_check.append((args.output_config, "AutoGluon config"))
+    verify_outputs(outputs_to_check)
     logger.info(f"Final working directory contents: {os.listdir('.')}")
 
 

@@ -140,11 +140,9 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
     }
     
     # Set eval metric through model config
+    model_block = hp.setdefault("model", {})
     if args.eval_metric:
-        model_block = hp.setdefault("model", {})
         model_block.setdefault("metric_learning", {})["metric"] = str(args.eval_metric)
-    else:
-        model_block = hp.setdefault("model", {})
 
     if text_cols and Version(torch.__version__) < Version("2.6"):
         safe_ckpt = "distilbert-base-uncased"
@@ -230,20 +228,18 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
             model_names_modified = True
 
         if has_text_cols and getattr(args, "backbone_text", None):
-            # nested dict
-            hp.setdefault("model.hf_text", {})["checkpoint_name"] = str(args.backbone_text)
-            # dotted flat keys
-            model_block["hf_text.checkpoint_name"] = str(args.backbone_text)
-            hp["model.hf_text.checkpoint_name"] = str(args.backbone_text)
+            text_choice = str(args.backbone_text)
+            model_block.setdefault("hf_text", {})["checkpoint_name"] = text_choice
+            hp["model.hf_text.checkpoint_name"] = text_choice
         if has_image_cols and getattr(args, "backbone_image", None):
-            hp.setdefault("model.timm_image", {})["checkpoint_name"] = str(args.backbone_image)
-            model_block["timm_image.checkpoint_name"] = str(args.backbone_image)
-            hp["model.timm_image.checkpoint_name"] = str(args.backbone_image)
+            image_choice = str(args.backbone_image)
+            model_block.setdefault("timm_image", {})["checkpoint_name"] = image_choice
+            hp["model.timm_image.checkpoint_name"] = image_choice
         tab_choice = getattr(args, "backbone_tabular", None)
         if tab_choice:
             tab_choice = str(tab_choice)
             if supports_tabular_override:
-                model_block["tabular.backbone"] = tab_choice
+                model_block.setdefault("tabular", {})["backbone"] = tab_choice
                 hp["model.tabular.backbone"] = tab_choice
             else:
                 _log_missing_support("model.tabular.backbone")
@@ -262,8 +258,7 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
         if fusion_choice:
             fusion_choice = str(fusion_choice)
             if supports_fusion_override:
-                model_block["fusion.backbone"] = fusion_choice
-                model_block["fusion"] = fusion_choice
+                model_block.setdefault("fusion", {})["backbone"] = fusion_choice
                 hp["model.fusion.backbone"] = fusion_choice
                 hp["model.fusion"] = fusion_choice
                 hp["model.fusion_backbone"] = fusion_choice

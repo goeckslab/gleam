@@ -15,238 +15,134 @@
     <exit_code range='1:' level='fatal' description='Error occurred. Please check Tool Standard Error'/>
   </stdio>
 
-  <command><![CDATA[
-    #import re
-    #set $dollar = '$$'
-    #set $test_input = getattr($test_dataset_conditional, 'input_test', None)
-    #set $validation_size = getattr($customize_defaults_conditional, 'validation_size', None)
-    #set $split_probabilities = getattr($customize_defaults_conditional, 'split_probabilities', None)
-    #set $val_size_with_test = getattr($customize_defaults_conditional, 'val_size_with_test', None)
-    #set $cross_validation = getattr($customize_defaults_conditional, 'cross_validation', None)
-    #set $num_folds = getattr($customize_defaults_conditional, 'num_folds', None)
-    #set $epochs = getattr($customize_defaults_conditional, 'epochs', None)
-    #set $learning_rate = getattr($customize_defaults_conditional, 'learning_rate', None)
-    #set $batch_size = getattr($customize_defaults_conditional, 'batch_size', None)
-    #set $hyperparameters = getattr($customize_defaults_conditional, 'hyperparameters', None)
-    #set $backbone_image = getattr($use_images_conditional, 'backbone_image', None)
-    #set $image_columns_block = getattr($use_images_conditional, 'image_columns_block', None)
-    #set $image_column_names = []
-    #if $image_columns_block
-      #set $col_value = getattr($image_columns_block, 'image_column_1', None)
-      #if $col_value
-        #set $image_column_names = $image_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($image_columns_block, 'image_column_2', None)
-      #if $col_value
-        #set $image_column_names = $image_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($image_columns_block, 'image_column_3', None)
-      #if $col_value
-        #set $image_column_names = $image_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($image_columns_block, 'image_column_4', None)
-      #if $col_value
-        #set $image_column_names = $image_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($image_columns_block, 'image_column_5', None)
-      #if $col_value
-        #set $image_column_names = $image_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($image_columns_block, 'image_column_6', None)
-      #if $col_value
-        #set $image_column_names = $image_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($image_columns_block, 'image_column_7', None)
-      #if $col_value
-        #set $image_column_names = $image_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($image_columns_block, 'image_column_8', None)
-      #if $col_value
-        #set $image_column_names = $image_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($image_columns_block, 'image_column_9', None)
-      #if $col_value
-        #set $image_column_names = $image_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($image_columns_block, 'image_column_10', None)
-      #if $col_value
-        #set $image_column_names = $image_column_names + [$col_value]
-      #end if
-    #end if
-    #if len($image_column_names) > 0
-      #set $image_columns_cli = " ".join(["'%s'" % col for col in $image_column_names])
-    #else
-      #set $image_columns_cli = None
-    #end if
-    #set $use_text_flag = getattr($use_text_conditional, 'use_text', 'no')
-    #if str($use_text_flag).lower() in ('yes', 'true', '1')
-      #set $use_text_cli = 'true'
-    #else
-      #set $use_text_cli = 'false'
-    #end if
-    #set $backbone_text = getattr($use_text_conditional, 'backbone_text', None)
-    #set $text_columns_block = getattr($use_text_conditional, 'text_columns_block', None)
-    #set $text_column_names = []
-    #if $text_columns_block
-      #set $col_value = getattr($text_columns_block, 'text_column_1', None)
-      #if $col_value
-        #set $text_column_names = $text_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($text_columns_block, 'text_column_2', None)
-      #if $col_value
-        #set $text_column_names = $text_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($text_columns_block, 'text_column_3', None)
-      #if $col_value
-        #set $text_column_names = $text_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($text_columns_block, 'text_column_4', None)
-      #if $col_value
-        #set $text_column_names = $text_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($text_columns_block, 'text_column_5', None)
-      #if $col_value
-        #set $text_column_names = $text_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($text_columns_block, 'text_column_6', None)
-      #if $col_value
-        #set $text_column_names = $text_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($text_columns_block, 'text_column_7', None)
-      #if $col_value
-        #set $text_column_names = $text_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($text_columns_block, 'text_column_8', None)
-      #if $col_value
-        #set $text_column_names = $text_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($text_columns_block, 'text_column_9', None)
-      #if $col_value
-        #set $text_column_names = $text_column_names + [$col_value]
-      #end if
-      #set $col_value = getattr($text_columns_block, 'text_column_10', None)
-      #if $col_value
-        #set $text_column_names = $text_column_names + [$col_value]
-      #end if
-    #end if
-    #if len($text_column_names) > 0
-      #set $text_columns_cli = " ".join(["'%s'" % col for col in $text_column_names])
-    #else
-      #set $text_columns_cli = None
-    #end if
-    #set $missing_image_strategy = getattr($use_images_conditional, 'missing_image_strategy', None)
-    #set $images_zip = getattr($use_images_conditional, 'images_zip', None)
-    #set $images_zips = getattr($use_images_conditional, 'images_zips', None)
-    #set $image_folders = getattr($use_images_conditional, 'image_folders', None)
+  <command detect_errors="exit_code"><![CDATA[
+  #import re
 
-    #if $input_csv
-      #set $sanitized_input_csv = re.sub('[^\\w\\-_\\.]','_', $input_csv.element_identifier.strip())
-      ln -sf '$input_csv' "./${sanitized_input_csv}";
+  ## Sanitize filenames
+  #if $input_csv
+    #set train_csv = re.sub(r'[^\w\-_\\.]', '_', str($input_csv.element_identifier))
+    ln -sf '$input_csv' './$train_csv' &&
+  #end if
+
+  #if $test_dataset_conditional.has_test_dataset == 'yes' and $test_dataset_conditional.input_test
+    #set test_csv = re.sub(r'[^\w\-_\\.]', '_', str($test_dataset_conditional.input_test.element_identifier))
+    ln -sf '$test_dataset_conditional.input_test' './$test_csv' &&
+  #end if
+
+  ## Collect image columns (only when images are enabled)
+  #set image_cols = []
+  #if str($use_images_conditional.use_images).lower() in ['yes', 'true', '1', 'on']
+    #for $i in range(1, 11)
+      #set col = getattr($use_images_conditional.image_columns_block, 'image_column_' + str($i), None)
+      #if $col and str($col).strip()
+        #silent $image_cols.append(str($col).strip())
+      #end if
+    #end for
+  #end if
+
+  ## Collect text columns (only when text is enabled)
+  #set text_cols = []
+  #if str($use_text_conditional.use_text).lower() in ['yes', 'true', '1', 'on']
+    #for $i in range(1, 11)
+      #set col = getattr($use_text_conditional.text_columns_block, 'text_column_' + str($i), None)
+      #if $col and str($col).strip()
+        #silent $text_cols.append(str($col).strip())
+      #end if
+    #end for
+  #end if
+
+# Compute CLI-friendly booleans (coerced to strings)
+#set use_images_cli = 'true' if $image_cols else 'false'
+#set use_text_cli = 'true' if $text_cols else 'false'
+#set missing_image_strategy_cli = 'true' if getattr($use_images_conditional, 'missing_image_strategy', False) else 'false'
+#set cross_validation_cli = 'true' if getattr($customize_defaults_conditional, 'cross_validation', False) else 'false'
+
+  python '$__tool_directory__/multimodal_learner.py' \
+    --input_csv_train './$train_csv' \
+    #if $test_dataset_conditional.has_test_dataset == 'yes' and $test_dataset_conditional.input_test
+    --input_csv_test './$test_csv' \
     #end if
-    #if $test_input
-      #set $sanitized_test_csv = re.sub('[^\\w\\-_\\.]','_', $test_input.element_identifier.strip())
-      ln -sf '$test_input' "./${sanitized_test_csv}";
+    --target_column '$target_column' \
+    --use_images '$use_images_cli' \
+    --use_text   '$use_text_cli' \
+    --missing_image_strategy '$missing_image_strategy_cli' \
+    #if $image_cols
+    --image_columns #for $c in $image_cols '$c' #end for \
+    #end if
+    #if $text_cols
+    --text_columns #for $c in $text_cols '$c' #end for \
+    #end if
+    #if str($use_images_conditional.use_images).lower() in ['yes','true','1','on'] and $use_images_conditional.images_zip
+    --images_zips '$use_images_conditional.images_zip' \
+    #end if
+    #if $threshold
+    --threshold $threshold \
+    #end if
+    #if $time_limit
+    --time_limit $time_limit \
+    #end if
+    --random_seed $random_seed \
+
+    #if $backbone_tabular
+    --backbone_tabular '$backbone_tabular' \
+    #end if
+    #if str($use_images_conditional.use_images).lower() in ['yes','true','1','on'] and $use_images_conditional.backbone_image
+    --backbone_image '$use_images_conditional.backbone_image' \
+    #end if
+    #if str($use_text_conditional.use_text).lower() in ['yes','true','1','on'] and $use_text_conditional.backbone_text
+    --backbone_text '$use_text_conditional.backbone_text' \
+    #end if
+    #if $backbone_fusion
+    --backbone_fusion '$backbone_fusion' \
+    #end if
+    #if $preset
+    --preset '$preset' \
+    #end if
+    #if $eval_metric
+    --eval_metric '$eval_metric' \
     #end if
 
-    python '$__tool_directory__/multimodal_learner.py'
-      --input_csv_train "./${sanitized_input_csv}"
-      #if $test_input
-      --input_csv_test "./${sanitized_test_csv}"
+    ## Advanced customization
+    #if $customize_defaults_conditional.customize_defaults == 'yes'
+      #if $customize_defaults_conditional.validation_size not in [None, ""]
+        --validation_size $customize_defaults_conditional.validation_size \
       #end if
-      --target_column '$target_column'
-      --use_text '$use_text_cli'
+      #if $customize_defaults_conditional.split_probabilities
+        #set probs = [x.strip() for x in str($customize_defaults_conditional.split_probabilities).split(',') if x.strip()]
+        #if len($probs) == 3
+        --split_probabilities $probs[0] $probs[1] $probs[2] \
+        #end if
+      #end if
+      #if $customize_defaults_conditional.val_size_with_test not in [None, ""]
+        --val_size_with_test $customize_defaults_conditional.val_size_with_test \
+      #end if
+      #if $customize_defaults_conditional.cross_validation
+        --cross_validation '$cross_validation_cli' \
+      #end if
+      #if $customize_defaults_conditional.num_folds not in [None, ""]
+        --num_folds $customize_defaults_conditional.num_folds \
+      #end if
+      #if $customize_defaults_conditional.epochs not in [None, ""]
+        --epochs $customize_defaults_conditional.epochs \
+      #end if
+      #if $customize_defaults_conditional.learning_rate not in [None, ""]
+        --learning_rate $customize_defaults_conditional.learning_rate \
+      #end if
+      #if $customize_defaults_conditional.batch_size not in [None, ""]
+        --batch_size $customize_defaults_conditional.batch_size \
+      #end if
+      #if $customize_defaults_conditional.hyperparameters
+        --hyperparameters '$customize_defaults_conditional.hyperparameters' \
+      #end if
+    #end if
 
-      #if $image_columns_cli
-      --image_columns $image_columns_cli
-      #end if
-      #if $text_columns_cli
-      --text_columns $text_columns_cli
-      #end if
-      #if $images_zip
-      --images_zip '$images_zip'
-      #end if
-      #if $images_zips
-      --images_zips $images_zips
-      #end if
-      #if $image_folders
-      --image_folders $image_folders
-      #end if
-      #if $missing_image_strategy
-      --missing_image_strategy '$missing_image_strategy'
-      #end if
+    --output_csv '$output_csv' \
+    --output_json '$output_json' \
+    --output_html '$output_html' \
+    --output_config '$output_config' \
 
-      #if $threshold not in (None, '')
-      --threshold $threshold
-      #end if
-
-      #if $time_limit
-      --time_limit $time_limit
-      #end if
-      #if $validation_size not in (None, '')
-      --validation_size $validation_size
-      #end if
-      #if $split_probabilities
-      #set $split_probs = [p.strip() for p in str($split_probabilities).replace(',', ' ').split()]
-      #if len($split_probs) == 3
-      --split_probabilities ${" ".join($split_probs)}
-      #end if
-      #end if
-      #if $val_size_with_test not in (None, '')
-      --val_size_with_test $val_size_with_test
-      #end if
-
-      #if $cross_validation
-      --cross_validation '$cross_validation'
-      #end if
-      #if $num_folds not in (None, '')
-      --num_folds $num_folds
-      #end if
-      #if $epochs not in (None, '')
-      --epochs $epochs
-      #end if
-      #if $learning_rate not in (None, '')
-      --learning_rate $learning_rate
-      #end if
-      #if $batch_size not in (None, '')
-      --batch_size $batch_size
-      #end if
-
-      #if $backbone_image
-      --backbone_image '$backbone_image'
-      #end if
-      #if $backbone_text
-      --backbone_text '$backbone_text'
-      #end if
-      #if $backbone_tabular
-      --backbone_tabular '$backbone_tabular'
-      #end if
-      #if $backbone_fusion
-      --backbone_fusion '$backbone_fusion'
-      #end if
-
-      #if $preset
-      --preset '$preset'
-      #end if
-      #if $eval_metric
-      --eval_metric '$eval_metric'
-      #end if
-      #if $hyperparameters
-      --hyperparameters '$hyperparameters'
-      #end if
-
-      #if $random_seed not in (None, '')
-      --random_seed '$random_seed'
-      #end if
-
-      --output_csv '$output_csv'
-      --output_json '$output_json'
-      --output_html '$output_html' &&
-
-    mkdir -p '$output_model.extra_files_path' &&
-    MODEL_DIR=''
-    MODEL_DIR_FILE='predictor_path.txt' &&
-
-    echo 'Multimodal Learner experiment is done!'
+  && mkdir -p '$output_model.extra_files_path' \
+  && echo "Multimodal Learner finished successfully"
   ]]></command>
 
   <inputs>
@@ -288,92 +184,18 @@
         </param>
         <conditional name='image_columns_block'>
           <param name='image_column_count' type='select' label='How many columns store image paths?'>
-            <option value='1' selected='true'>1</option>
-            <option value='2'>2</option>
-            <option value='3'>3</option>
-            <option value='4'>4</option>
-            <option value='5'>5</option>
-            <option value='6'>6</option>
-            <option value='7'>7</option>
-            <option value='8'>8</option>
-            <option value='9'>9</option>
-            <option value='10'>10</option>
+            #for $i in range(1, 11)
+              <option value='${i}'#if $i == 1 then " selected='true'"#end if>${i}</option>
+            #end for
           </param>
-          <when value='1'>
-            <param name='image_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 1' help='Select the column that holds image paths'/>
-          </when>
-          <when value='2'>
-            <param name='image_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 1'/>
-            <param name='image_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 2'/>
-          </when>
-          <when value='3'>
-            <param name='image_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 1'/>
-            <param name='image_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 2'/>
-            <param name='image_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 3'/>
-          </when>
-          <when value='4'>
-            <param name='image_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 1'/>
-            <param name='image_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 2'/>
-            <param name='image_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 3'/>
-            <param name='image_column_4' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 4'/>
-          </when>
-          <when value='5'>
-            <param name='image_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 1'/>
-            <param name='image_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 2'/>
-            <param name='image_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 3'/>
-            <param name='image_column_4' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 4'/>
-            <param name='image_column_5' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 5'/>
-          </when>
-          <when value='6'>
-            <param name='image_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 1'/>
-            <param name='image_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 2'/>
-            <param name='image_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 3'/>
-            <param name='image_column_4' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 4'/>
-            <param name='image_column_5' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 5'/>
-            <param name='image_column_6' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 6'/>
-          </when>
-          <when value='7'>
-            <param name='image_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 1'/>
-            <param name='image_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 2'/>
-            <param name='image_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 3'/>
-            <param name='image_column_4' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 4'/>
-            <param name='image_column_5' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 5'/>
-            <param name='image_column_6' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 6'/>
-            <param name='image_column_7' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 7'/>
-          </when>
-          <when value='8'>
-            <param name='image_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 1'/>
-            <param name='image_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 2'/>
-            <param name='image_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 3'/>
-            <param name='image_column_4' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 4'/>
-            <param name='image_column_5' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 5'/>
-            <param name='image_column_6' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 6'/>
-            <param name='image_column_7' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 7'/>
-            <param name='image_column_8' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 8'/>
-          </when>
-          <when value='9'>
-            <param name='image_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 1'/>
-            <param name='image_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 2'/>
-            <param name='image_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 3'/>
-            <param name='image_column_4' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 4'/>
-            <param name='image_column_5' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 5'/>
-            <param name='image_column_6' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 6'/>
-            <param name='image_column_7' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 7'/>
-            <param name='image_column_8' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 8'/>
-            <param name='image_column_9' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 9'/>
-          </when>
-          <when value='10'>
-            <param name='image_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 1'/>
-            <param name='image_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 2'/>
-            <param name='image_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 3'/>
-            <param name='image_column_4' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 4'/>
-            <param name='image_column_5' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 5'/>
-            <param name='image_column_6' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 6'/>
-            <param name='image_column_7' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 7'/>
-            <param name='image_column_8' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 8'/>
-            <param name='image_column_9' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 9'/>
-            <param name='image_column_10' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Image column 10'/>
-          </when>
+          #for $i in range(1, 11)
+            <when value='${i}'>
+              #for $j in range(1, $i + 1)
+                <param name='image_column_${j}' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false'
+                       label='Image column ${j}'#if $j == 1 then " help='Select the column that holds image paths'"#end if/>
+              #end for
+            </when>
+          #end for
         </conditional>
         <param name='images_zip' type='data' format='zip' label='Images ZIP' optional='true' help='ZIP file containing all images'/>
         <param name='missing_image_strategy' type='boolean' truevalue='true' falsevalue='false' checked='false' label='Drop rows with missing images' help='If true, drop rows with missing image paths; if false (default), fill with placeholder image'/>
@@ -397,92 +219,18 @@
         </param>
         <conditional name='text_columns_block'>
           <param name='text_column_count' type='select' label='How many columns store text?'>
-            <option value='1' selected='true'>1</option>
-            <option value='2'>2</option>
-            <option value='3'>3</option>
-            <option value='4'>4</option>
-            <option value='5'>5</option>
-            <option value='6'>6</option>
-            <option value='7'>7</option>
-            <option value='8'>8</option>
-            <option value='9'>9</option>
-            <option value='10'>10</option>
+            #for $i in range(1, 11)
+              <option value='${i}'#if $i == 1 then " selected='true'"#end if>${i}</option>
+            #end for
           </param>
-          <when value='1'>
-            <param name='text_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 1' help='Select the column that holds text data'/>
-          </when>
-          <when value='2'>
-            <param name='text_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 1'/>
-            <param name='text_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 2'/>
-          </when>
-          <when value='3'>
-            <param name='text_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 1'/>
-            <param name='text_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 2'/>
-            <param name='text_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 3'/>
-          </when>
-          <when value='4'>
-            <param name='text_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 1'/>
-            <param name='text_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 2'/>
-            <param name='text_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 3'/>
-            <param name='text_column_4' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 4'/>
-          </when>
-          <when value='5'>
-            <param name='text_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 1'/>
-            <param name='text_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 2'/>
-            <param name='text_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 3'/>
-            <param name='text_column_4' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 4'/>
-            <param name='text_column_5' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 5'/>
-          </when>
-          <when value='6'>
-            <param name='text_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 1'/>
-            <param name='text_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 2'/>
-            <param name='text_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 3'/>
-            <param name='text_column_4' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 4'/>
-            <param name='text_column_5' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 5'/>
-            <param name='text_column_6' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 6'/>
-          </when>
-          <when value='7'>
-            <param name='text_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 1'/>
-            <param name='text_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 2'/>
-            <param name='text_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 3'/>
-            <param name='text_column_4' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 4'/>
-            <param name='text_column_5' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 5'/>
-            <param name='text_column_6' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 6'/>
-            <param name='text_column_7' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 7'/>
-          </when>
-          <when value='8'>
-            <param name='text_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 1'/>
-            <param name='text_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 2'/>
-            <param name='text_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 3'/>
-            <param name='text_column_4' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 4'/>
-            <param name='text_column_5' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 5'/>
-            <param name='text_column_6' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 6'/>
-            <param name='text_column_7' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 7'/>
-            <param name='text_column_8' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 8'/>
-          </when>
-          <when value='9'>
-            <param name='text_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 1'/>
-            <param name='text_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 2'/>
-            <param name='text_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 3'/>
-            <param name='text_column_4' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 4'/>
-            <param name='text_column_5' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 5'/>
-            <param name='text_column_6' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 6'/>
-            <param name='text_column_7' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 7'/>
-            <param name='text_column_8' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 8'/>
-            <param name='text_column_9' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 9'/>
-          </when>
-          <when value='10'>
-            <param name='text_column_1' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 1'/>
-            <param name='text_column_2' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 2'/>
-            <param name='text_column_3' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 3'/>
-            <param name='text_column_4' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 4'/>
-            <param name='text_column_5' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 5'/>
-            <param name='text_column_6' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 6'/>
-            <param name='text_column_7' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 7'/>
-            <param name='text_column_8' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 8'/>
-            <param name='text_column_9' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 9'/>
-            <param name='text_column_10' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false' label='Text column 10'/>
-          </when>
+          #for $i in range(1, 11)
+            <when value='${i}'>
+              #for $j in range(1, $i + 1)
+                <param name='text_column_${j}' type='data_column' data_ref='input_csv' use_header_names='true' numerical='false'
+                       label='Text column ${j}'#if $j == 1 then " help='Select the column that holds text data'"#end if/>
+              #end for
+            </when>
+          #end for
         </conditional>
       </when>
       <when value='no'/>
@@ -557,6 +305,7 @@
     <data name='output_json' format='json' label='${tool.name} - Results JSON'/>
     <data name='output_html' format='html' label='${tool.name} - HTML Report'/>
     <data name='output_model' format='zip' label='${tool.name} model files'/>
+    <data name='output_config' format='yaml' label='${tool.name} - AutoGluon config'/>
   </outputs>
 
   <tests>
