@@ -23,37 +23,6 @@
 
   <command detect_errors="exit_code"><![CDATA[
 #import re
-#set $image_columns = []
-#if $use_images_conditional.use_images == "yes" and $use_images_conditional.image_columns_block
-  #set $block = $use_images_conditional.image_columns_block
-  #for $i in (1, 2, 3)
-    #set $col = getattr($block, 'image_column_%d' % $i, None)
-    #if $col
-      #set $image_columns = $image_columns + [$col]
-    #end if
-  #end for
-#end if
-#if len($image_columns) > 0
-  #set $image_columns_cli = " ".join(["'%s'" % col for col in $image_columns])
-#else
-  #set $image_columns_cli = None
-#end if
-
-#set $text_columns = []
-#if $use_text_conditional.use_text == "yes" and $use_text_conditional.text_columns_block
-  #set $block = $use_text_conditional.text_columns_block
-  #for $i in (1, 2, 3)
-    #set $col = getattr($block, 'text_column_%d' % $i, None)
-    #if $col
-      #set $text_columns = $text_columns + [$col]
-    #end if
-  #end for
-#end if
-#if len($text_columns) > 0
-  #set $text_columns_cli = " ".join(["'%s'" % col for col in $text_columns])
-#else
-  #set $text_columns_cli = None
-#end if
 
 #set $image_zip_paths = []
 #if $use_images_conditional.use_images == "yes"
@@ -80,9 +49,6 @@ python '$__tool_directory__/multimodal_learner.py'
   #end if
   --target_column '$target_column'
 
-  #if $image_columns_cli
-  --image_columns $image_columns_cli
-  #end if
   #if $use_images_conditional.use_images == "yes"
     #if $images_zip_cli
     --images_zip $images_zip_cli
@@ -93,11 +59,8 @@ python '$__tool_directory__/multimodal_learner.py'
     #end if
   #end if
 
-  #if $text_columns_cli
-  --text_columns $text_columns_cli
-  #end if
-  #if $use_text_conditional.use_text == "yes" and $use_text_conditional.backbone_text
-  --backbone_text '$use_text_conditional.backbone_text'
+  #if $backbone_text not in ("", None)
+  --backbone_text '$backbone_text'
   #end if
 
   --preset '$preset'
@@ -143,7 +106,7 @@ python '$__tool_directory__/multimodal_learner.py'
 ]]></command>
 
   <inputs>
-    <param name="input_csv" type="data" format="csv,tsv" label="Training dataset (CSV/TSV)" help="Must contain the target column and optional image/text paths"/>
+    <param name="input_csv" type="data" format="csv,tsv" label="Training dataset (CSV/TSV)" help="Must contain the target column and optional image paths"/>
     <param name="target_column" type="data_column" data_ref="input_csv" numerical="false" use_header_names="true" label="Target / Label column"/>
 
     <!-- Tabular backbone selection removed; defaults used inside AutoGluon -->
@@ -156,6 +119,17 @@ python '$__tool_directory__/multimodal_learner.py'
       <when value="no"/>
     </conditional>
 
+    <param name="backbone_text" type="select" label="Text backbone" optional="true">
+      <option value="microsoft/deberta-v3-base" selected="true">microsoft/deberta-v3-base</option>
+      <option value="microsoft/deberta-v3-small">microsoft/deberta-v3-small</option>
+      <option value="google/electra-base-discriminator">google/electra-base-discriminator</option>
+      <option value="google/electra-small-discriminator">google/electra-small-discriminator</option>
+      <option value="roberta-base">roberta-base</option>
+      <option value="bert-base-uncased">bert-base-uncased</option>
+      <option value="distilroberta-base">distilroberta-base</option>
+      <option value="albert-base-v2">albert-base-v2</option>
+    </param>
+
     <conditional name="use_images_conditional">
       <param name="use_images" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Use image modality?"/>
       <when value="yes">
@@ -163,53 +137,24 @@ python '$__tool_directory__/multimodal_learner.py'
           <param name="images_zip" type="data" format="zip" label="ZIP file containing images"/>
         </repeat>
         <param name="backbone_image" type="select" label="Image backbone" optional="true">
-          <option value="swin_base_patch4_window7_224" selected="true">Swin Base 224</option>
-          <option value="swin_large_patch4_window12_384.in22k_ft_in1k">Swin Large 384</option>
-          <option value="vit_base_patch16_224">ViT Base 224</option>
-          <option value="resnet50">ResNet-50</option>
-          <option value="convnext_base">ConvNeXt Base</option>
-        </param>
-        <conditional name="image_columns_block">
-          <param name="image_column_count" type="select" label="Number of image path columns">
-            <option value="1" selected="true">1</option>
-            <option value="2">2</option>
-            <option value="3">3</option>
-          </param>
-          <when value="1"><param name="image_column_1" type="data_column" data_ref="input_csv" use_header_names="true" label="Image path column 1"/></when>
-          <when value="2"><param name="image_column_1" type="data_column" data_ref="input_csv" use_header_names="true" label="Image path column 1"/>
-                         <param name="image_column_2" type="data_column" data_ref="input_csv" use_header_names="true" label="Image path column 2"/></when>
-          <when value="3"><param name="image_column_1" type="data_column" data_ref="input_csv" use_header_names="true" label="Image path column 1"/>
-                         <param name="image_column_2" type="data_column" data_ref="input_csv" use_header_names="true" label="Image path column 2"/>
-                         <param name="image_column_3" type="data_column" data_ref="input_csv" use_header_names="true" label="Image path column 3"/></when>
-        </conditional>
+          <option value='swin_base_patch4_window7_224' selected='true'>swin_base_patch4_window7_224</option>
+          <option value='swin_large_patch4_window12_384.in22k_ft_in1k'>swin_large_patch4_window12_384.in22k_ft_in1k</option>
+          <option value='swin_small_patch4_window7_224'>swin_small_patch4_window7_224</option>
+          <option value='swin_tiny_patch4_window7_224'>swin_tiny_patch4_window7_224</option>
+          <option value='caformer_b36.in21k_ft_in1k'>caformer_b36.in21k_ft_in1k</option>
+          <option value='caformer_m36.in21k_ft_in1k'>caformer_m36.in21k_ft_in1k</option>
+          <option value='caformer_s36.in21k_ft_in1k'>caformer_s36.in21k_ft_in1k</option>
+          <option value='caformer_s18.in1k'>caformer_s18.in1k</option>
+          <option value='caformer_b36.sail_in22k_ft_in1k'>caformer_b36.sail_in22k_ft_in1k</option>
+          <option value='caformer_m36.sail_in22k_ft_in1k'>caformer_m36.sail_in22k_ft_in1k</option>
+          <option value='caformer_s36.sail_in22k_ft_in1k'>caformer_s36.sail_in22k_ft_in1k</option>
+          <option value='vit_base_patch16_224'>vit_base_patch16_224</option>
+          <option value='vit_large_patch14_224'>vit_large_patch14_224</option>
+          <option value='convnext_base'>convnext_base</option>
+          <option value='eva02_base_patch14_448.mim_in22k_ft_in22k_in1k'>eva02_base_patch14_448.mim_in22k_ft_in22k_in1k</option>
+          <option value='resnet50'>resnet50</option>
         <param name="missing_image_strategy" type="boolean" truevalue="true" falsevalue="false" checked="false"
                label="Drop rows with missing images?" help="True = drop, False = replace with placeholder (default)"/>
-      </when>
-      <when value="no"/>
-    </conditional>
-
-    <conditional name="use_text_conditional">
-      <param name="use_text" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Use text modality?"/>
-      <when value="yes">
-        <param name="backbone_text" type="select" label="Text backbone" optional="true">
-          <option value="microsoft/deberta-v3-base" selected="true">DeBERTa-v3-base</option>
-          <option value="microsoft/deberta-v3-small">DeBERTa-v3-small</option>
-          <option value="google/electra-base-discriminator">ELECTRA-base</option>
-          <option value="roberta-base">RoBERTa-base</option>
-        </param>
-        <conditional name="text_columns_block">
-          <param name="text_column_count" type="select" label="Number of text columns">
-            <option value="1" selected="true">1</option>
-            <option value="2">2</option>
-            <option value="3">3</option>
-          </param>
-          <when value="1"><param name="text_column_1" type="data_column" data_ref="input_csv" use_header_names="true" label="Text column 1"/></when>
-          <when value="2"><param name="text_column_1" type="data_column" data_ref="input_csv" use_header_names="true" label="Text column 1"/>
-                         <param name="text_column_2" type="data_column" data_ref="input_csv" use_header_names="true" label="Text column 2"/></when>
-          <when value="3"><param name="text_column_1" type="data_column" data_ref="input_csv" use_header_names="true" label="Text column 1"/>
-                         <param name="text_column_2" type="data_column" data_ref="input_csv" use_header_names="true" label="Text column 2"/>
-                         <param name="text_column_3" type="data_column" data_ref="input_csv" use_header_names="true" label="Text column 3"/></when>
-        </conditional>
       </when>
       <when value="no"/>
     </conditional>

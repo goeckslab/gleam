@@ -84,26 +84,13 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
     Build hyperparameters for MultiModalPredictor.
     Handles text checkpoints for torch<2.6 and merges user overrides.
     """
-    img_set = set(image_columns or [])
     inferred_text_cols = [
         c for c in df_train.columns
-        if c not in img_set | {args.label_column}
+        if c != args.label_column
         and str(df_train[c].dtype) == "object"
         and df_train[c].notna().any()
     ]
-    explicit_text_cols = getattr(args, "text_columns", None)
-    use_text = getattr(args, "use_text", True)
-    if not use_text:
-        text_cols: List[str] = []
-    elif explicit_text_cols is not None:
-        seen = set()
-        text_cols = []
-        for c in explicit_text_cols:
-            if c in df_train.columns and c not in seen:
-                text_cols.append(c)
-                seen.add(c)
-    else:
-        text_cols = inferred_text_cols
+    text_cols = inferred_text_cols
 
     ag_version = None
     try:
@@ -186,7 +173,7 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
     # Map backbone selections into mm_hparams if provided
     try:
         has_text_cols = bool(text_cols)
-        has_image_cols = bool(image_columns)
+        has_image_cols = False
         model_names_cache: Optional[List[str]] = None
         model_names_modified = False
 
@@ -253,7 +240,7 @@ def train_predictor(
     """
     logger.info("Starting AutoGluon MultiModal training...")
     predictor = MultiModalPredictor(label=args.label_column, path=None)
-    column_types = {c: "image_path" for c in (image_columns or [])}
+    column_types = {}
 
     mm_fit_kwargs = dict(
         train_data=df_train,
@@ -556,7 +543,7 @@ def run_autogluon_experiment(
         len(df_train),
         len(df_val),
         len(df_test_internal),
-        bool(test_dataset),
+        (test_dataset is not None and not test_dataset.empty),
     )
     predictor.fit(**fit_kwargs)
 

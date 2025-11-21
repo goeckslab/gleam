@@ -160,8 +160,8 @@ def write_outputs(
 
     # HTML report assembly
     label_col = args.target_column
-    image_cols = args.image_columns or []
-    include_text = bool(getattr(args, "text_columns", None))
+    image_cols = []
+    include_text = False
 
     class_balance_block_html = build_class_balance_html(df_train_full, label_col)
     summary_perf_table_html = build_model_performance_summary_table(

@@ -32,7 +32,7 @@ def load_user_hparams(hp_arg: Optional[str]) -> dict:
         with open(s, "r") as f:
             return json.load(f)
     except Exception as e:
-        logger.warning(f"Could not parse --hyperparameters: {e}. Ignoring.")
+        LOG.warning(f"Could not parse --hyperparameters: {e}. Ignoring.")
         return {}
 
 def set_seeds(seed: int = 42):
@@ -65,7 +65,7 @@ def prepare_image_search_dirs(args) -> Optional[Path]:
         return None
 
     root = Path(tempfile.mkdtemp(prefix="autogluon_images_"))
-    logger.info(f"Extracting {len(args.images_zip)} image ZIP(s) to {root}")
+    LOG.info(f"Extracting {len(args.images_zip)} image ZIP(s) to {root}")
 
     for zip_path in args.images_zip:
         path = Path(zip_path)
@@ -73,56 +73,55 @@ def prepare_image_search_dirs(args) -> Optional[Path]:
             raise FileNotFoundError(f"Image ZIP not found: {zip_path}")
         with zipfile.ZipFile(path, 'r') as z:
             z.extractall(root)
-        logger.info(f"Extracted {path.name}")
+        LOG.info(f"Extracted {path.name}")
 
     return root
 
 
-def absolute_path_expander(df: pd.DataFrame, extracted_root: Optional[Path], image_columns: List[str]):
-    if extracted_root is None or not image_columns:
-        return
+def absolute_path_expander(df: pd.DataFrame, extracted_root: Optional[Path], image_columns: Optional[List[str]]) -> List[str]:
+    """
+    Resolve image paths to absolute paths. If no image_columns are provided,
+    infers candidate columns whose values resolve to existing files (checking
+    absolute paths first, then paths relative to the extracted_root).
+    """
+    if df is None or df.empty:
+        return []
 
-    placeholder = str(extracted_root / "__placeholder__.png")
-    from PIL import Image
-    if not os.path.exists(placeholder):
-        Image.new("RGB", (1, 1)).save(placeholder)
+    image_columns = [c for c in (image_columns or []) if c in df.columns]
 
-    strategy_remove = os.getenv("MISSING_IMAGE_STRATEGY", "").lower() == "true" or False
+    def resolve(p):
+        if pd.isna(p):
+            return None
+        orig = Path(str(p).strip())
+        candidates = []
+        if orig.is_absolute():
+            candidates.append(orig)
+        if extracted_root is not None:
+            candidates.extend([extracted_root / orig, extracted_root / orig.name])
+        for cand in candidates:
+            if cand.exists():
+                return str(cand.resolve())
+        return None
+
+    # Infer image columns if none were provided
+    if not image_columns:
+        obj_cols = [c for c in df.columns if str(df[c].dtype) == "object"]
+        inferred = []
+        for col in obj_cols:
+            sample = df[col].dropna().head(50)
+            if sample.empty:
+                continue
+            resolved_sample = sample.apply(resolve)
+            if resolved_sample.notna().any():
+                inferred.append(col)
+        image_columns = inferred
+        if image_columns:
+            LOG.info(f"Inferred image columns: {image_columns}")
 
     for col in image_columns:
-        if col not in df.columns:
-            continue
+        df[col] = df[col].apply(resolve)
 
-        def resolve(p):
-            if pd.isna(p):
-                return None
-            orig = Path(str(p).strip())
-            candidates = [
-                extracted_root / orig,
-                extracted_root / orig.name,
-            ]
-            for cand in candidates:
-                if cand.exists():
-                    return str(cand.resolve())
-            return None
-
-        resolved = df[col].apply(resolve)
-        missing = resolved.isna()
-
-        if missing.any():
-            count = missing.sum()
-            if strategy_remove:
-                logger.warning(f"{col}: dropping {count} rows with missing images")
-            else:
-                resolved[missing] = placeholder
-                logger.info(f"{col}: filled {count} missing images with placeholder")
-
-        df[col] = resolved
-
-    if strategy_remove:
-        before = len(df)
-        df.dropna(subset=image_columns, inplace=True)
-        logger.info(f"Dropped {before - len(df)} total rows due to missing images")
+    return image_columns
 
 
 def verify_outputs(paths):

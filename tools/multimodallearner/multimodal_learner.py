@@ -53,10 +53,8 @@ def parse_args(argv=None):
     parser.add_argument("--output_json", default="results.json")
     parser.add_argument("--output_html", default="report.html")
     parser.add_argument("--output_config", default=None)
-    parser.add_argument("--image_columns", nargs="*", default=None)
     parser.add_argument("--images_zip", nargs="*", default=None,
                         help="One or more ZIP files that contain image assets")
-    parser.add_argument("--text_columns", nargs="*", default=None)
     parser.add_argument("--missing_image_strategy", default="false",
                         help="true/false: remove rows with missing images or use placeholder")
     parser.add_argument("--threshold", type=float, default=None)
@@ -222,8 +220,7 @@ def main():
     # ------------------------------------------------------------------
     extracted_imgs_path = prepare_image_search_dirs(args)
 
-    image_cols = args.image_columns or []
-    absolute_path_expander(train_dataset, extracted_imgs_path, image_cols)
+    image_cols = absolute_path_expander(train_dataset, extracted_imgs_path, None)
     if test_dataset is not None:
         absolute_path_expander(test_dataset, extracted_imgs_path, image_cols)
 
@@ -266,17 +263,7 @@ def main():
     if test_dataset is not None and args.target_column not in test_dataset.columns:
         logger.error(f"Target column '{args.target_column}' not found in test data.")
         sys.exit(1)
-    if args.image_columns:
-        for c in args.image_columns:
-            if c not in train_dataset.columns:
-                logger.error(f"Image column '{c}' missing in training data.")
-                sys.exit(1)
-    if args.text_columns:
-        for c in args.text_columns:
-            if c not in train_dataset.columns:
-                logger.error(f"Text column '{c}' missing in training data.")
-                sys.exit(1)
-
+    # Image columns are auto-inferred; image_cols already resolved to absolute paths.
     # ------------------------------------------------------------------
     # Build AutoGluon configuration from CLI knobs
     # ------------------------------------------------------------------
