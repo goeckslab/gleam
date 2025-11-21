@@ -101,10 +101,10 @@ def _summarize_config(cfg: dict, args) -> List[tuple[str, str]]:
                 break
     rows.append(("Tabular backbone", tabular_val))
 
-    image_val = model_cfg.get("timm_image", {}).get("checkpoint_name") or (getattr(args, "backbone_image", None) or "—")
+    image_val = model_cfg.get("timm_image", {}).get("checkpoint_name") or "—"
     rows.append(("Image backbone", image_val))
 
-    text_val = model_cfg.get("hf_text", {}).get("checkpoint_name") or (getattr(args, "backbone_text", None) or "—")
+    text_val = model_cfg.get("hf_text", {}).get("checkpoint_name") or "—"
     rows.append(("Text backbone", text_val))
 
     fusion_val = "—"
