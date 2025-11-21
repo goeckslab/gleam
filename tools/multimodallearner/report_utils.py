@@ -6,6 +6,7 @@ import json
 import platform
 import shutil
 import subprocess
+import yaml
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -52,6 +53,90 @@ def _copy_config_if_available(pred_path: Optional[str], output_config: Optional[
                 cfg_out.write(f"# Failed to copy config.yaml: {e}\n")
         except Exception:
             pass
+
+
+def _load_config_yaml(args, predictor) -> dict:
+    """
+    Load config.yaml either from the predictor path or the exported output_config.
+    """
+    candidates = []
+    pred_path = getattr(predictor, "path", None)
+    if pred_path:
+        cfg_path = os.path.join(pred_path, "config.yaml")
+        if os.path.isfile(cfg_path):
+            candidates.append(cfg_path)
+    if args.output_config and os.path.isfile(args.output_config):
+        candidates.append(args.output_config)
+
+    for p in candidates:
+        try:
+            with open(p, "r") as f:
+                return yaml.safe_load(f) or {}
+        except Exception:
+            continue
+    return {}
+
+
+def _summarize_config(cfg: dict, args) -> List[tuple[str, str]]:
+    """
+    Build rows describing model components and key hyperparameters from a loaded config.yaml.
+    Falls back to CLI args when config values are missing.
+    """
+    rows: List[tuple[str, str]] = []
+    model_cfg = cfg.get("model", {}) if isinstance(cfg, dict) else {}
+    names = model_cfg.get("names") or []
+    if names:
+        rows.append(("Model components", ", ".join(names)))
+
+    # Tabular backbone with data types
+    tabular_val = "—"
+    for k, v in model_cfg.items():
+        if k in ("names", "hf_text", "timm_image"):
+            continue
+        if isinstance(v, dict) and "data_types" in v:
+            dtypes = v.get("data_types") or []
+            if any(t in ("categorical", "numerical") for t in dtypes):
+                dt_str = ", ".join(dtypes) if dtypes else ""
+                tabular_val = f"{k} ({dt_str})" if dt_str else k
+                break
+    rows.append(("Tabular backbone", tabular_val))
+
+    image_val = model_cfg.get("timm_image", {}).get("checkpoint_name") or (getattr(args, "backbone_image", None) or "—")
+    rows.append(("Image backbone", image_val))
+
+    text_val = model_cfg.get("hf_text", {}).get("checkpoint_name") or (getattr(args, "backbone_text", None) or "—")
+    rows.append(("Text backbone", text_val))
+
+    fusion_val = "—"
+    for k in model_cfg.keys():
+        if str(k).startswith("fusion"):
+            fusion_val = k
+            break
+    rows.append(("Fusion backbone", fusion_val))
+
+    # Optimizer block
+    optim_cfg = cfg.get("optim", {}) if isinstance(cfg, dict) else {}
+    optim_map = [
+        ("optim_type", "Optimizer"),
+        ("lr", "Learning rate"),
+        ("weight_decay", "Weight decay"),
+        ("lr_decay", "LR decay"),
+        ("max_epochs", "Max epochs"),
+        ("max_steps", "Max steps"),
+        ("patience", "Early-stop patience"),
+        ("check_val_every_n_epoch", "Val check every N epochs"),
+        ("top_k", "Top K checkpoints"),
+        ("top_k_average_method", "Top K averaging"),
+    ]
+    for key, label in optim_map:
+        if key in optim_cfg:
+            rows.append((label, optim_cfg[key]))
+
+    env_cfg = cfg.get("env", {}) if isinstance(cfg, dict) else {}
+    if "batch_size" in env_cfg:
+        rows.append(("Global batch size", env_cfg["batch_size"]))
+
+    return rows
 
 
 def write_outputs(
@@ -178,15 +263,13 @@ def write_outputs(
     except Exception as e:
         feature_importance_html = f"<p>Feature importance unavailable: {e}</p>"
 
+    cfg_yaml = _load_config_yaml(args, predictor)
+    config_rows = _summarize_config(cfg_yaml, args)
     extra_run_rows = [
         ("Target column", label_col),
         ("Model evaluation metric", args.eval_metric or "AutoGluon default"),
         ("Experiment quality", args.preset or "AutoGluon default"),
-        ("Tabular backbone", getattr(args, "backbone_tabular", None) or "—"),
-        ("Image backbone", args.backbone_image or "—"),
-        ("Text backbone", args.backbone_text or "—"),
-        ("Fusion backbone", getattr(args, "backbone_fusion", None) or "—"),
-    ]
+    ] + config_rows
 
     summary_html = build_summary_html(
         predictor=predictor,

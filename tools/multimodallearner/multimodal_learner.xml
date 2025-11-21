@@ -109,8 +109,6 @@ python '$__tool_directory__/multimodal_learner.py'
     <param name="input_csv" type="data" format="csv,tsv" label="Training dataset (CSV/TSV)" help="Must contain the target column and optional image paths"/>
     <param name="target_column" type="data_column" data_ref="input_csv" numerical="false" use_header_names="true" label="Target / Label column"/>
 
-    <!-- Tabular backbone selection removed; defaults used inside AutoGluon -->
-
     <conditional name="test_dataset_conditional">
       <param name="has_test_dataset" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Provide separate test dataset?"/>
       <when value="yes">
@@ -153,13 +151,12 @@ python '$__tool_directory__/multimodal_learner.py'
           <option value='convnext_base'>convnext_base</option>
           <option value='eva02_base_patch14_448.mim_in22k_ft_in22k_in1k'>eva02_base_patch14_448.mim_in22k_ft_in22k_in1k</option>
           <option value='resnet50'>resnet50</option>
+        </param>
         <param name="missing_image_strategy" type="boolean" truevalue="true" falsevalue="false" checked="false"
                label="Drop rows with missing images?" help="True = drop, False = replace with placeholder (default)"/>
       </when>
       <when value="no"/>
     </conditional>
-
-    <!-- Fusion backbone selection removed; defaults used inside AutoGluon -->
 
     <param name="preset" type="select" label="Quality preset">
       <option value="medium_quality" selected="true">Medium quality (fast)</option>
@@ -169,10 +166,32 @@ python '$__tool_directory__/multimodal_learner.py'
 
     <param name="eval_metric" type="select" label="Primary evaluation metric">
       <option value="roc_auc" selected="true">ROC AUC</option>
+      <option value="auto">Auto (let AutoGluon choose)</option>
       <option value="accuracy">Accuracy</option>
+      <option value="balanced_accuracy">Balanced Accuracy</option>
+      <option value="f1">F1</option>
+      <option value="f1_macro">F1 Macro</option>
+      <option value="f1_micro">F1 Micro</option>
+      <option value="f1_weighted">F1 Weighted</option>
+      <option value="precision">Precision</option>
+      <option value="precision_macro">Precision Macro</option>
+      <option value="precision_micro">Precision Micro</option>
+      <option value="precision_weighted">Precision Weighted</option>
+      <option value="recall">Recall</option>
+      <option value="recall_macro">Recall Macro</option>
+      <option value="recall_micro">Recall Micro</option>
+      <option value="recall_weighted">Recall Weighted</option>
+      <option value="average_precision">Average Precision</option>
+      <option value="roc_auc_ovo_macro">ROC AUC OVO Macro</option>
+      <option value="roc_auc_ovo_weighted">ROC AUC OVO Weighted</option>
+      <option value="roc_auc_ovr_macro">ROC AUC OVR Macro</option>
+      <option value="roc_auc_ovr_weighted">ROC AUC OVR Weighted</option>
       <option value="log_loss">Log Loss</option>
-      <option value="f1">F1 Score</option>
+      <option value="mse">MSE</option>
       <option value="rmse">RMSE</option>
+      <option value="mae">MAE</option>
+      <option value="msle">MSLE</option>
+      <option value="r2">R2</option>
     </param>
 
     <param name="random_seed" type="integer" value="42" label="Random seed"/>
