@@ -1,4 +1,5 @@
 import base64
+import html
 import json
 import logging
 import os
@@ -227,8 +228,13 @@ def _sanitize_dataframe_columns(dataframe):
     return sanitized_df
 
 
-def _feature_importance_plot(label_df, label_name, top_n=10):
-    """Return base64-encoded bar plot for a label's top-N feature importances."""
+def _feature_importance_plot(label_df, label_name, top_n=10, max_abs_importance=None):
+    """
+    Return base64-encoded bar plot for a label's top-N feature importances.
+
+    max_abs_importance lets us pin the x-axis across labels so readers can
+    compare magnitudes.
+    """
     if plt is None or label_df.empty:
         return ""
 
@@ -239,7 +245,8 @@ def _feature_importance_plot(label_df, label_name, top_n=10):
     fig, ax = plt.subplots(figsize=(6, 3 + 0.2 * len(top_features)))
     ax.barh(top_features["feature"], top_features["abs_importance"], color="#3f8fd2")
     ax.set_xlabel("|importance|")
-    ax.set_title(f"{label_name} (absolute)")
+    if max_abs_importance and max_abs_importance > 0:
+        ax.set_xlim(0, max_abs_importance * 1.05)
     ax.invert_yaxis()
     fig.tight_layout()
 
@@ -248,6 +255,39 @@ def _feature_importance_plot(label_df, label_name, top_n=10):
     plt.close(fig)
     encoded = base64.b64encode(buf.getvalue()).decode("utf-8")
     return encoded
+
+
+def render_feature_importance_table(df: pd.DataFrame) -> str:
+    """Render a sortable HTML table for feature importance values."""
+    if df.empty:
+        return ""
+
+    columns = list(df.columns)
+    headers = "".join(
+        f"<th class='sortable'>{html.escape(str(col).replace('_', ' '))}</th>"
+        for col in columns
+    )
+
+    body_rows = []
+    for _, row in df.iterrows():
+        cells = []
+        for col in columns:
+            val = row[col]
+            if isinstance(val, float):
+                val_str = f"{val:.6f}"
+            else:
+                val_str = str(val)
+            cells.append(f"<td>{html.escape(val_str)}</td>")
+        body_rows.append("<tr>" + "".join(cells) + "</tr>")
+
+    return (
+        "<div class='scroll-rows-30'>"
+        "<table class='feature-importance-table sortable-table'>"
+        f"<thead><tr>{headers}</tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody>"
+        "</table>"
+        "</div>"
+    )
 
 
 def compute_feature_importance(ludwig_output_directory_name,
@@ -425,16 +465,28 @@ def generate_html_report(title, ludwig_output_directory_name):
         try:
             importance_df = pd.read_csv(importance_path)
             if not importance_df.empty:
-                top_rows = (
+                sorted_df = (
                     importance_df
                     .sort_values(["label", "abs_importance"], ascending=[True, False])
+                )
+                top_rows = (
+                    sorted_df
                     .groupby("label", as_index=False)
                     .head(5)
                 )
+                max_abs_importance = pd.to_numeric(
+                    importance_df.get("abs_importance", pd.Series(dtype=float)),
+                    errors="coerce",
+                ).max()
+                if pd.isna(max_abs_importance):
+                    max_abs_importance = None
+
                 plot_sections = []
                 for label in sorted(importance_df["label"].unique()):
                     encoded_plot = _feature_importance_plot(
-                        importance_df[importance_df["label"] == label], label
+                        importance_df[importance_df["label"] == label],
+                        label,
+                        max_abs_importance=max_abs_importance,
                     )
                     if encoded_plot:
                         plot_sections.append(
@@ -447,13 +499,14 @@ def generate_html_report(title, ludwig_output_directory_name):
                 explanation_text = (
                     "<p>Feature importance scores come from Ludwig's Integrated Gradients explainer. "
                     "It interpolates between each example and a neutral baseline sample, summing "
-                    "the change in the model output along that path. Higher absolute values "
-                    "indicate stronger influence for the given label.</p>"
+                    "the change in the model output along that path. Higher |importance| values "
+                    "indicate stronger influence. Plots share a common x-axis to make magnitudes "
+                    "comparable across labels, and the table columns can be sorted for quick scans.</p>"
                 )
                 feature_importance_html = (
                     "<h2>Feature Importance</h2>"
                     + explanation_text
-                    + top_rows.to_html(index=False, border=0, classes="feature-importance-table")
+                    + render_feature_importance_table(top_rows)
                     + "".join(plot_sections)
                 )
         except Exception as exc:

@@ -59,6 +59,39 @@ def get_html_template():
               background-color: #4CAF50;
               color: white;
           }
+          /* feature importance layout tweaks */
+          table.feature-importance-table {
+              table-layout: auto;
+          }
+          table.feature-importance-table th,
+          table.feature-importance-table td {
+              white-space: nowrap;
+              word-break: normal;
+          }
+          /* sortable tables */
+          .sortable-table th.sortable {
+              cursor: pointer;
+              position: relative;
+              user-select: none;
+          }
+          .sortable-table th.sortable::after {
+              content: '⇅';
+              position: absolute;
+              right: 12px;
+              top: 50%;
+              transform: translateY(-50%);
+              font-size: 0.8em;
+              color: #eaf5ea;
+              text-shadow: 0 0 1px rgba(0,0,0,0.15);
+          }
+          .sortable-table th.sortable.sorted-none::after { content: '⇅'; color: #eaf5ea; }
+          .sortable-table th.sortable.sorted-asc::after  { content: '↑';  color: #ffffff; }
+          .sortable-table th.sortable.sorted-desc::after { content: '↓';  color: #ffffff; }
+          .scroll-rows-30 {
+              max-height: 900px;
+              overflow-y: auto;
+              overflow-x: auto;
+          }
           .plot {
               text-align: center;
               margin: 20px 0;
@@ -68,6 +101,69 @@ def get_html_template():
               height: auto;
           }
         </style>
+        <script>
+          (function() {
+            if (window.__sortableInit) return;
+            window.__sortableInit = true;
+
+            function initSortableTables() {
+              document.querySelectorAll('table.sortable-table tbody').forEach(tbody => {
+                Array.from(tbody.rows).forEach((row, i) => { row.dataset.originalOrder = i; });
+              });
+
+              const getText = td => (td?.innerText || '').trim();
+              const cmp = (idx, asc) => (a, b) => {
+                const v1 = getText(a.children[idx]);
+                const v2 = getText(b.children[idx]);
+                const n1 = parseFloat(v1), n2 = parseFloat(v2);
+                if (!isNaN(n1) && !isNaN(n2)) return asc ? n1 - n2 : n2 - n1;
+                return asc ? v1.localeCompare(v2) : v2.localeCompare(v1);
+              };
+
+              document.querySelectorAll('table.sortable-table th.sortable').forEach(th => {
+                th.classList.remove('sorted-asc','sorted-desc');
+                th.classList.add('sorted-none');
+
+                th.addEventListener('click', () => {
+                  const table = th.closest('table');
+                  const headerRow = th.parentNode;
+                  const allTh = headerRow.querySelectorAll('th.sortable');
+                  const tbody = table.querySelector('tbody');
+
+                  const isAsc  = th.classList.contains('sorted-asc');
+                  const isDesc = th.classList.contains('sorted-desc');
+
+                  allTh.forEach(x => x.classList.remove('sorted-asc','sorted-desc','sorted-none'));
+
+                  let next;
+                  if (!isAsc && !isDesc) {
+                    next = 'asc';
+                  } else if (isAsc) {
+                    next = 'desc';
+                  } else {
+                    next = 'none';
+                  }
+                  th.classList.add('sorted-' + next);
+
+                  const rows = Array.from(tbody.rows);
+                  if (next === 'none') {
+                    rows.sort((a, b) => (a.dataset.originalOrder - b.dataset.originalOrder));
+                  } else {
+                    const idx = Array.from(headerRow.children).indexOf(th);
+                    rows.sort(cmp(idx, next === 'asc'));
+                  }
+                  rows.forEach(r => tbody.appendChild(r));
+                });
+              });
+            }
+
+            if (document.readyState === 'loading') {
+              document.addEventListener('DOMContentLoaded', initSortableTables);
+            } else {
+              initSortableTables();
+            }
+          })();
+        </script>
     </head>
     <body>
     <div class="container">
