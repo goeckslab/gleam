@@ -52,6 +52,33 @@ def enable_tensor_cores_if_available():
     if torch.cuda.is_available():
         torch.set_float32_matmul_precision('high')
 
+def enable_deterministic_mode(seed: Optional[int] = None):
+    """
+    Force deterministic algorithms where possible to reduce run-to-run variance.
+    """
+    if seed is not None:
+        set_seeds(seed)
+        os.environ.setdefault("PYTHONHASHSEED", str(int(seed)))
+    # cuBLAS determinism
+    os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+    try:
+        torch.use_deterministic_algorithms(True)
+    except Exception as e:
+        LOG.warning(f"Could not enable torch deterministic algorithms: {e}")
+    try:
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    except Exception as e:
+        LOG.warning(f"Could not enforce deterministic cuDNN settings: {e}")
+    try:
+        torch.backends.cuda.matmul.allow_tf32 = False
+    except Exception:
+        pass
+    try:
+        torch.backends.cudnn.allow_tf32 = False
+    except Exception:
+        pass
+
 def load_file(path: str) -> pd.DataFrame:
     if not path:
         return None

@@ -70,6 +70,9 @@ python '$__tool_directory__/multimodal_learner.py'
   #if $time_limit
   --time_limit $time_limit
   #end if
+  #if $deterministic == "true"
+  --deterministic
+  #end if
 
   #if $customize_defaults_conditional.customize_defaults == "yes"
     #if $customize_defaults_conditional.validation_size not in ("", None)
@@ -194,12 +197,14 @@ python '$__tool_directory__/multimodal_learner.py'
       <option value="r2">R2</option>
     </param>
 
-    <param name="random_seed" type="integer" value="42" label="Random seed"/>
+  <param name="random_seed" type="integer" value="42" label="Random seed"/>
 
-    <param name="time_limit" type="integer" optional="true" min="60" label="Time limit (seconds)" help="Total training time budget. Recommended: 3600+ for real runs"/>
+  <param name="time_limit" type="integer" optional="true" min="60" label="Time limit (seconds)" help="Total training time budget. Recommended: 3600+ for real runs"/>
+  <param name="deterministic" type="boolean" truevalue="true" falsevalue="false" checked="false"
+         label="Enable deterministic mode" help="Use deterministic algorithms and CuDNN settings to reduce run-to-run variance (may slow training)"/>
 
-    <conditional name="customize_defaults_conditional">
-      <param name="customize_defaults" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Advanced: customize training settings?"/>
+  <conditional name="customize_defaults_conditional">
+    <param name="customize_defaults" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Advanced: customize training settings?"/>
       <when value="yes">
         <param name="validation_size" type="float" value="0.2" label="Validation fraction (when test set provided)"/>
         <param name="split_probabilities" type="text" value="0.7 0.1 0.2" label="Train / Val / Test split (space-separated) when no test set"/>

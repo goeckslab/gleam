@@ -20,6 +20,7 @@ from typing import List, Optional
 # ------------------------------------------------------------------
 from utils import (
     set_seeds,
+    enable_deterministic_mode,
     enable_tensor_cores_if_available,
     ensure_local_tmp,
     load_file,
@@ -59,6 +60,8 @@ def parse_args(argv=None):
                         help="true/false: remove rows with missing images or use placeholder")
     parser.add_argument("--threshold", type=float, default=None)
     parser.add_argument("--time_limit", type=int, default=None)
+    parser.add_argument("--deterministic", action="store_true", default=False,
+                        help="Enable deterministic algorithms to reduce run-to-run variance")
     parser.add_argument("--random_seed", type=int, default=42)
     parser.add_argument("--cross_validation", type=str, default="false")
     parser.add_argument("--num_folds", type=int, default=5)
@@ -187,6 +190,9 @@ def main():
     # Reproducibility & performance
     # ------------------------------------------------------------------
     set_seeds(args.random_seed)
+    if args.deterministic:
+        enable_deterministic_mode(args.random_seed)
+        logger.info("Deterministic mode enabled (seed=%s)", args.random_seed)
     ensure_local_tmp()
     enable_tensor_cores_if_available()
 
