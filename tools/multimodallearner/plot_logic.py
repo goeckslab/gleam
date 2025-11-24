@@ -97,20 +97,57 @@ def generate_confusion_matrix_plot(
 
     # Use categorical axes by passing string labels for x/y
     cats = [str(l) for l in labels]
-
+    total = int(cm.sum())
+    
     fig = go.Figure(
         data=go.Heatmap(
             z=cm,
             x=cats,              # categorical x
             y=cats,              # categorical y
             colorscale="Blues",
+            showscale=True,
             colorbar=dict(title="Count"),
-            text=cm,             # numbers inside cells
-            texttemplate="%{text}",
+            xgap=2,
+            ygap=2,
             hovertemplate="True=%{y}<br>Pred=%{x}<br>Count=%{z}<extra></extra>",
             zmin=0
         )
     )
+
+    # Add annotations with count and percentage (all white text, matching sample_output.html)
+    annotations = []
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            val = int(cm[i, j])
+            pct = (val / total * 100) if total > 0 else 0
+            # All text is white (matching sample_output.html)
+            text_color = "white"
+            # Count annotation (bold, bottom)
+            annotations.append(
+                dict(
+                    x=cats[j],
+                    y=cats[i],
+                    text=f"<b>{val}</b>",
+                    showarrow=False,
+                    font=dict(color=text_color, size=14),
+                    xanchor="center",
+                    yanchor="bottom",
+                    yshift=2
+                )
+            )
+            # Percentage annotation (top)
+            annotations.append(
+                dict(
+                    x=cats[j],
+                    y=cats[i],
+                    text=f"{pct:.1f}%",
+                    showarrow=False,
+                    font=dict(color=text_color, size=13),
+                    xanchor="center",
+                    yanchor="top",
+                    yshift=-2
+                )
+            )
 
     fig.update_layout(
         title=None,
@@ -118,8 +155,11 @@ def generate_confusion_matrix_plot(
         yaxis_title="True label",
         xaxis=dict(type="category"),
         yaxis=dict(type="category", autorange="reversed"),  # typical CM orientation
-        margin=dict(l=60, r=20, t=60, b=60),
+        margin=dict(l=80, r=20, t=40, b=80),
         template="plotly_white",
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        annotations=annotations
     )
     return fig
 
@@ -249,8 +289,8 @@ def generate_threshold_plot(
     y_true = np.asarray(y_true_bin, dtype=int).ravel()
     p = np.asarray(y_prob, dtype=float).ravel()
 
-    # Evaluate only where predictions change
-    th = np.r_[0.0, np.unique(p), 1.0]   # monotone, includes 0 and 1
+    # Use uniform threshold grid for smoother curves (0 to 1 in steps of 0.01)
+    th = np.linspace(0.0, 1.0, 101)
 
     prec, rec, f1, qrate = [], [], [], []
     for t in th:
@@ -271,44 +311,94 @@ def generate_threshold_plot(
 
     # Choose t* where F1 is maximized (ignore NaN precision rows)
     f1_arr = np.asarray(f1, dtype=float)
-    best_idx = int(np.nanargmax(f1_arr))
-    t_star = float(th[best_idx])
+    # Filter out NaN values for finding optimal threshold
+    valid_f1_mask = ~np.isnan(f1_arr)
+    if np.any(valid_f1_mask):
+        best_idx = int(np.nanargmax(f1_arr))
+        t_star = float(th[best_idx])
+    else:
+        t_star = 0.5  # fallback
 
-    # Replace NaNs for plotting (don’t affect t*)
+    # Replace NaNs for plotting (set to 0 where precision is undefined)
     prec_plot = np.nan_to_num(prec, nan=0.0)
 
     fig = go.Figure()
-    def add_curve(x, y, name):
-        fig.add_trace(go.Scatter(
-            x=x, y=y, mode="lines", name=name,
-            line=dict(width=3),
-            hovertemplate="t=%{x:.3f}<br>%{y:.3f}<extra></extra>"
-        ))
+    
+    # Precision (blue line)
+    fig.add_trace(go.Scatter(
+        x=th, y=prec_plot, mode="lines", name="Precision",
+        line=dict(width=3, color="#1f77b4"),
+        hovertemplate="Threshold=%{x:.3f}<br>Precision=%{y:.3f}<extra></extra>"
+    ))
+    
+    # Recall (orange line)
+    fig.add_trace(go.Scatter(
+        x=th, y=rec, mode="lines", name="Recall",
+        line=dict(width=3, color="#ff7f0e"),
+        hovertemplate="Threshold=%{x:.3f}<br>Recall=%{y:.3f}<extra></extra>"
+    ))
+    
+    # F1 (green line)
+    fig.add_trace(go.Scatter(
+        x=th, y=f1_arr, mode="lines", name="F1",
+        line=dict(width=3, color="#2ca02c"),
+        hovertemplate="Threshold=%{x:.3f}<br>F1=%{y:.3f}<extra></extra>"
+    ))
+    
+    # Queue Rate (grey dashed line)
+    fig.add_trace(go.Scatter(
+        x=th, y=qrate, mode="lines", name="Queue Rate",
+        line=dict(width=2, color="#808080", dash="dash"),
+        hovertemplate="Threshold=%{x:.3f}<br>Queue Rate=%{y:.3f}<extra></extra>"
+    ))
 
-    add_curve(th, prec_plot, "precision")
-    add_curve(th, rec,       "recall")
-    add_curve(th, f1_arr,    "F1")
-    add_curve(th, qrate,     "queue rate")
+    # F1*-optimal threshold marker (dashed vertical line)
+    fig.add_vline(
+        x=t_star, 
+        line_width=2, 
+        line_dash="dash", 
+        line_color="black",
+        annotation_text=f"t* = {t_star:.2f}",
+        annotation_position="top"
+    )
 
-    # F1*-optimal (dashed)
-    fig.add_vline(x=t_star, line_width=2, line_dash="dash", line_color="black")
-    fig.add_annotation(x=t_star, y=0.98, xref="x", yref="paper", showarrow=False, text=f"t* = {t_star:.2f}")
-
-    # User threshold (solid)
+    # User threshold (solid red line) if provided
     if user_threshold is not None:
-        fig.add_vline(x=float(user_threshold), line_width=2, line_color="red")
-        fig.add_annotation(
-            x=float(user_threshold), y=0.90, xref="x", yref="paper",
-            showarrow=False, text=f"threshold = {float(user_threshold):.2f}"
+        fig.add_vline(
+            x=float(user_threshold), 
+            line_width=2, 
+            line_color="red",
+            annotation_text=f"threshold = {float(user_threshold):.2f}",
+            annotation_position="top"
         )
 
     fig.update_layout(
         title=None,
         template="plotly_white",
-        xaxis=dict(title="discrimination threshold", range=[0, 1], gridcolor="#eee"),
-        yaxis=dict(title="score", range=[0, 1], gridcolor="#eee"),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0),
-        margin=dict(l=50, r=20, t=60, b=50),
+        xaxis=dict(
+            title="Discrimination Threshold", 
+            range=[0, 1], 
+            gridcolor="#e0e0e0",
+            showgrid=True,
+            zeroline=False
+        ),
+        yaxis=dict(
+            title="Score", 
+            range=[0, 1], 
+            gridcolor="#e0e0e0",
+            showgrid=True,
+            zeroline=False
+        ),
+        legend=dict(
+            orientation="h", 
+            yanchor="bottom", 
+            y=1.02, 
+            xanchor="right", 
+            x=1.0
+        ),
+        margin=dict(l=60, r=20, t=40, b=50),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
     )
     return fig
 

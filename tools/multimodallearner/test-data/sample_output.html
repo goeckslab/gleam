@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Galaxy-Ludwig Report</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background-color: #f4f4f4;
+    }
+    .container {
+      max-width: 1200px;
+      margin: auto;
+      background: white;
+      padding: 20px;
+      box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+      overflow-x: auto;
+    }
+    h1 {
+      text-align: center;
+      color: #333;
+    }
+    h2 {
+      border-bottom: 2px solid #4CAF50;
+      color: #4CAF50;
+      padding-bottom: 5px;
+      margin-top: 28px;
+    }
+    h3 {
+      margin-top: 20px;
+      color: #333;
+    }
+    .section {
+      margin-bottom: 30px;
+    }
+    .section-title {
+      border-bottom: 2px solid #4CAF50;
+      color: #4CAF50;
+      padding-bottom: 5px;
+      margin-top: 28px;
+    }
+    .card {
+      background: #fff;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      margin: 10px 0;
+    }
+
+    /* baseline table setup */
+    table {
+      border-collapse: collapse;
+      margin: 20px 0;
+      width: 100%;
+      table-layout: fixed;
+      background: #fff;
+    }
+    table, th, td {
+      border: 1px solid #ddd;
+    }
+    th, td {
+      padding: 10px;
+      text-align: center;
+      vertical-align: middle;
+      word-break: break-word;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    th {
+      background-color: #4CAF50;
+      color: white;
+    }
+    .metric-table {
+      width: 100%;
+    }
+    .kv-table {
+      width: 100%;
+    }
+    .kv-table th:first-child,
+    .kv-table td:first-child {
+      text-align: left;
+      width: 30%;
+    }
+
+    .plot {
+      text-align: center;
+      margin: 20px 0;
+    }
+    .plot img {
+      max-width: 100%;
+      height: auto;
+      border: 1px solid #ddd;
+    }
+
+    /* -------------------
+       sortable columns (3-state: none ⇅, asc ↑, desc ↓)
+       ------------------- */
+    table.performance-summary th.sortable {
+      cursor: pointer;
+      position: relative;
+      user-select: none;
+    }
+    /* default icon space */
+    table.performance-summary th.sortable::after {
+      content: '⇅';
+      position: absolute;
+      right: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      font-size: 0.8em;
+      color: #eaf5ea; /* light on green */
+      text-shadow: 0 0 1px rgba(0,0,0,0.15);
+    }
+    /* three states override the default */
+    table.performance-summary th.sortable.sorted-none::after { content: '⇅'; color: #eaf5ea; }
+    table.performance-summary th.sortable.sorted-asc::after  { content: '↑';  color: #ffffff; }
+    table.performance-summary th.sortable.sorted-desc::after { content: '↓';  color: #ffffff; }
+
+    /* show ~30 rows with a scrollbar (tweak if you want) */
+    .scroll-rows-30 {
+      max-height: 900px;       /* ~30 rows depending on row height */
+      overflow-y: auto;        /* vertical scrollbar ("sidebar") */
+      overflow-x: auto;
+    }
+
+    /* Tabs + Help button (used by build_tabbed_html) */
+    .tabs {
+      display: flex;
+      align-items: center;
+      border-bottom: 2px solid #ccc;
+      margin-bottom: 1rem;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .tab {
+      padding: 10px 20px;
+      cursor: pointer;
+      border: 1px solid #ccc;
+      border-bottom: none;
+      background: #f9f9f9;
+      margin-right: 5px;
+      border-top-left-radius: 8px;
+      border-top-right-radius: 8px;
+    }
+    .tab.active {
+      background: white;
+      font-weight: bold;
+    }
+    .help-btn {
+      margin-left: auto;
+      padding: 6px 12px;
+      font-size: 0.9rem;
+      border: 1px solid #4CAF50;
+      border-radius: 4px;
+      background: #4CAF50;
+      color: white;
+      cursor: pointer;
+    }
+    .tab-content {
+      display: none;
+      padding: 20px;
+      border: 1px solid #ccc;
+      border-top: none;
+      background: #fff;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    .plotly-center {
+      display: flex;
+      justify-content: center;
+    }
+    .plotly-center .plotly-graph-div, .plotly-center .js-plotly-plot {
+      margin: 0 auto !important;
+    }
+    .js-plotly-plot, .plotly-graph-div {
+      margin-left: auto !important;
+      margin-right: auto !important;
+    }
+
+    /* Modal (used by get_metrics_help_modal) */
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 9999;
+      left: 0; top: 0;
+      width: 100%; height: 100%;
+      overflow: auto;
+      background-color: rgba(0,0,0,0.4);
+    }
+    .modal-content {
+      background-color: #fefefe;
+      margin: 8% auto;
+      padding: 20px;
+      border: 1px solid #888;
+      width: 90%;
+      max-width: 900px;
+      border-radius: 8px;
+    }
+    .modal .close {
+      color: #777;
+      float: right;
+      font-size: 28px;
+      font-weight: bold;
+      line-height: 1;
+      margin-left: 8px;
+    }
+    .modal .close:hover,
+    .modal .close:focus {
+      color: black;
+      text-decoration: none;
+      cursor: pointer;
+    }
+    .metrics-guide h3 { margin-top: 20px; }
+    .metrics-guide p { margin: 6px 0; }
+    .metrics-guide ul { margin: 10px 0; padding-left: 20px; }
+  </style>
+
+  <script>
+    // Guard to avoid double-initialization if this block is included twice
+    (function(){
+      if (window.__perfSummarySortInit) return;
+      window.__perfSummarySortInit = true;
+
+      function initPerfSummarySorting() {
+        // Record original order for "back to original"
+        document.querySelectorAll('table.performance-summary tbody').forEach(tbody => {
+          Array.from(tbody.rows).forEach((row, i) => { row.dataset.originalOrder = i; });
+        });
+
+        const getText = td => (td?.innerText || '').trim();
+        const cmp = (idx, asc) => (a, b) => {
+          const v1 = getText(a.children[idx]);
+          const v2 = getText(b.children[idx]);
+          const n1 = parseFloat(v1), n2 = parseFloat(v2);
+          if (!isNaN(n1) && !isNaN(n2)) return asc ? n1 - n2 : n2 - n1; // numeric
+          return asc ? v1.localeCompare(v2) : v2.localeCompare(v1);       // lexical
+        };
+
+        document.querySelectorAll('table.performance-summary th.sortable').forEach(th => {
+          // initialize to "none"
+          th.classList.remove('sorted-asc','sorted-desc');
+          th.classList.add('sorted-none');
+
+          th.addEventListener('click', () => {
+            const table = th.closest('table');
+            const headerRow = th.parentNode;
+            const allTh = headerRow.querySelectorAll('th.sortable');
+            const tbody = table.querySelector('tbody');
+
+            // Determine current state BEFORE clearing
+            const isAsc  = th.classList.contains('sorted-asc');
+            const isDesc = th.classList.contains('sorted-desc');
+
+            // Reset all headers in this row
+            allTh.forEach(x => x.classList.remove('sorted-asc','sorted-desc','sorted-none'));
+
+            // Compute next state
+            let next;
+            if (!isAsc && !isDesc) {
+              next = 'asc';
+            } else if (isAsc) {
+              next = 'desc';
+            } else {
+              next = 'none';
+            }
+            th.classList.add('sorted-' + next);
+
+            // Sort rows according to the chosen state
+            const rows = Array.from(tbody.rows);
+            if (next === 'none') {
+              rows.sort((a, b) => (a.dataset.originalOrder - b.dataset.originalOrder));
+            } else {
+              const idx = Array.from(headerRow.children).indexOf(th);
+              rows.sort(cmp(idx, next === 'asc'));
+            }
+            rows.forEach(r => tbody.appendChild(r));
+          });
+        });
+      }
+
+      // Run after DOM is ready
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initPerfSummarySorting);
+      } else {
+        initPerfSummarySorting();
+      }
+    })();
+  </script>
+</head>
+<body>
+  <div class="container">
+    <script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>
+    <style>
+      .plotly-center { 
+        display: flex; 
+        justify-content: center; 
+        margin: 20px 0;
+        width: 100%;
+      }
+      .plotly-center .plotly-graph-div, .plotly-center .js-plotly-plot { 
+        margin: 0 auto !important; 
+      }
+      .js-plotly-plot, .plotly-graph-div { 
+        margin-left: auto !important; 
+        margin-right: auto !important; 
+      }
+      #learning-curve-accuracy, #learning-curve-loss, #threshold-plot,
+      #confusion-matrix, #per-class-metrics, #roc-curve, #pr-curve {
+        min-height: 400px;
+      }
+    </style>
+
+    <div class="tabs">
+      <div class="tab active" onclick="showTab('summary')">Model Summary & Config</div>
+      <div class="tab" onclick="showTab('train')">Train/Validation Summary</div>
+      <div class="tab" onclick="showTab('test')">Test Summary</div>
+      <div class="tab" onclick="showTab('feature')">Feature Importance</div>
+      <button id="openMetricsHelp" class="help-btn">Help</button>
+    </div>
+
+    <!-- Summary Tab -->
+    <div id="summary" class="tab-content active">
+      <section class="section">
+        <h2 class="section-title">Model Performance Summary</h2>
+        <div class="card">
+          <table class="metric-table">
+            <thead><tr><th>Metric</th><th>Train</th><th>Validation</th><th>Test</th></tr></thead>
+            <tbody>
+              <tr><td>accuracy</td><td>0.9234</td><td>0.8912</td><td>0.8856</td></tr>
+              <tr><td>f1</td><td>0.9201</td><td>0.8876</td><td>0.8823</td></tr>
+              <tr><td>precision</td><td>0.9156</td><td>0.8845</td><td>0.8798</td></tr>
+              <tr><td>recall</td><td>0.9245</td><td>0.8907</td><td>0.8849</td></tr>
+              <tr><td>roc_auc</td><td>0.9789</td><td>0.9543</td><td>0.9512</td></tr>
+              <tr><td>log_loss</td><td>0.2134</td><td>0.2876</td><td>0.3012</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">Run Configuration</h2>
+        <div class="card">
+          <table class="kv-table">
+            <thead><tr><th>Key</th><th>Value</th></tr></thead>
+            <tbody>
+              <tr><td>Predictor type</td><td>MultiModalPredictor</td></tr>
+              <tr><td>Framework</td><td>AutoGluon Multimodal</td></tr>
+              <tr><td>Model architecture</td><td>timm_image=resnet50, hf_text=bert-base-uncased</td></tr>
+              <tr><td>Modalities & Inputs</td><td>Images + Tabular</td></tr>
+              <tr><td>Label column</td><td>target</td></tr>
+              <tr><td>Image columns</td><td>image_path</td></tr>
+              <tr><td>Tabular columns</td><td>15</td></tr>
+              <tr><td>Presets</td><td>medium_quality</td></tr>
+              <tr><td>Eval metric</td><td>accuracy</td></tr>
+              <tr><td>Decision threshold calibration</td><td>enabled</td></tr>
+              <tr><td>Decision threshold (Test only)</td><td>0.500</td></tr>
+              <tr><td>Seed</td><td>42</td></tr>
+              <tr><td>time limit(s)</td><td>3600</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">Class Balance (Train Full)</h2>
+        <div class="card">
+          <h3>Class Balance (Train Full)</h3>
+          <table class="table">
+            <thead><tr><th>Class</th><th>Count</th><th>Percent</th></tr></thead>
+            <tbody>
+              <tr><td>0</td><td>1245</td><td>45.23%</td></tr>
+              <tr><td>1</td><td>1508</td><td>54.77%</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <!-- Train Tab -->
+    <div id="train" class="tab-content">
+      <h2>Train/Validation Performance Summary</h2>
+      
+      <div class="card">
+        <table class="metric-table">
+          <thead><tr><th>Metric</th><th>Train</th><th>Validation</th></tr></thead>
+          <tbody>
+            <tr><td>accuracy</td><td>0.9234</td><td>0.8912</td></tr>
+            <tr><td>f1</td><td>0.9201</td><td>0.8876</td></tr>
+            <tr><td>precision</td><td>0.9156</td><td>0.8845</td></tr>
+            <tr><td>recall</td><td>0.9245</td><td>0.8907</td></tr>
+            <tr><td>roc_auc</td><td>0.9789</td><td>0.9543</td></tr>
+            <tr><td>log_loss</td><td>0.2134</td><td>0.2876</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2>Learning Curves — Label Accuracy</h2>
+      <div class="plotly-center">
+        <div id="learning-curve-accuracy" style="width:900px;height:500px;"></div>
+      </div>
+
+      <h2>Learning Curves — Label Loss</h2>
+      <div class="plotly-center">
+        <div id="learning-curve-loss" style="width:900px;height:500px;"></div>
+      </div>
+    </div>
+
+    <!-- Test Tab -->
+    <div id="test" class="tab-content">
+      <h2>Test Performance Summary</h2>
+      <table class="performance-summary">
+        <thead>
+          <tr>
+            <th class="sortable">Metric</th>
+            <th class="sortable">Test</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>accuracy</td><td>0.8856</td></tr>
+          <tr><td>f1</td><td>0.8823</td></tr>
+          <tr><td>precision</td><td>0.8798</td></tr>
+          <tr><td>recall</td><td>0.8849</td></tr>
+          <tr><td>roc_auc</td><td>0.9512</td></tr>
+          <tr><td>log_loss</td><td>0.3012</td></tr>
+          <tr><td>specificity (TNR)</td><td>0.8765</td></tr>
+          <tr><td>sensitivity (Sensitivity/TPR)</td><td>0.8923</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Confusion Matrix</h2>
+      <div class="plotly-center">
+        <div id="confusion-matrix" style="width:700px;height:600px;"></div>
+      </div>
+
+      <h2>Per-Class Metrics</h2>
+      <div class="plotly-center">
+        <div id="per-class-metrics" style="width:900px;height:500px;"></div>
+      </div>
+
+      <h2>ROC Curve</h2>
+      <div class="plotly-center">
+        <div id="roc-curve" style="width:800px;height:600px;"></div>
+      </div>
+
+      <h2>Precision–Recall Curve</h2>
+      <div class="plotly-center">
+        <div id="pr-curve" style="width:800px;height:600px;"></div>
+      </div>
+
+      <h2>Threshold Plot</h2>
+      <div class="plotly-center">
+        <div id="threshold-plot" style="width:900px;height:500px;"></div>
+      </div>
+    </div>
+
+    <!-- Feature Importance Tab -->
+    <div id="feature" class="tab-content">
+      <section class="section">
+        <h2 class="section-title">Feature Importance</h2>
+        <div class="card">
+          <p>Permutation importance is not supported for MultiModalPredictor in this tool. For tabular-only runs, this section shows permutation importance.</p>
+        </div>
+      </section>
+
+      <section class="section">
+        <h2 class="section-title">Modalities & Inputs</h2>
+        <div class="card">
+          <h3>Modalities & Inputs</h3>
+          <p>This run used <b>MultiModalPredictor</b> (images + tabular).</p>
+          <p><b>Label column:</b> target</p>
+          <p><b>Image column:</b> image_path</p>
+          <div><b>Tabular columns:</b> 15
+            <ul>
+              <li>feature_1</li>
+              <li>feature_2</li>
+              <li>feature_3</li>
+              <li>feature_4</li>
+              <li>feature_5</li>
+              <li>feature_6</li>
+              <li>feature_7</li>
+              <li>feature_8</li>
+              <li>feature_9</li>
+              <li>feature_10</li>
+              <li>feature_11</li>
+              <li>feature_12</li>
+              <li>feature_13</li>
+              <li>feature_14</li>
+              <li>feature_15</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      function showTab(id) {
+        document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+        document.querySelectorAll('.tab').forEach(el => el.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+        document.querySelector(`.tab[onclick*="${id}"]`).classList.add('active');
+      }
+
+      // Fixed random data for reproducibility
+      const epochs = Array.from({length: 31}, (_, i) => i);
+      const accuracy_train = [0.552, 0.568, 0.581, 0.595, 0.612, 0.628, 0.645, 0.662, 0.678, 0.692, 0.708, 0.722, 0.735, 0.748, 0.761, 0.773, 0.784, 0.795, 0.805, 0.814, 0.823, 0.831, 0.839, 0.846, 0.853, 0.859, 0.865, 0.870, 0.875, 0.880, 0.884];
+      const accuracy_val = [0.752, 0.768, 0.782, 0.795, 0.807, 0.818, 0.828, 0.837, 0.845, 0.852, 0.859, 0.865, 0.871, 0.876, 0.881, 0.885, 0.889, 0.893, 0.896, 0.899, 0.902, 0.905, 0.907, 0.909, 0.911, 0.913, 0.915, 0.917, 0.918, 0.920, 0.921];
+      const loss_train = [1.352, 1.285, 1.221, 1.158, 1.098, 1.041, 0.987, 0.936, 0.888, 0.842, 0.799, 0.758, 0.720, 0.684, 0.650, 0.618, 0.588, 0.560, 0.534, 0.510, 0.487, 0.466, 0.447, 0.429, 0.412, 0.397, 0.383, 0.370, 0.358, 0.347, 0.337];
+      const loss_val = [0.802, 0.765, 0.730, 0.697, 0.666, 0.637, 0.610, 0.585, 0.561, 0.539, 0.518, 0.499, 0.481, 0.464, 0.448, 0.433, 0.419, 0.406, 0.394, 0.383, 0.372, 0.362, 0.353, 0.345, 0.337, 0.330, 0.323, 0.317, 0.311, 0.306, 0.301];
+
+      // Wait for Plotly to load before creating plots
+      function createPlots() {
+        if (typeof Plotly === 'undefined') {
+          console.log('Waiting for Plotly...');
+          setTimeout(createPlots, 100);
+          return;
+        }
+        
+        console.log('Plotly loaded, creating plots...');
+
+        // Learning Curves — Label Accuracy (with both training and validation)
+        try {
+          Plotly.newPlot('learning-curve-accuracy', [
+            {
+              x: epochs,
+              y: accuracy_train,
+              type: 'scatter',
+              mode: 'lines+markers',
+              name: 'Training',
+              line: { width: 3, color: '#1f77b4', shape: 'spline' },
+              marker: { size: 8, color: '#1f77b4' }
+            },
+            {
+              x: epochs,
+              y: accuracy_val,
+              type: 'scatter',
+              mode: 'lines+markers',
+              name: 'Validation',
+              line: { width: 3, color: '#ff7f0e', shape: 'spline' },
+              marker: { size: 8, color: '#ff7f0e' }
+            }
+          ], {
+            template: 'plotly_white',
+            xaxis: { 
+              title: 'Epoch', 
+              gridcolor: '#e0e0e0',
+              showgrid: true,
+              zeroline: false
+            },
+            yaxis: { 
+              title: 'Accuracy', 
+              gridcolor: '#e0e0e0',
+              showgrid: true,
+              zeroline: false,
+              range: [0.5, 1.0]
+            },
+            legend: { 
+              orientation: 'h', 
+              yanchor: 'bottom', 
+              y: 1.02, 
+              xanchor: 'right', 
+              x: 1.0 
+            },
+            margin: { l: 60, r: 20, t: 40, b: 50 },
+            plot_bgcolor: 'white',
+            paper_bgcolor: 'white'
+          });
+          console.log('Accuracy plot created');
+        } catch(e) {
+          console.error('Error creating accuracy plot:', e);
+        }
+
+        // Learning Curves — Label Loss (with both training and validation)
+        try {
+          Plotly.newPlot('learning-curve-loss', [
+            {
+              x: epochs,
+              y: loss_train,
+              type: 'scatter',
+              mode: 'lines+markers',
+              name: 'Training Loss',
+              line: { width: 3, color: '#1f77b4', shape: 'spline' },
+              marker: { size: 8, color: '#1f77b4' }
+            },
+            {
+              x: epochs,
+              y: loss_val,
+              type: 'scatter',
+              mode: 'lines+markers',
+              name: 'Validation Loss',
+              line: { width: 3, color: '#ff7f0e', shape: 'spline' },
+              marker: { size: 8, color: '#ff7f0e' }
+            }
+          ], {
+            template: 'plotly_white',
+            xaxis: { 
+              title: 'Epoch', 
+              gridcolor: '#e0e0e0',
+              showgrid: true,
+              zeroline: false
+            },
+            yaxis: { 
+              title: 'Loss', 
+              gridcolor: '#e0e0e0',
+              showgrid: true,
+              zeroline: false,
+              range: [0.2, 1.4]
+            },
+            legend: { 
+              orientation: 'h', 
+              yanchor: 'bottom', 
+              y: 1.02, 
+              xanchor: 'right', 
+              x: 1.0 
+            },
+            margin: { l: 60, r: 20, t: 40, b: 50 },
+            plot_bgcolor: 'white',
+            paper_bgcolor: 'white'
+          });
+          console.log('Loss plot created');
+        } catch(e) {
+          console.error('Error creating loss plot:', e);
+        }
+
+        // Threshold Plot (with fixed data matching the expected visualization)
+        // Precision: starts low (~0.42), increases to peak (~0.95) around threshold 0.5, then drops sharply to 0
+        // Recall: starts at 1, stays at 1 until ~0.1, then decreases to 0 around 0.9
+        // F1: starts around 0.6, peaks around 0.5 at ~0.95, then drops to 0
+        const thresholds = Array.from({length: 101}, (_, i) => i / 100);
+        
+        // Generate precision values: low at start, peak around 0.5, drop to 0
+        const precision_vals = thresholds.map(t => {
+          if (t <= 0.5) {
+            return 0.42 + (t / 0.5) * 0.53; // 0.42 to 0.95
+          } else if (t <= 0.9) {
+            return 0.95 - ((t - 0.5) / 0.4) * 0.95; // 0.95 to 0
+          } else {
+            return 0;
+          }
+        });
+        
+        // Generate recall values: starts at 1, stays at 1 until ~0.1, then decreases to 0 around 0.9
+        const recall_vals = thresholds.map(t => {
+          if (t <= 0.1) {
+            return 1.0;
+          } else if (t <= 0.9) {
+            return 1.0 - ((t - 0.1) / 0.8) * 1.0; // 1.0 to 0
+          } else {
+            return 0;
+          }
+        });
+        
+        // Calculate F1 from precision and recall
+        const f1_vals = thresholds.map((t, i) => {
+          const p = precision_vals[i];
+          const r = recall_vals[i];
+          if (p + r === 0) return 0;
+          return 2 * (p * r) / (p + r);
+        });
+        
+        // Queue Rate: decreases linearly from 1 to 0
+        const queue_rate = thresholds.map(t => 1 - t);
+
+        try {
+          Plotly.newPlot('threshold-plot', [
+            { 
+              x: thresholds, 
+              y: precision_vals, 
+              type: 'scatter', 
+              mode: 'lines', 
+              name: 'Precision', 
+              line: { width: 3, color: '#1f77b4' } 
+            },
+            { 
+              x: thresholds, 
+              y: recall_vals, 
+              type: 'scatter', 
+              mode: 'lines', 
+              name: 'Recall', 
+              line: { width: 3, color: '#ff7f0e' } 
+            },
+            { 
+              x: thresholds, 
+              y: f1_vals, 
+              type: 'scatter', 
+              mode: 'lines', 
+              name: 'F1', 
+              line: { width: 3, color: '#2ca02c' } 
+            },
+            { 
+              x: thresholds, 
+              y: queue_rate, 
+              type: 'scatter', 
+              mode: 'lines', 
+              name: 'Queue Rate', 
+              line: { width: 2, color: '#808080', dash: 'dash' } 
+            }
+          ], {
+            template: 'plotly_white',
+            xaxis: { 
+              title: 'Discrimination Threshold', 
+              gridcolor: '#e0e0e0',
+              showgrid: true,
+              zeroline: false
+            },
+            yaxis: { 
+              title: 'Score', 
+              gridcolor: '#e0e0e0',
+              showgrid: true,
+              zeroline: false,
+              range: [0, 1]
+            },
+            legend: { 
+              orientation: 'h', 
+              yanchor: 'bottom', 
+              y: 1.02, 
+              xanchor: 'right', 
+              x: 1.0 
+            },
+            margin: { l: 60, r: 20, t: 40, b: 50 },
+            plot_bgcolor: 'white',
+            paper_bgcolor: 'white',
+            shapes: [{
+              type: 'line',
+              xref: 'x',
+              yref: 'y',
+              x0: 0.51,
+              y0: 0,
+              x1: 0.51,
+              y1: 1,
+              line: {
+                color: 'black',
+                width: 2,
+                dash: 'dash'
+              }
+            }],
+            annotations: [{
+              x: 0.51,
+              y: 0.85,
+              text: 't* = 0.51',
+              showarrow: false,
+              font: { size: 12, color: 'black' }
+            }]
+          });
+          console.log('Threshold plot created');
+        } catch(e) {
+          console.error('Error creating threshold plot:', e);
+        }
+
+        // Confusion Matrix (matching imagelearner style with Blues colorscale)
+        const cm_data = [[542, 78], [65, 515]];
+        const total = cm_data.flat().reduce((a, b) => a + b, 0);
+        const labels = ['0', '1'];
+        
+        // Build annotations array with all white text
+        const annotations = [];
+        cm_data.forEach((row, i) => {
+          row.forEach((val, j) => {
+            const pct = ((val / total) * 100).toFixed(1);
+            // All text is white
+            const textColor = 'white';
+            // Count annotation (bold, bottom)
+            annotations.push({
+              x: labels[j],
+              y: labels[i],
+              text: '<b>' + val + '</b>',
+              showarrow: false,
+              font: { color: textColor, size: 14 },
+              xanchor: 'center',
+              yanchor: 'bottom',
+              yshift: 2
+            });
+            // Percentage annotation (top)
+            annotations.push({
+              x: labels[j],
+              y: labels[i],
+              text: pct + '%',
+              showarrow: false,
+              font: { color: textColor, size: 13 },
+              xanchor: 'center',
+              yanchor: 'top',
+              yshift: -2
+            });
+          });
+        });
+        
+        try {
+          Plotly.newPlot('confusion-matrix', [{
+            z: cm_data,
+            x: labels,
+            y: labels,
+            type: 'heatmap',
+            colorscale: 'Blues',
+            showscale: true,
+            colorbar: { title: 'Count' },
+            xgap: 2,
+            ygap: 2,
+            hovertemplate: 'True=%{y}<br>Pred=%{x}<br>Count=%{z}<extra></extra>',
+            zmin: 0
+          }], {
+            xaxis: { title: 'Predicted label', type: 'category' },
+            yaxis: { title: 'True label', type: 'category', autorange: 'reversed' },
+            margin: { l: 80, r: 20, t: 40, b: 80 },
+            template: 'plotly_white',
+            plot_bgcolor: 'white',
+            paper_bgcolor: 'white',
+            annotations: annotations
+          });
+          console.log('Confusion matrix created');
+        } catch(e) {
+          console.error('Error creating confusion matrix:', e);
+        }
+
+        // Per-Class Metrics
+        const classes = ['Class 0', 'Class 1'];
+        const precision_per_class = [0.8929, 0.8685];
+        const recall_per_class = [0.8742, 0.8879];
+        const f1_per_class = [0.8835, 0.8781];
+
+        try {
+          Plotly.newPlot('per-class-metrics', [
+            { 
+              x: classes, 
+              y: precision_per_class, 
+              type: 'bar', 
+              name: 'Precision', 
+              marker: { color: '#4CAF50' } 
+            },
+            { 
+              x: classes, 
+              y: recall_per_class, 
+              type: 'bar', 
+              name: 'Recall', 
+              marker: { color: '#2196F3' } 
+            },
+            { 
+              x: classes, 
+              y: f1_per_class, 
+              type: 'bar', 
+              name: 'F1', 
+              marker: { color: '#FF9800' } 
+            }
+          ], {
+            template: 'plotly_white',
+            xaxis: { 
+              title: 'Class', 
+              gridcolor: '#e0e0e0',
+              showgrid: true
+            },
+            yaxis: { 
+              title: 'Score', 
+              gridcolor: '#e0e0e0',
+              showgrid: true,
+              range: [0, 1]
+            },
+            barmode: 'group',
+            legend: { 
+              orientation: 'h', 
+              yanchor: 'bottom', 
+              y: 1.02, 
+              xanchor: 'right', 
+              x: 1.0 
+            },
+            margin: { l: 60, r: 20, t: 40, b: 50 },
+            plot_bgcolor: 'white',
+            paper_bgcolor: 'white'
+          });
+          console.log('Per-class metrics created');
+        } catch(e) {
+          console.error('Error creating per-class metrics:', e);
+        }
+
+        // ROC Curve (with fixed data)
+        const fpr = [0,0.01,0.02,0.03,0.04,0.05,0.06,0.07,0.08,0.09,0.10,0.11,0.12,0.13,0.14,0.15,0.16,0.17,0.18,0.19,0.20,0.21,0.22,0.23,0.24,0.25,0.26,0.27,0.28,0.29,0.30,0.31,0.32,0.33,0.34,0.35,0.36,0.37,0.38,0.39,0.40,0.41,0.42,0.43,0.44,0.45,0.46,0.47,0.48,0.49,0.50,0.51,0.52,0.53,0.54,0.55,0.56,0.57,0.58,0.59,0.60,0.61,0.62,0.63,0.64,0.65,0.66,0.67,0.68,0.69,0.70,0.71,0.72,0.73,0.74,0.75,0.76,0.77,0.78,0.79,0.80,0.81,0.82,0.83,0.84,0.85,0.86,0.87,0.88,0.89,0.90,0.91,0.92,0.93,0.94,0.95,0.96,0.97,0.98,0.99,1.00];
+        const tpr = [0,0.12,0.23,0.33,0.42,0.50,0.57,0.63,0.69,0.74,0.78,0.82,0.85,0.88,0.90,0.92,0.94,0.95,0.96,0.97,0.98,0.985,0.99,0.992,0.994,0.996,0.997,0.998,0.999,0.9995,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0,1.0];
+        const auc_score = 0.935;
+
+        try {
+          Plotly.newPlot('roc-curve', [
+            { 
+              x: [0, 1], 
+              y: [0, 1], 
+              type: 'scatter', 
+              mode: 'lines', 
+              name: 'Random (AUC = 0.50)', 
+              line: { dash: 'dash', color: 'gray', width: 2 } 
+            },
+            { 
+              x: fpr, 
+              y: tpr, 
+              type: 'scatter', 
+              mode: 'lines', 
+              name: `ROC Curve (AUC = ${auc_score.toFixed(3)})`, 
+              line: { width: 3, color: '#1f77b4' } 
+            }
+          ], {
+            template: 'plotly_white',
+            xaxis: { 
+              title: 'False Positive Rate', 
+              gridcolor: '#e0e0e0',
+              showgrid: true,
+              zeroline: false,
+              range: [0, 1]
+            },
+            yaxis: { 
+              title: 'True Positive Rate', 
+              gridcolor: '#e0e0e0',
+              showgrid: true,
+              zeroline: false,
+              range: [0, 1]
+            },
+            legend: { 
+              orientation: 'h', 
+              yanchor: 'bottom', 
+              y: 1.02, 
+              xanchor: 'right', 
+              x: 1.0 
+            },
+            margin: { l: 60, r: 20, t: 40, b: 50 },
+            plot_bgcolor: 'white',
+            paper_bgcolor: 'white'
+          });
+          console.log('ROC curve created');
+        } catch(e) {
+          console.error('Error creating ROC curve:', e);
+        }
+
+        // Precision-Recall Curve (with fixed data)
+        const recall_pr = [0,0.01,0.02,0.03,0.04,0.05,0.06,0.07,0.08,0.09,0.10,0.11,0.12,0.13,0.14,0.15,0.16,0.17,0.18,0.19,0.20,0.21,0.22,0.23,0.24,0.25,0.26,0.27,0.28,0.29,0.30,0.31,0.32,0.33,0.34,0.35,0.36,0.37,0.38,0.39,0.40,0.41,0.42,0.43,0.44,0.45,0.46,0.47,0.48,0.49,0.50,0.51,0.52,0.53,0.54,0.55,0.56,0.57,0.58,0.59,0.60,0.61,0.62,0.63,0.64,0.65,0.66,0.67,0.68,0.69,0.70,0.71,0.72,0.73,0.74,0.75,0.76,0.77,0.78,0.79,0.80,0.81,0.82,0.83,0.84,0.85,0.86,0.87,0.88,0.89,0.90,0.91,0.92,0.93,0.94,0.95,0.96,0.97,0.98,0.99,1.00];
+        const precision_pr = [0.95,0.949,0.948,0.947,0.946,0.945,0.944,0.943,0.942,0.941,0.940,0.939,0.938,0.937,0.936,0.935,0.934,0.933,0.932,0.931,0.930,0.929,0.928,0.927,0.926,0.925,0.924,0.923,0.922,0.921,0.920,0.919,0.918,0.917,0.916,0.915,0.914,0.913,0.912,0.911,0.910,0.909,0.908,0.907,0.906,0.905,0.904,0.903,0.902,0.901,0.900,0.899,0.898,0.897,0.896,0.895,0.894,0.893,0.892,0.891,0.890,0.889,0.888,0.887,0.886,0.885,0.884,0.883,0.882,0.881,0.880,0.879,0.878,0.877,0.876,0.875,0.874,0.873,0.872,0.871,0.870,0.869,0.868,0.867,0.866,0.865,0.864,0.863,0.862,0.861,0.860,0.859,0.858,0.857,0.856,0.855,0.854,0.853,0.852,0.851,0.850];
+        const ap_score = 0.9234;
+
+        try {
+          Plotly.newPlot('pr-curve', [
+            { 
+              x: recall_pr, 
+              y: precision_pr, 
+              type: 'scatter', 
+              mode: 'lines', 
+              name: `Precision-Recall Curve (AP = ${ap_score.toFixed(4)})`, 
+              line: { width: 3, color: '#1f77b4' } 
+            }
+          ], {
+            template: 'plotly_white',
+            xaxis: { 
+              title: 'Recall', 
+              gridcolor: '#e0e0e0',
+              showgrid: true,
+              zeroline: false,
+              range: [0, 1]
+            },
+            yaxis: { 
+              title: 'Precision', 
+              gridcolor: '#e0e0e0',
+              showgrid: true,
+              zeroline: false,
+              range: [0.6, 1]
+            },
+            legend: { 
+              orientation: 'h', 
+              yanchor: 'bottom', 
+              y: 1.02, 
+              xanchor: 'right', 
+              x: 1.0 
+            },
+            margin: { l: 60, r: 20, t: 40, b: 50 },
+            plot_bgcolor: 'white',
+            paper_bgcolor: 'white'
+          });
+          console.log('PR curve created');
+        } catch(e) {
+          console.error('Error creating PR curve:', e);
+        }
+        
+        console.log('All plots created successfully!');
+      }
+
+      // Start creating plots when DOM is ready
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', createPlots);
+      } else {
+        createPlots();
+      }
+    </script>
+  </div>
+</body>
+</html>
+
