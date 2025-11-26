@@ -353,7 +353,7 @@ class LudwigDirectBackend:
             except (ValueError, IndexError):
                 logger.warning(f"Invalid image resize format: {config_params['image_resize']}, skipping resize preprocessing")
         def _resolve_validation_metric(task: str, requested: Optional[str]) -> Optional[str]:
-            # Defaults per task
+            """Pick a validation metric that Ludwig will accept for the resolved task."""
             if task == "regression":
                 default_metric = "pearson_r"
                 alias_map = {
@@ -372,22 +372,33 @@ class LudwigDirectBackend:
                     "explained_variance",
                     "loss",
                 }
-            else:
-                default_metric = "roc_auc" if task == "binary" else "accuracy"
+            elif task == "binary":
+                default_metric = "roc_auc"
+                # Ludwig rejects f1 for binary outputs; keep to the known-safe set.
                 allowed = {
                     "roc_auc",
                     "accuracy",
                     "balanced_accuracy",
                     "precision",
                     "recall",
-                    "f1",
                     "specificity",
                     "log_loss",
                     "loss",
                 }
+            else:  # category / multi-class
+                default_metric = "accuracy"
+                allowed = {
+                    "accuracy",
+                    "loss",
+                    "balanced_accuracy",
+                    "precision",
+                    "recall",
+                    "f1",
+                    "specificity",
+                    "log_loss",
+                }
 
             metric = requested or default_metric
-            # normalize common aliases for regression metrics
             if task == "regression" and metric in alias_map:
                 metric = alias_map[metric]
             if metric not in allowed:
