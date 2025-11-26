@@ -355,15 +355,13 @@ class LudwigDirectBackend:
 
         def _resolve_validation_metric(task: str, requested: Optional[str]) -> Optional[str]:
             """Pick a validation metric that Ludwig will accept for the resolved task."""
-            if task == "regression":
-                default_metric = "pearson_r"
-                alias_map = {
-                    "mae": "mean_absolute_error",
-                    "mse": "mean_squared_error",
-                    "rmse": "root_mean_squared_error",
-                    "mape": "mean_absolute_percentage_error",
-                }
-                allowed = {
+            default_map = {
+                "regression": "pearson_r",
+                "binary": "roc_auc",
+                "category": "accuracy",
+            }
+            allowed_map = {
+                "regression": {
                     "pearson_r",
                     "mean_absolute_error",
                     "mean_squared_error",
@@ -372,37 +370,51 @@ class LudwigDirectBackend:
                     "r2",
                     "explained_variance",
                     "loss",
-                }
-            elif task == "binary":
-                default_metric = "roc_auc"
-                # Ludwig rejects f1 for binary outputs; keep to the known-safe set.
-                allowed = {
+                },
+                # Ludwig rejects f1 and balanced_accuracy for binary outputs; keep to known-safe set.
+                "binary": {
                     "roc_auc",
                     "accuracy",
-                    "balanced_accuracy",
                     "precision",
                     "recall",
                     "specificity",
                     "log_loss",
                     "loss",
-                }
-            else:  # category / multi-class
-                default_metric = "accuracy"
-                allowed = {
+                },
+                "category": {
                     "accuracy",
-                    "loss",
                     "balanced_accuracy",
                     "precision",
                     "recall",
                     "f1",
                     "specificity",
                     "log_loss",
-                }
+                    "loss",
+                },
+            }
+            alias_map = {
+                "regression": {
+                    "mae": "mean_absolute_error",
+                    "mse": "mean_squared_error",
+                    "rmse": "root_mean_squared_error",
+                    "mape": "mean_absolute_percentage_error",
+                },
+            }
 
+            default_metric = default_map.get(task)
+            allowed = allowed_map.get(task, set())
             metric = requested or default_metric
-            if task == "regression" and metric in alias_map:
-                metric = alias_map[metric]
+
+            if metric is None:
+                return None
+
+            metric = alias_map.get(task, {}).get(metric, metric)
+
             if metric not in allowed:
+                if requested:
+                    logger.warning(
+                        f"Validation metric '{requested}' is not supported for {task} outputs; using '{default_metric}' instead."
+                    )
                 metric = default_metric
             return metric
 

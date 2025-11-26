@@ -471,7 +471,7 @@
             <param name="advanced_settings|epochs" value="5" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Results Summary" />
+                    <has_text text="Test Performance Summary" />
                     <has_text text="Train/Validation Results" />
                     <has_text text="Test Results" />
                 </assert_contents>
