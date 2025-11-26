@@ -260,7 +260,13 @@
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
-            <output name="best_model_csv" value="expected_best_model_classification.csv" />
+            <output name="best_model_csv">
+                <assert_contents>
+                    <has_text text="n_estimators,100" />
+                    <has_text text="num_leaves,31" />
+                    <has_text text="learning_rate,0.1" />
+                </assert_contents>
+            </output>
         </test>
         <test>
             <param name="input_file" value="pcr.tsv"/>
@@ -275,7 +281,13 @@
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
-            <output name="best_model_csv" value="expected_best_model_classification.csv" />
+            <output name="best_model_csv">
+                <assert_contents>
+                    <has_text text="n_estimators,100" />
+                    <has_text text="num_leaves,31" />
+                    <has_text text="learning_rate,0.1" />
+                </assert_contents>
+            </output>
         </test>
         <test>
             <param name="input_file" value="auto-mpg.tsv"/>
