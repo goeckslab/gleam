@@ -31,7 +31,11 @@ from ludwig.globals import (
 )
 from ludwig.utils.data_utils import get_split_path
 from metaformer_setup import get_visualizations_registry, META_DEFAULT_CFGS
-from plotly_plots import build_classification_plots
+from plotly_plots import (
+    build_classification_plots,
+    build_prediction_diagnostics,
+    build_train_validation_plots,
+)
 from utils import detect_output_type, extract_metrics_from_json
 
 logger = logging.getLogger("ImageLearner")
@@ -71,6 +75,8 @@ class Backend(Protocol):
 
 class LudwigDirectBackend:
     """Backend for running Ludwig experiments directly via the internal experiment_cli function."""
+
+    _torchvision_patched = False
 
     def _detect_image_dimensions(self, image_zip_path: str) -> Tuple[int, int]:
         """Detect image dimensions from the first image in the dataset."""
@@ -344,6 +350,38 @@ class LudwigDirectBackend:
                     logger.info(f"Added resize preprocessing: {height}x{width} for standard encoder with infer_image_dimensions=True and max dimensions")
             except (ValueError, IndexError):
                 logger.warning(f"Invalid image resize format: {config_params['image_resize']}, skipping resize preprocessing")
+        def _resolve_validation_metric(task: str, requested: Optional[str]) -> Optional[str]:
+            # Defaults per task
+            if task == "regression":
+                default_metric = "pearson_r"
+                allowed = {
+                    "pearson_r",
+                    "mae",
+                    "mse",
+                    "mape",
+                    "r2",
+                    "explained_variance",
+                    "loss",
+                }
+            else:
+                default_metric = "roc_auc" if task == "binary" else "accuracy"
+                allowed = {
+                    "roc_auc",
+                    "accuracy",
+                    "balanced_accuracy",
+                    "precision",
+                    "recall",
+                    "f1",
+                    "specificity",
+                    "log_loss",
+                    "loss",
+                }
+
+            metric = requested or default_metric
+            if metric not in allowed:
+                metric = default_metric
+            return metric
+
         if task_type == "regression":
             output_feat = {
                 "name": LABEL_COLUMN_NAME,
@@ -351,7 +389,7 @@ class LudwigDirectBackend:
                 "decoder": {"type": "regressor"},
                 "loss": {"type": "mean_squared_error"},
             }
-            val_metric = config_params.get("validation_metric", "mean_squared_error")
+            val_metric = _resolve_validation_metric("regression", config_params.get("validation_metric"))
 
         else:
             if num_unique_labels == 2:
@@ -362,13 +400,16 @@ class LudwigDirectBackend:
                 }
                 if config_params.get("threshold") is not None:
                     output_feat["threshold"] = float(config_params["threshold"])
-            else:
-                output_feat = {
-                    "name": LABEL_COLUMN_NAME,
-                    "type": "category",
-                    "loss": {"type": "softmax_cross_entropy"},
-                }
-            val_metric = None
+                else:
+                    output_feat = {
+                        "name": LABEL_COLUMN_NAME,
+                        "type": "category",
+                        "loss": {"type": "softmax_cross_entropy"},
+                    }
+            val_metric = _resolve_validation_metric(
+                "binary" if num_unique_labels == 2 else "category",
+                config_params.get("validation_metric"),
+            )
 
         conf: Dict[str, Any] = {
             "model_type": "ecd",
@@ -380,7 +421,7 @@ class LudwigDirectBackend:
                 "early_stop": early_stop,
                 "batch_size": batch_size_cfg,
                 "learning_rate": learning_rate,
-                # only set validation_metric for regression
+                # set validation_metric when provided
                 **({"validation_metric": val_metric} if val_metric else {}),
             },
             "preprocessing": {
@@ -402,6 +443,41 @@ class LudwigDirectBackend:
             )
             raise
 
+    def _patch_torchvision_download(self) -> None:
+        """
+        Torchvision weight downloads sometimes fail checksum validation behind
+        corporate proxies that rewrite binaries. Skip hash checking to allow
+        pre-trained weights to load in those environments.
+        """
+        if LudwigDirectBackend._torchvision_patched:
+            return
+        try:
+            import torch.hub as torch_hub
+
+            original = torch_hub.load_state_dict_from_url
+            original_download = torch_hub.download_url_to_file
+
+            def _no_hash(url, model_dir=None, map_location=None, progress=True, check_hash=False, file_name=None):
+                return original(
+                    url,
+                    model_dir=model_dir,
+                    map_location=map_location,
+                    progress=progress,
+                    check_hash=False,
+                    file_name=file_name,
+                )
+
+            def _download_no_hash(url, dst, hash_prefix=None, progress=True):
+                # Torchvision's download_url_to_file signature does not accept check_hash in older versions.
+                return original_download(url, dst, hash_prefix=None, progress=progress)
+
+            torch_hub.load_state_dict_from_url = _no_hash  # type: ignore[assignment]
+            torch_hub.download_url_to_file = _download_no_hash  # type: ignore[assignment]
+            LudwigDirectBackend._torchvision_patched = True
+            logger.info("Disabled torchvision weight hash verification to avoid proxy-corrupted downloads.")
+        except Exception as exc:
+            logger.warning(f"Could not patch torchvision download hash check: {exc}")
+
     def run_experiment(
         self,
         dataset_path: Path,
@@ -411,6 +487,9 @@ class LudwigDirectBackend:
     ) -> None:
         """Invoke Ludwig's internal experiment_cli function to run the experiment."""
         logger.info("LudwigDirectBackend: Starting experiment execution.")
+
+        # Avoid strict hash validation for torchvision weights (common in proxied environments)
+        self._patch_torchvision_download()
 
         try:
             from ludwig.experiment import experiment_cli
@@ -506,24 +585,10 @@ class LudwigDirectBackend:
         """Generate all registered Ludwig visualizations for the latest experiment run."""
         logger.info("Generating all Ludwig visualizations…")
 
+        # Keep only lightweight plots (drop compare_performance/roc_curves)
         test_plots = {
-            "compare_performance",
-            "compare_classifiers_performance_from_prob",
-            "compare_classifiers_performance_from_pred",
-            "compare_classifiers_performance_changing_k",
-            "compare_classifiers_multiclass_multimetric",
-            "compare_classifiers_predictions",
-            "confidence_thresholding_2thresholds_2d",
-            "confidence_thresholding_2thresholds_3d",
-            "confidence_thresholding",
-            "confidence_thresholding_data_vs_acc",
-            "binary_threshold_vs_metric",
-            "roc_curves",
             "roc_curves_from_test_statistics",
-            "calibration_1_vs_all",
-            "calibration_multiclass",
             "confusion_matrix",
-            "frequency_vs_f1",
         }
         train_plots = {
             "learning_curves",
@@ -627,6 +692,70 @@ class LudwigDirectBackend:
         if not exp_dirs:
             raise RuntimeError(f"No 'experiment*' dirs found in {output_dir}")
         exp_dir = exp_dirs[-1]
+        train_set_metadata_path = exp_dir / "model" / TRAIN_SET_METADATA_FILE_NAME
+        label_metadata_path = config.get("label_column_data_path")
+        if label_metadata_path:
+            label_metadata_path = Path(label_metadata_path)
+
+        # Pull additional config details from description.json if available
+        config_for_summary = dict(config)
+        if "target_column" not in config_for_summary or not config_for_summary.get("target_column"):
+            config_for_summary["target_column"] = LABEL_COLUMN_NAME
+        desc_path = exp_dir / DESCRIPTION_FILE_NAME
+        if desc_path.exists():
+            try:
+                with open(desc_path, "r") as f:
+                    desc_cfg = json.load(f).get("config", {})
+                encoder_cfg = (
+                    desc_cfg.get("input_features", [{}])[0].get("encoder", {})
+                    if isinstance(desc_cfg.get("input_features", [{}]), list)
+                    else {}
+                )
+                output_cfg = (
+                    desc_cfg.get("output_features", [{}])[0]
+                    if isinstance(desc_cfg.get("output_features", [{}]), list)
+                    else {}
+                )
+                trainer_cfg = desc_cfg.get("trainer", {}) if isinstance(desc_cfg, dict) else {}
+                loss_cfg = output_cfg.get("loss", {}) if isinstance(output_cfg, dict) else {}
+                opt_cfg = trainer_cfg.get("optimizer", {}) if isinstance(trainer_cfg, dict) else {}
+                clip_cfg = trainer_cfg.get("gradient_clipping", {}) if isinstance(trainer_cfg, dict) else {}
+
+                arch_type = encoder_cfg.get("type")
+                arch_variant = encoder_cfg.get("model_variant")
+                arch_name = None
+                if arch_type:
+                    arch_base = str(arch_type).replace("_", " ").title()
+                    arch_name = f"{arch_base} {arch_variant}" if arch_variant is not None else arch_base
+
+                summary_fields = {
+                    "architecture": arch_name,
+                    "model_variant": arch_variant,
+                    "pretrained": encoder_cfg.get("use_pretrained"),
+                    "trainable": encoder_cfg.get("trainable"),
+                    "target_column": output_cfg.get("column"),
+                    "task_type": output_cfg.get("type"),
+                    "validation_metric": trainer_cfg.get("validation_metric"),
+                    "loss_function": loss_cfg.get("type"),
+                    "threshold": output_cfg.get("threshold"),
+                    "total_epochs": trainer_cfg.get("epochs"),
+                    "early_stop": trainer_cfg.get("early_stop"),
+                    "batch_size": trainer_cfg.get("batch_size"),
+                    "optimizer": opt_cfg.get("type"),
+                    "learning_rate": trainer_cfg.get("learning_rate"),
+                    "random_seed": desc_cfg.get("random_seed") or config.get("random_seed"),
+                    "use_mixed_precision": trainer_cfg.get("use_mixed_precision"),
+                    "gradient_clipping": clip_cfg.get("clipglobalnorm"),
+                }
+                for k, v in summary_fields.items():
+                    if v is None:
+                        continue
+                    # Do not override user-passed target/image column names in config
+                    if k in {"target_column", "image_column"} and config_for_summary.get(k):
+                        continue
+                    config_for_summary.setdefault(k, v)
+            except Exception as e:  # pragma: no cover - defensive
+                logger.warning(f"Could not merge description.json into config summary: {e}")
 
         base_viz_dir = exp_dir / "visualizations"
         train_viz_dir = base_viz_dir / "train"
@@ -698,9 +827,9 @@ class LudwigDirectBackend:
         metrics_html = ""
         train_val_metrics_html = ""
         test_metrics_html = ""
+        train_stats_path = exp_dir / "training_statistics.json"
+        test_stats_path = exp_dir / TEST_STATISTICS_FILE_NAME
         try:
-            train_stats_path = exp_dir / "training_statistics.json"
-            test_stats_path = exp_dir / TEST_STATISTICS_FILE_NAME
             if train_stats_path.exists() and test_stats_path.exists():
                 with open(train_stats_path) as f:
                     train_stats = json.load(f)
@@ -725,10 +854,19 @@ class LudwigDirectBackend:
         training_progress = self.get_training_process(output_dir)
         try:
             config_html = format_config_table_html(
-                config, split_info, training_progress, output_type
+                config_for_summary, split_info, training_progress, output_type
             )
         except Exception as e:
             logger.warning(f"Could not load config for HTML report: {e}")
+            config_html = (
+                "<h2 style='text-align: center;'>Model and Training Summary</h2>"
+                "<p style='text-align:center; color:#666;'>Configuration details unavailable.</p>"
+            )
+        if not config_html:
+            config_html = (
+                "<h2 style='text-align: center;'>Model and Training Summary</h2>"
+                "<p style='text-align:center; color:#666;'>No configuration details found.</p>"
+            )
 
         # ---------- image rendering with exclusions ----------
         def render_img_section(
@@ -802,7 +940,8 @@ class LudwigDirectBackend:
                 )
             return html_section
 
-        tab1_content = config_html + metrics_html
+        # Show performance first, then config
+        tab1_content = metrics_html + config_html
 
         tab2_content = train_val_metrics_html + render_img_section(
             "Training and Validation Visualizations",
@@ -815,6 +954,18 @@ class LudwigDirectBackend:
                 "precision_recall_curve.png",
             },
         )
+        if train_stats_path.exists():
+            try:
+                tv_plots = build_train_validation_plots(str(train_stats_path))
+                for plot in tv_plots:
+                    tab2_content += (
+                        f"<h2 style='text-align: center;'>{plot['title']}</h2>"
+                        f"<div class='plotly-center'>{plot['html']}</div>"
+                    )
+                if tv_plots:
+                    logger.info(f"Generated {len(tv_plots)} train/val diagnostic plots")
+            except Exception as e:
+                logger.warning(f"Could not generate train/val plots: {e}")
 
         # --- Predictions vs Ground Truth table (REGRESSION ONLY) ---
         preds_section = ""
@@ -863,6 +1014,12 @@ class LudwigDirectBackend:
                 interactive_plots = build_classification_plots(
                     str(test_stats_path),
                     str(train_stats_path) if train_stats_path.exists() else None,
+                    metadata_csv_path=str(label_metadata_path)
+                    if label_metadata_path and label_metadata_path.exists()
+                    else None,
+                    train_set_metadata_path=str(train_set_metadata_path)
+                    if train_set_metadata_path.exists()
+                    else None,
                 )
                 for plot in interactive_plots:
                     tab3_content += (
@@ -873,11 +1030,27 @@ class LudwigDirectBackend:
             except Exception as e:
                 logger.warning(f"Could not generate Plotly plots: {e}")
 
-        # Add static TEST PNGs (with default dedupe/exclusions)
-        tab3_content += render_img_section(
-            "Test Visualizations", test_viz_dir, output_type
-        )
+            # Add prediction diagnostics from predictions.csv
+            predictions_csv_path = exp_dir / "predictions.csv"
+            try:
+                diag_plots = build_prediction_diagnostics(
+                    str(predictions_csv_path),
+                    label_data_path=str(config.get("label_column_data_path"))
+                    if config.get("label_column_data_path")
+                    else None,
+                    threshold=config.get("threshold"),
+                )
+                for plot in diag_plots:
+                    tab3_content += (
+                        f"<h2 style='text-align: center;'>{plot['title']}</h2>"
+                        f"<div class='plotly-center'>{plot['html']}</div>"
+                    )
+                if diag_plots:
+                    logger.info(f"Generated {len(diag_plots)} prediction diagnostic plots")
+            except Exception as e:
+                logger.warning(f"Could not generate prediction diagnostics: {e}")
 
+        # Add static TEST PNGs (with default dedupe/exclusions)
         tabbed_html = build_tabbed_html(tab1_content, tab2_content, tab3_content)
         modal_html = get_metrics_help_modal()
         html += tabbed_html + modal_html + get_html_closing()

@@ -19,6 +19,12 @@ def _apply_report_layout(fig: go.Figure) -> go.Figure:
     fig.update_xaxes(automargin=True, title_standoff=12)
     fig.update_yaxes(automargin=True, title_standoff=12)
     fig.update_layout(
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#ffffff",
+    )
+    fig.update_xaxes(gridcolor="#e8e8e8")
+    fig.update_yaxes(gridcolor="#e8e8e8")
+    fig.update_layout(
         autosize=True,
         margin=dict(l=120, r=40, t=60, b=60),  # bump 'l' if you still see clipping
     )

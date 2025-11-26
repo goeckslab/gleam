@@ -22,21 +22,31 @@ def format_config_table_html(
     output_type: Optional[str] = None,
 ) -> str:
     display_keys = [
+        "architecture",
+        "pretrained",
+        "trainable",
+        "target_column",
         "task_type",
-        "model_name",
+        "validation_metric",
+        "loss_function",
+        "threshold",
         "epochs",
+        "total_epochs",
         "batch_size",
         "fine_tune",
         "use_pretrained",
         "learning_rate",
+        "optimizer",
         "random_seed",
         "early_stop",
-        "threshold",
+        "use_mixed_precision",
+        "gradient_clipping",
     ]
 
     rows = []
 
     for key in display_keys:
+        val_str = "N/A"
         val = config.get(key, None)
         if key == "threshold":
             if output_type != "binary":
@@ -49,7 +59,7 @@ def format_config_table_html(
             if key == "task_type":
                 val_str = val.title() if isinstance(val, str) else "N/A"
             elif key == "batch_size":
-                if val is not None:
+                if isinstance(val, (int, float)):
                     val_str = int(val)
                 else:
                     val = "auto"
@@ -120,6 +130,21 @@ def format_config_table_html(
                         )
                     else:
                         val_str = val
+            elif key == "pretrained":
+                if isinstance(val, bool):
+                    val_str = "Yes (ImageNet)" if val else "No"
+                else:
+                    val_str = val if val is not None else "N/A"
+            elif key == "trainable":
+                if isinstance(val, bool):
+                    val_str = "Trainable" if val else "Frozen"
+                else:
+                    val_str = val if val is not None else "N/A"
+            elif key == "use_mixed_precision":
+                if isinstance(val, bool):
+                    val_str = "Yes" if val else "No"
+                else:
+                    val_str = val if val is not None else "N/A"
             else:
                 val_str = val if val is not None else "N/A"
             if val_str == "N/A" and key not in ["task_type"]:
@@ -155,7 +180,7 @@ def format_config_table_html(
         )
 
     html = f"""
-        <h2 style="text-align: center;">Model and Training Summary</h2>
+        <h2 style="text-align: center;">Training Configuration (Model, Data, Metrics)</h2>
         <div style="display: flex; justify-content: center;">
           <table style="border-collapse: collapse; width: 100%; table-layout: fixed;">
             <thead><tr>
@@ -519,15 +544,15 @@ def json_to_html_table(json_data) -> str:
 def build_tabbed_html(metrics_html: str, train_val_html: str, test_html: str) -> str:
     """
     Build a 3-tab interface:
-      - Config and Results Summary
+      - Config and Overall Performance Summary
       - Train/Validation Results
       - Test Results
     Includes a persistent "Help" button that toggles the metrics modal.
     """
     return f"""
 <div class="tabs">
-  <div class="tab active" onclick="showTab('metrics')">Config and Results Summary</div>
-  <div class="tab" onclick="showTab('trainval')">Train/Validation Results</div>
+  <div class="tab active" onclick="showTab('metrics')">Config and Overall Performance Summary</div>
+  <div class="tab" onclick="showTab('trainval')">Training and Validation Results</div>
   <div class="tab" onclick="showTab('test')">Test Results</div>
   <button id="openMetricsHelp" class="help-btn" title="Open metrics help">Help</button>
 </div>

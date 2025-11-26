@@ -246,7 +246,13 @@ function showTab(id) {
 def customize_figure_layout(fig, margin_dict=None):
     if margin_dict is None:
         margin_dict = {"l": 40, "r": 40, "t": 40, "b": 40}
-    fig.update_layout(margin=margin_dict)
+    fig.update_layout(
+        margin=margin_dict,
+        plot_bgcolor="#ffffff",
+        paper_bgcolor="#ffffff",
+    )
+    fig.update_xaxes(gridcolor="#e8e8e8")
+    fig.update_yaxes(gridcolor="#e8e8e8")
     return fig
 
 

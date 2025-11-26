@@ -142,6 +142,41 @@ def main():
             "Overrides default 0.5."
         ),
     )
+    parser.add_argument(
+        "--validation-metric",
+        type=str,
+        default="roc_auc",
+        choices=[
+            "accuracy",
+            "loss",
+            "roc_auc",
+            "balanced_accuracy",
+            "precision",
+            "recall",
+            "f1",
+            "specificity",
+            "log_loss",
+            "pearson_r",
+            "mae",
+            "mse",
+            "mape",
+            "r2",
+            "explained_variance",
+        ],
+        help="Metric Ludwig uses to select the best model during training/validation.",
+    )
+    parser.add_argument(
+        "--target-column",
+        type=str,
+        default=None,
+        help="Name of the target/label column in the metadata file (defaults to 'label').",
+    )
+    parser.add_argument(
+        "--image-column",
+        type=str,
+        default=None,
+        help="Name of the image column in the metadata file (defaults to 'image_path').",
+    )
 
     args = parser.parse_args()
 
