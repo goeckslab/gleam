@@ -34,9 +34,9 @@ from metaformer_setup import get_visualizations_registry, META_DEFAULT_CFGS
 from plotly_plots import (
     build_classification_plots,
     build_prediction_diagnostics,
-    build_train_validation_plots,
-    build_regression_train_val_plots,
     build_regression_test_plots,
+    build_regression_train_val_plots,
+    build_train_validation_plots,
 )
 from utils import detect_output_type, extract_metrics_from_json
 
@@ -352,6 +352,7 @@ class LudwigDirectBackend:
                     logger.info(f"Added resize preprocessing: {height}x{width} for standard encoder with infer_image_dimensions=True and max dimensions")
             except (ValueError, IndexError):
                 logger.warning(f"Invalid image resize format: {config_params['image_resize']}, skipping resize preprocessing")
+
         def _resolve_validation_metric(task: str, requested: Optional[str]) -> Optional[str]:
             """Pick a validation metric that Ludwig will accept for the resolved task."""
             if task == "regression":
@@ -782,7 +783,6 @@ class LudwigDirectBackend:
 
         base_viz_dir = exp_dir / "visualizations"
         train_viz_dir = base_viz_dir / "train"
-        test_viz_dir = base_viz_dir / "test"
 
         html = get_html_template()
 

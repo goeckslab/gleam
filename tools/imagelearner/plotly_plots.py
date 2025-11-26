@@ -71,7 +71,7 @@ def _resolve_confusion_labels(
                     )
                 labels_from_meta = _labels_from_metadata_dict(label_meta) if label_meta else []
                 if labels_from_meta and len(labels_from_meta) >= n_classes:
-                    return [str(l) for l in labels_from_meta[:n_classes]]
+                    return [str(label) for label in labels_from_meta[:n_classes]]
         except Exception as exc:
             print(f"Warning: Unable to read labels from train_set_metadata: {exc}")
 
@@ -98,7 +98,7 @@ def _resolve_confusion_labels(
         labels = [str(i) for i in range(n_classes)]
     if len(labels) < n_classes:
         labels = labels + [str(i) for i in range(len(labels), n_classes)]
-    return [str(l) for l in labels[:n_classes]]
+    return [str(label) for label in labels[:n_classes]]
 
 
 def build_classification_plots(
