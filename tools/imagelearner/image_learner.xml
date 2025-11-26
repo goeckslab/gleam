@@ -1,4 +1,4 @@
-<tool id="image_learner" name="Image Learner" version="0.1.3" profile="22.05">
+<tool id="image_learner" name="Image Learner" version="0.1.4" profile="22.05">
     <description>trains and evaluates an image classification/regression model</description>
     <requirements>
         <container type="docker">quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1</container>
@@ -363,10 +363,11 @@
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="resnet18" />
             <param name="augmentation" value="random_horizontal_flip,random_vertical_flip,random_rotate" />
+            <param name="validation_metric" value="accuracy" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Results Summary" />
-                    <has_text text="Train/Validation Results" />
+                    <has_text text="Config and Overall Performance Summary" />
+                    <has_text text="Training and Validation Results" />
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
@@ -385,8 +386,8 @@
             <param name="model_name" value="resnet18" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Results Summary" />
-                    <has_text text="Train/Validation Results" />
+                    <has_text text="Config and Overall Performance Summary" />
+                    <has_text text="Training and Validation Results" />
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
@@ -404,8 +405,8 @@
             <param name="model_name" value="caformer_s18" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Results Summary" />
-                    <has_text text="Train/Validation Results" />
+                    <has_text text="Config and Overall Performance Summary" />
+                    <has_text text="Training and Validation Results" />
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
@@ -448,8 +449,8 @@
             <param name="image_resize" value="384x384" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Results Summary" />
-                    <has_text text="Train/Validation Results" />
+                    <has_text text="Config and Overall Performance Summary" />
+                    <has_text text="Training and Validation Results" />
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
@@ -525,11 +526,14 @@
             <param name="model_name" value="resnet18" />
             <param name="customize_defaults" value="true" />
             <param name="threshold" value="0.6" />
+            <param name="validation_metric" value="balanced_accuracy" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Accuracy" />
-                    <has_text text="Precision" />
-                    <has_text text="Learning Curves Label Accuracy" />
+                    <has_text text="Config and Overall Performance Summary" />
+                    <has_text text="Training and Validation Results" />
+                    <has_text text="Test Results" />
+                    <has_text text="Threshold" />
+                    <has_text text="0.60" />
                 </assert_contents>
             </output>
             <output_collection name="output_pred_csv" type="list" >
