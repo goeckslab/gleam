@@ -6,7 +6,7 @@
     <expand macro="python_requirements" />
     <command>
         <![CDATA[
-        python $__tool_directory__/pycaret_train.py --input_file '$input_file' --target_col '$target_feature' --output_dir '.' --random_seed '$random_seed'
+        python $__tool_directory__/pycaret_train.py --input_file '$input_file' --target_col '$target_feature' --output_dir '.' --random_seed '$random_seed' --n-jobs \${GALAXY_SLOTS:-1}
         #if $model_type == "classification"
             #if $classification_models
                 --models '$classification_models'
