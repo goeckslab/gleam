@@ -72,7 +72,7 @@
     </command>
 
     <inputs>
-        <param name="input_csv" argument="input_csv" type="data" format="csv" optional="false" label="the metadata csv containing image_path column, label column and optional split column" />
+        <param name="input_csv" type="data" format="csv" optional="false" label="the metadata csv containing image_path column, label column and optional split column" />
         <param name="image_zip" type="data" format="zip" optional="false" label="Image zip" help="Image zip file containing your image data"/>
         <param name="model_name" type="select" optional="false" label="Select a model for your experiment" >
 
@@ -226,8 +226,7 @@
                 <!-- No additional parameters to show if the user selects 'No' -->
             </when>
         </conditional>
-        <param argument="image_resize"
-               name="image_resize"
+        <param name="image_resize"
                type="select"
                label="Image Resize"
                help="Select the size to resize images to. Original size keeps images as-is, while other options resize all images to the specified dimensions.">
@@ -245,8 +244,7 @@
             <option value="448x448">448x448</option>
             <option value="512x512">512x512</option>
         </param>
-        <param argument="augmentation"
-               name="augmentation"
+        <param name="augmentation"
                type="select"
                multiple="true"
                display="checkboxes"
@@ -386,8 +384,8 @@
             <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="randformer_s12" />
-            <param name="customize_defaults" value="true" />
-            <param name="epochs" value="5" />
+            <param name="advanced_settings|customize_defaults" value="true" />
+            <param name="advanced_settings|epochs" value="5" />
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Results Summary" />
@@ -487,8 +485,8 @@
             <param name="input_csv" value="mnist_subset_binary.csv" ftype="csv" />
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="resnet18" />
-            <param name="customize_defaults" value="true" />
-            <param name="threshold" value="0.6" />
+            <param name="advanced_settings|customize_defaults" value="true" />
+            <param name="advanced_settings|threshold" value="0.6" />
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Accuracy" />
