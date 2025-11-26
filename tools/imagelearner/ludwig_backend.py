@@ -412,12 +412,12 @@ class LudwigDirectBackend:
                 }
                 if config_params.get("threshold") is not None:
                     output_feat["threshold"] = float(config_params["threshold"])
-                else:
-                    output_feat = {
-                        "name": LABEL_COLUMN_NAME,
-                        "type": "category",
-                        "loss": {"type": "softmax_cross_entropy"},
-                    }
+            else:
+                output_feat = {
+                    "name": LABEL_COLUMN_NAME,
+                    "type": "category",
+                    "loss": {"type": "softmax_cross_entropy"},
+                }
             val_metric = _resolve_validation_metric(
                 "binary" if num_unique_labels == 2 else "category",
                 config_params.get("validation_metric"),
