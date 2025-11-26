@@ -35,6 +35,8 @@ from plotly_plots import (
     build_classification_plots,
     build_prediction_diagnostics,
     build_train_validation_plots,
+    build_regression_train_val_plots,
+    build_regression_test_plots,
 )
 from utils import detect_output_type, extract_metrics_from_json
 
@@ -354,11 +356,18 @@ class LudwigDirectBackend:
             # Defaults per task
             if task == "regression":
                 default_metric = "pearson_r"
+                alias_map = {
+                    "mae": "mean_absolute_error",
+                    "mse": "mean_squared_error",
+                    "rmse": "root_mean_squared_error",
+                    "mape": "mean_absolute_percentage_error",
+                }
                 allowed = {
                     "pearson_r",
-                    "mae",
-                    "mse",
-                    "mape",
+                    "mean_absolute_error",
+                    "mean_squared_error",
+                    "root_mean_squared_error",
+                    "mean_absolute_percentage_error",
                     "r2",
                     "explained_variance",
                     "loss",
@@ -378,6 +387,9 @@ class LudwigDirectBackend:
                 }
 
             metric = requested or default_metric
+            # normalize common aliases for regression metrics
+            if task == "regression" and metric in alias_map:
+                metric = alias_map[metric]
             if metric not in allowed:
                 metric = default_metric
             return metric
@@ -914,6 +926,11 @@ class LudwigDirectBackend:
                 for img in imgs
                 if img.name not in default_exclude
                 and img.name not in exclude_names
+                and not (
+                    "learning_curves" in img.stem
+                    and "loss" in img.stem
+                    and "label" in img.stem
+                )
             ]
 
             if not imgs:
@@ -956,7 +973,10 @@ class LudwigDirectBackend:
         )
         if train_stats_path.exists():
             try:
-                tv_plots = build_train_validation_plots(str(train_stats_path))
+                if output_type == "regression":
+                    tv_plots = build_regression_train_val_plots(str(train_stats_path))
+                else:
+                    tv_plots = build_train_validation_plots(str(train_stats_path))
                 for plot in tv_plots:
                     tab2_content += (
                         f"<h2 style='text-align: center;'>{plot['title']}</h2>"
@@ -1000,7 +1020,7 @@ class LudwigDirectBackend:
                     "<div class='preds-controls'>"
                     "<button id='downloadPredsCsv' class='download-btn'>Download CSV</button>"
                     "</div>"
-                    "<div class='scroll-rows-30' style='overflow-x:auto; overflow-y:auto; max-height:900px; margin-bottom:20px;'>"
+                    "<div class='scroll-rows-30' style='overflow-x:auto; overflow-y:auto; max-height:350px; margin-bottom:20px;'>"
                     + preds_html
                     + "</div>"
                 )
@@ -1008,6 +1028,19 @@ class LudwigDirectBackend:
                 logger.warning(f"Could not build Predictions vs GT table: {e}")
 
         tab3_content = test_metrics_html + preds_section
+
+        if output_type == "regression" and train_stats_path.exists():
+            try:
+                test_plots = build_regression_test_plots(str(train_stats_path))
+                for plot in test_plots:
+                    tab3_content += (
+                        f"<h2 style='text-align: center;'>{plot['title']}</h2>"
+                        f"<div class='plotly-center'>{plot['html']}</div>"
+                    )
+                if test_plots:
+                    logger.info(f"Generated {len(test_plots)} regression test plots")
+            except Exception as e:
+                logger.warning(f"Could not generate regression test plots: {e}")
 
         if output_type in ("binary", "category") and test_stats_path.exists():
             try:

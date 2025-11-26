@@ -352,10 +352,10 @@ def build_train_validation_plots(train_stats_path: str) -> List[Dict[str, str]]:
 
     # Core learning curves
     for key, title in [
-        ("roc_auc", "ROC-AUC Across Epochs (Train vs Val)"),
-        ("precision", "Precision Across Epochs (Train vs Val)"),
-        ("recall", "Recall/Sensitivity Across Epochs (Train vs Val)"),
-        ("specificity", "Specificity Across Epochs (Train vs Val)"),
+        ("roc_auc", "ROC-AUC across epochs"),
+        ("precision", "Precision across epochs"),
+        ("recall", "Recall/Sensitivity across epochs"),
+        ("specificity", "Specificity across epochs"),
     ]:
         plot = _line_plot(key, title, title.replace("Learning Curve", "").strip())
         if plot:
@@ -422,7 +422,7 @@ def build_train_validation_plots(train_stats_path: str) -> List[Dict[str, str]]:
         if f1_val:
             fig.add_trace(go.Scatter(x=list(range(1, len(f1_val) + 1)), y=f1_val, mode="lines+markers", name="Validation", line=dict(width=4)))
         fig.update_layout(
-            title=dict(text="F1-Score Learning Curve (Derived)", x=0.5),
+            title=dict(text="F1-Score across epochs (derived)", x=0.5),
             xaxis_title="Epoch",
             yaxis_title="F1-Score",
             width=760,
@@ -431,7 +431,7 @@ def build_train_validation_plots(train_stats_path: str) -> List[Dict[str, str]]:
         )
         _style_fig(fig)
         plots.append({
-            "title": "F1-Score Across Epochs (Train vs Val)",
+            "title": "F1-Score across epochs (derived)",
             "html": pio.to_html(
                 fig,
                 full_html=False,
@@ -449,7 +449,7 @@ def build_train_validation_plots(train_stats_path: str) -> List[Dict[str, str]]:
         fig_gap = go.Figure()
         fig_gap.add_trace(go.Scatter(x=epochs_gap, y=gaps, mode="lines+markers", name="Train - Val ROC-AUC", line=dict(width=4)))
         fig_gap.update_layout(
-            title=dict(text="Overfitting Gap: Train vs Val ROC-AUC", x=0.5),
+            title=dict(text="Overfitting gap: ROC-AUC across epochs", x=0.5),
             xaxis_title="Epoch",
             yaxis_title="Gap",
             width=760,
@@ -458,7 +458,7 @@ def build_train_validation_plots(train_stats_path: str) -> List[Dict[str, str]]:
         )
         _style_fig(fig_gap)
         plots.append({
-            "title": "Overfitting Gap: Train – Val ROC-AUC by Epoch",
+            "title": "Overfitting gap: ROC-AUC across epochs",
             "html": pio.to_html(
                 fig_gap,
                 full_html=False,
@@ -502,6 +502,166 @@ def build_train_validation_plots(train_stats_path: str) -> List[Dict[str, str]]:
         })
         include_js = False
 
+    return plots
+
+
+def _get_regression_series(split_stats: dict, metric: str) -> List[float]:
+    if metric not in split_stats:
+        return []
+    vals = split_stats.get(metric, [])
+    if isinstance(vals, list):
+        return [float(v) for v in vals]
+    try:
+        return [float(vals)]
+    except Exception:
+        return []
+
+
+def _regression_line_plot(
+    train_split: dict,
+    val_split: dict,
+    metric_key: str,
+    title: str,
+    yaxis_title: str,
+    include_js: bool,
+) -> Optional[Dict[str, str]]:
+    train_series = _get_regression_series(train_split, metric_key)
+    val_series = _get_regression_series(val_split, metric_key)
+    if not train_series and not val_series:
+        return None
+    epochs_train = list(range(1, len(train_series) + 1))
+    epochs_val = list(range(1, len(val_series) + 1))
+    fig = go.Figure()
+    if train_series:
+        fig.add_trace(
+            go.Scatter(
+                x=epochs_train,
+                y=train_series,
+                mode="lines+markers",
+                name="Train",
+                line=dict(width=4),
+            )
+        )
+    if val_series:
+        fig.add_trace(
+            go.Scatter(
+                x=epochs_val,
+                y=val_series,
+                mode="lines+markers",
+                name="Validation",
+                line=dict(width=4),
+            )
+        )
+    fig.update_layout(
+        title=dict(text=title, x=0.5),
+        xaxis_title="Epoch",
+        yaxis_title=yaxis_title,
+        width=760,
+        height=520,
+        hovermode="x unified",
+    )
+    _style_fig(fig)
+    return {
+        "title": title,
+        "html": pio.to_html(
+            fig,
+            full_html=False,
+            include_plotlyjs="cdn" if include_js else False,
+        ),
+    }
+
+
+def build_regression_train_val_plots(train_stats_path: str) -> List[Dict[str, str]]:
+    """Generate regression Train/Validation learning curve plots from training_statistics.json."""
+    if not train_stats_path or not Path(train_stats_path).exists():
+        return []
+    try:
+        with open(train_stats_path, "r") as f:
+            train_stats = json.load(f)
+    except Exception as exc:
+        print(f"Warning: Unable to read training statistics: {exc}")
+        return []
+
+    label_train = (train_stats.get("training") or {}).get("label", {})
+    label_val = (train_stats.get("validation") or {}).get("label", {})
+    if not label_train and not label_val:
+        return []
+
+    plots: List[Dict[str, str]] = []
+    include_js = True
+    for metric_key, title, ytitle in [
+        ("mean_absolute_error", "Mean Absolute Error across epochs", "MAE"),
+        ("root_mean_squared_error", "Root Mean Squared Error across epochs", "RMSE"),
+        ("mean_absolute_percentage_error", "Mean Absolute Percentage Error across epochs", "MAPE"),
+        ("r2", "R² across epochs", "R²"),
+        ("loss", "Loss across epochs", "Loss"),
+    ]:
+        plot = _regression_line_plot(label_train, label_val, metric_key, title, ytitle, include_js)
+        if plot:
+            plots.append(plot)
+            include_js = False
+    return plots
+
+
+def build_regression_test_plots(train_stats_path: str) -> List[Dict[str, str]]:
+    """Generate regression Test learning curves from training_statistics.json."""
+    if not train_stats_path or not Path(train_stats_path).exists():
+        return []
+    try:
+        with open(train_stats_path, "r") as f:
+            train_stats = json.load(f)
+    except Exception as exc:
+        print(f"Warning: Unable to read training statistics: {exc}")
+        return []
+
+    label_test = (train_stats.get("test") or {}).get("label", {})
+    if not label_test:
+        return []
+
+    plots: List[Dict[str, str]] = []
+    include_js = True
+    metrics = [
+        ("mean_absolute_error", "Mean Absolute Error Across Epochs", "MAE"),
+        ("root_mean_squared_error", "Root Mean Squared Error Across Epochs", "RMSE"),
+        ("mean_absolute_percentage_error", "Mean Absolute Percentage Error Across Epochs", "MAPE"),
+        ("r2", "R² Across Epochs", "R²"),
+        ("loss", "Loss Across Epochs", "Loss"),
+    ]
+    epochs = None
+    for metric_key, title, ytitle in metrics:
+        series = _get_regression_series(label_test, metric_key)
+        if not series:
+            continue
+        if epochs is None:
+            epochs = list(range(1, len(series) + 1))
+        fig = go.Figure()
+        fig.add_trace(
+            go.Scatter(
+                x=epochs,
+                y=series[: len(epochs)],
+                mode="lines+markers",
+                name="Test",
+                line=dict(width=4),
+            )
+        )
+        fig.update_layout(
+            title=dict(text=title, x=0.5),
+            xaxis_title="Epoch",
+            yaxis_title=ytitle,
+            width=760,
+            height=520,
+            hovermode="x unified",
+        )
+        _style_fig(fig)
+        plots.append({
+            "title": title,
+            "html": pio.to_html(
+                fig,
+                full_html=False,
+                include_plotlyjs="cdn" if include_js else False,
+            ),
+        })
+        include_js = False
     return plots
 
 
