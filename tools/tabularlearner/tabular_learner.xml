@@ -6,7 +6,7 @@
     <expand macro="python_requirements" />
     <command>
         <![CDATA[
-        python $__tool_directory__/pycaret_train.py --input_file '$input_file' --target_col '$target_feature' --output_dir '.' --random_seed '$random_seed'
+        python $__tool_directory__/pycaret_train.py --input_file '$input_file' --target_col '$target_feature' --output_dir '.' --random_seed '$random_seed' --n-jobs \${GALAXY_SLOTS:-1}
         #if $model_type == "classification"
             #if $classification_models
                 --models '$classification_models'
@@ -199,18 +199,18 @@
         <test>
             <param name="input_file" value="pcr.tsv"/>
             <param name="target_feature" value="11"/> 
-            <param name="model_type" value="classification"/>
-            <param name="best_model_metric" value="F1"/>
+            <param name="model_selection|model_type" value="classification"/>
+            <param name="model_selection|best_model_metric" value="F1"/>
             <param name="random_seed" value="42"/>
-            <param name="customize_defaults" value="true"/>
-            <param name="train_size" value="0.8"/>
-            <param name="normalize" value="true"/>
-            <param name="feature_selection" value="true"/>
-            <param name="enable_cross_validation" value="true"/>
-            <param name="cross_validation_folds" value="5"/>
-            <param name="remove_outliers" value="true"/>
-            <param name="remove_multicollinearity" value="true"/>
-            <param name="probability_threshold" value="0.4" />
+            <param name="advanced_settings|customize_defaults" value="true"/>
+            <param name="advanced_settings|train_size" value="0.8"/>
+            <param name="advanced_settings|normalize" value="true"/>
+            <param name="advanced_settings|feature_selection" value="true"/>
+            <param name="advanced_settings|cross_validation|enable_cross_validation" value="true"/>
+            <param name="advanced_settings|cross_validation|cross_validation_folds" value="5"/>
+            <param name="advanced_settings|remove_outliers" value="true"/>
+            <param name="advanced_settings|remove_multicollinearity" value="true"/>
+            <param name="advanced_settings|probability_threshold" value="0.4" />
             <output name="model" file="expected_model_classification_customized.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
@@ -226,16 +226,16 @@
         <test>
             <param name="input_file" value="pcr.tsv"/>
             <param name="target_feature" value="11"/> 
-            <param name="model_type" value="classification"/>
+            <param name="model_selection|model_type" value="classification"/>
             <param name="random_seed" value="42"/>
-            <param name="customize_defaults" value="true"/>
-            <param name="train_size" value="0.8"/>
-            <param name="normalize" value="true"/>
-            <param name="feature_selection" value="true"/>
-            <param name="enable_cross_validation" value="false"/>
-            <param name="remove_outliers" value="true"/>
-            <param name="remove_multicollinearity" value="true"/>
-            <param name="probability_threshold" value="0.6" />
+            <param name="advanced_settings|customize_defaults" value="true"/>
+            <param name="advanced_settings|train_size" value="0.8"/>
+            <param name="advanced_settings|normalize" value="true"/>
+            <param name="advanced_settings|feature_selection" value="true"/>
+            <param name="advanced_settings|cross_validation|enable_cross_validation" value="false"/>
+            <param name="advanced_settings|remove_outliers" value="true"/>
+            <param name="advanced_settings|remove_multicollinearity" value="true"/>
+            <param name="advanced_settings|probability_threshold" value="0.6" />
             <output name="model" file="expected_model_classification_customized_cross_off.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
@@ -249,7 +249,7 @@
         <test>
             <param name="input_file" value="pcr.tsv"/>
             <param name="target_feature" value="11"/> 
-            <param name="model_type" value="classification"/>
+            <param name="model_selection|model_type" value="classification"/>
             <param name="random_seed" value="42"/>
             <param name="tune_model" value="true"/>
             <output name="model" file="expected_model_classification.h5" compare="sim_size"/>
@@ -260,12 +260,18 @@
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
-            <output name="best_model_csv" value="expected_best_model_classification.csv" />
+            <output name="best_model_csv">
+                <assert_contents>
+                    <has_text text="n_estimators,100" />
+                    <has_text text="num_leaves,31" />
+                    <has_text text="learning_rate,0.1" />
+                </assert_contents>
+            </output>
         </test>
         <test>
             <param name="input_file" value="pcr.tsv"/>
             <param name="target_feature" value="11"/> 
-            <param name="model_type" value="classification"/>
+            <param name="model_selection|model_type" value="classification"/>
             <param name="random_seed" value="42"/>
             <output name="model" file="expected_model_classification.h5" compare="sim_size"/>
             <output name="comparison_result"> 
@@ -275,13 +281,19 @@
                     <has_text text="Feature Importance" />
                 </assert_contents>
             </output>
-            <output name="best_model_csv" value="expected_best_model_classification.csv" />
+            <output name="best_model_csv">
+                <assert_contents>
+                    <has_text text="n_estimators,100" />
+                    <has_text text="num_leaves,31" />
+                    <has_text text="learning_rate,0.1" />
+                </assert_contents>
+            </output>
         </test>
         <test>
             <param name="input_file" value="auto-mpg.tsv"/>
             <param name="target_feature" value="1"/> 
-            <param name="model_type" value="regression"/>
-            <param name="best_model_metric" value="RMSE"/>
+            <param name="model_selection|model_type" value="regression"/>
+            <param name="model_selection|best_model_metric" value="RMSE"/>
             <param name="random_seed" value="42"/>
             <output name="model" file="expected_model_regression.h5" compare="sim_size" />
             <output name="comparison_result">

@@ -4,13 +4,18 @@
         <container type="docker">quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1</container>
     </requirements>
     <required_files>
-        <include path="utils.py" />
         <include path="constants.py" />
+        <include path="html_structure.py" />
         <include path="image_learner_cli.py" />
-
+        <include path="image_workflow.py" />
+        <include path="ludwig_backend.py" />
+        <include path="metaformer_setup.py" />
+        <include path="plotly_plots.py" />
+        <include path="split_data.py" />
+        <include path="utils.py" />
+        <include path="MetaFormer/__init__.py" />
         <include path="MetaFormer/metaformer_models.py" />
         <include path="MetaFormer/metaformer_stacked_cnn.py" />
-        <include path="MetaFormer/__init__.py" />
     </required_files>
     <stdio>
         <exit_code range="137" level="fatal_oom" description="Out of Memory" />
