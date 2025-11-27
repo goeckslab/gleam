@@ -31,6 +31,8 @@ class FeatureImportanceAnalyzer:
         self.exp = exp
         self.best_model = best_model
         self._skip_messages = []
+        self.shap_total_features = None
+        self.shap_used_features = None
         if isinstance(max_plot_features, int) and max_plot_features > 0:
             self.max_plot_features = max_plot_features
         elif max_plot_features is None:
@@ -197,6 +199,7 @@ class FeatureImportanceAnalyzer:
             raise RuntimeError("No transformed dataset found for SHAP.")
 
         n_rows, n_features = X_data.shape
+        self.shap_total_features = n_features
         feature_cap = (
             min(self.max_plot_features, n_features)
             if self.max_plot_features is not None
@@ -244,6 +247,13 @@ class FeatureImportanceAnalyzer:
                 f"Feature limiting failed: {e}. Using all {n_features} features."
             )
             display_features = list(X_data.columns)
+
+        self.shap_used_features = len(display_features)
+
+        # Apply the column restriction so SHAP only runs on the selected features.
+        if display_features:
+            X_data = X_data[display_features]
+            n_rows, n_features = X_data.shape
 
         # --- Adaptive row subsampling ---
         if max_samples is None:

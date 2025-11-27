@@ -724,7 +724,7 @@ class BaseModelTrainer:
             if self.imputed_training_data is not None
             else self.data
         )
-        feature_html += FeatureImportanceAnalyzer(
+        fi_analyzer = FeatureImportanceAnalyzer(
             data=imputed_data,
             target_col=self.target_col,
             task_type=self.task_type,
@@ -734,7 +734,32 @@ class BaseModelTrainer:
             max_plot_features=self.plot_feature_limit,
             processed_data=self.imputed_training_data,
             max_shap_rows=self._shap_row_cap,
-        ).run()
+        )
+        fi_html = fi_analyzer.run()
+        # Add a small table to show SHAP feature caps near the Best Model header.
+        cap_rows = []
+        if fi_analyzer.shap_total_features is not None:
+            cap_rows.append(
+                ("Total transformed features", fi_analyzer.shap_total_features)
+            )
+        if fi_analyzer.shap_used_features is not None:
+            cap_rows.append(
+                ("Features used in SHAP", fi_analyzer.shap_used_features)
+            )
+        if cap_rows:
+            cap_table = (
+                "<div class='table-wrapper'>"
+                "<table class='table sortable'>"
+                "<thead><tr><th>Feature Importance Scope</th><th>Count</th></tr></thead>"
+                "<tbody>"
+                + "".join(
+                    f"<tr><td>{label}</td><td>{value}</td></tr>"
+                    for label, value in cap_rows
+                )
+                + "</tbody></table></div>"
+            )
+            feature_html += cap_table
+        feature_html += fi_html
 
         # 6b) Explainer SHAP importances
         for key in ["shap_mean", "shap_perm"]:
