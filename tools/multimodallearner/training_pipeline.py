@@ -280,7 +280,7 @@ def evaluate_predictor_all_splits(
       - raw_metrics: our transparent suite (threshold applied to Test/External Test only inside metrics_logic)
       - ag_scores_by_split: AutoGluon's evaluate() per split for the chosen eval_metric (or default)
     """
-    metrics_req = [eval_metric] if eval_metric else None
+    metrics_req = None if (eval_metric is None or str(eval_metric).lower() == "auto") else [eval_metric]
     ag_by_split: Dict[str, Dict[str, float]] = {}
 
     if df_train is not None and len(df_train):

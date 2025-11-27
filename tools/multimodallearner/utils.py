@@ -12,7 +12,6 @@ import numpy as np
 import torch
 import pandas as pd
 
-logging.basicConfig(level=logging.DEBUG)
 LOG = logging.getLogger(__name__)
 
 

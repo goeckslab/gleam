@@ -368,4 +368,7 @@ if __name__ == "__main__":
         format="%(asctime)s | %(levelname)s | %(message)s",
         datefmt="%H:%M:%S"
     )
+    # Quiet noisy image parsing logs (e.g., PIL.PngImagePlugin debug streams)
+    logging.getLogger("PIL").setLevel(logging.WARNING)
+    logging.getLogger("PIL.PngImagePlugin").setLevel(logging.WARNING)
     main()

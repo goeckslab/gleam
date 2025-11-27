@@ -168,8 +168,8 @@ python '$__tool_directory__/multimodal_learner.py'
     </param>
 
     <param name="eval_metric" type="select" label="Primary evaluation metric">
-      <option value="roc_auc" selected="true">ROC AUC</option>
-      <option value="auto">Auto (let AutoGluon choose)</option>
+      <option value="auto" selected="true">Auto (let AutoGluon choose)</option>
+      <option value="roc_auc">ROC AUC</option>
       <option value="accuracy">Accuracy</option>
       <option value="balanced_accuracy">Balanced Accuracy</option>
       <option value="f1">F1</option>

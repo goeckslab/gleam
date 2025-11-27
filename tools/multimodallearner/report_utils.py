@@ -157,7 +157,6 @@ def write_outputs(
         assemble_full_html_report,
         build_train_html_and_plots,
     )
-    from feature_importance import build_feature_importance_html
     from autogluon.multimodal import MultiModalPredictor
     from metrics_logic import aggregate_metrics
 
@@ -248,7 +247,12 @@ def write_outputs(
     image_cols = []
     include_text = False
 
-    class_balance_block_html = build_class_balance_html(df_train_full, label_col)
+    class_balance_block_html = build_class_balance_html(
+        df_train=df_train,
+        label_col=label_col,
+        df_val=df_val,
+        df_test=df_test,
+    )
     summary_perf_table_html = build_model_performance_summary_table(
         train_scores=raw_metrics.get("Train", {}),
         val_scores=raw_metrics.get("Validation", {}),
@@ -257,11 +261,6 @@ def write_outputs(
         title=None,
         show_title=False,
     )
-
-    try:
-        feature_importance_html = build_feature_importance_html(predictor, df_train_full, label_col)
-    except Exception as e:
-        feature_importance_html = f"<p>Feature importance unavailable: {e}</p>"
 
     cfg_yaml = _load_config_yaml(args, predictor)
     config_rows = _summarize_config(cfg_yaml, args)
@@ -280,7 +279,6 @@ def write_outputs(
         extra_run_rows=extra_run_rows,
         class_balance_html=class_balance_block_html,
         perf_table_html=summary_perf_table_html,
-        feature_html=feature_importance_html,
     )
 
     train_tab_perf_html = build_model_performance_summary_table(
@@ -296,11 +294,12 @@ def write_outputs(
         predictor=predictor,
         problem_type=problem_type,
         df_train=df_train,
+        df_val=df_val,
         label_column=label_col,
         tmpdir=tempfile.mkdtemp(),
         seed=int(args.random_seed),
         perf_table_html=train_tab_perf_html,
-        threshold=None,
+        threshold=args.threshold,
     )
 
     test_html_template, plots = build_test_html_and_plots(
@@ -320,10 +319,12 @@ def write_outputs(
         return str(v)
 
     test_scores = raw_metrics.get("Test", {})
+    # Drop AutoGluon-injected ROC AUC line from the Test Performance Summary
+    filtered_test_scores = {k: v for k, v in test_scores.items() if k != "AG_roc_auc"}
     metric_rows = "".join(
         f"<tr><td>{k.replace('_',' ').replace('(TNR)','(TNR)').replace('(Sensitivity/TPR)', '(Sensitivity/TPR)')}</td>"
         f"<td>{_fmt_val(v)}</td></tr>"
-        for k, v in test_scores.items()
+        for k, v in filtered_test_scores.items()
     )
     test_html_filled = test_html_template.format(metric_rows)
 
@@ -663,8 +664,8 @@ def build_tabbed_html(
     """
     tabs = [
         '<div class="tabs">',
-        '<div class="tab active" onclick="showTab(\'summary\')">Model Summary & Config</div>',
-        '<div class="tab" onclick="showTab(\'train\')">Train/Validation Summary</div>',
+        '<div class="tab active" onclick="showTab(\'summary\')">Model Metric Summary and Config</div>',
+        '<div class="tab" onclick="showTab(\'train\')">Train and Validation Summary</div>',
         '<div class="tab" onclick="showTab(\'test\')">Test Summary</div>',
     ]
     if explainer_html:
@@ -809,20 +810,57 @@ def collect_run_context(args, predictor, problem_type: str,
         pass
     return ctx
 
-def build_class_balance_html(df: pd.DataFrame, label_col: str) -> str:
-    if df[label_col].dtype.kind in "ifu":  # numeric
-        uniq = pd.Series(df[label_col]).value_counts(dropna=False).sort_index()
-    else:
-        uniq = pd.Series(df[label_col].astype(str)).value_counts(dropna=False)
-    total = int(uniq.sum())
-    rows = []
-    for k, v in uniq.items():
-        p = (100.0 * v / max(total, 1))
-        rows.append(f"<tr><td>{_escape(k)}</td><td>{v}</td><td>{p:.2f}%</td></tr>")
+def build_class_balance_html(
+    df_train: Optional[pd.DataFrame],
+    label_col: str,
+    df_val: Optional[pd.DataFrame] = None,
+    df_test: Optional[pd.DataFrame] = None,
+) -> str:
+    """
+    Render label counts for each available split (Train/Validation/Test).
+    """
+    def _count_labels(frame: Optional[pd.DataFrame]) -> pd.Series:
+        if frame is None or label_col not in frame:
+            return pd.Series(dtype=int)
+        series = frame[label_col]
+        if series.dtype.kind in "ifu":
+            return pd.Series(series).value_counts(dropna=False).sort_index()
+        return pd.Series(series.astype(str)).value_counts(dropna=False)
+
+    counts_train = _count_labels(df_train)
+    counts_val = _count_labels(df_val)
+    counts_test = _count_labels(df_test)
+
+    labels: list[Any] = []
+    for idx in (counts_train.index, counts_val.index, counts_test.index):
+        for label in idx:
+            if label not in labels:
+                labels.append(label)
+
+    has_train = df_train is not None
+    has_val = df_val is not None
+    has_test = df_test is not None
+
+    def _fmt_count(counts: pd.Series, label: Any, enabled: bool) -> str:
+        if not enabled:
+            return "—"
+        return str(int(counts.get(label, 0)))
+
+    rows = [
+        f"<tr><td>{_escape(label)}</td>"
+        f"<td>{_fmt_count(counts_train, label, has_train)}</td>"
+        f"<td>{_fmt_count(counts_val, label, has_val)}</td>"
+        f"<td>{_fmt_count(counts_test, label, has_test)}</td></tr>"
+        for label in labels
+    ]
+
+    if not rows:
+        return "<p>No label distribution available.</p>"
+
     return f"""
-    <h3>Class Balance (Train Full)</h3>
+    <h3>Label Counts by Split</h3>
     <table class="table">
-      <thead><tr><th>Class</th><th>Count</th><th>Percent</th></tr></thead>
+      <thead><tr><th>Label</th><th>Train</th><th>Validation</th><th>Test</th></tr></thead>
       <tbody>
         {''.join(rows)}
       </tbody>

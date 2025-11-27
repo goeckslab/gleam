@@ -94,6 +94,7 @@ def generate_confusion_matrix_plot(
     # Class order (works for strings or numbers)
     labels = pd.Index(np.unique(np.concatenate([y_true, y_pred])), dtype=object).tolist()
     cm = confusion_matrix(y_true, y_pred, labels=labels)
+    max_val = cm.max() if cm.size else 0
 
     # Use categorical axes by passing string labels for x/y
     cats = [str(l) for l in labels]
@@ -120,8 +121,7 @@ def generate_confusion_matrix_plot(
         for j in range(cm.shape[1]):
             val = int(cm[i, j])
             pct = (val / total * 100) if total > 0 else 0
-            # All text is white (matching sample_output.html)
-            text_color = "white"
+            text_color = "white" if max_val and val > (max_val / 2) else "black"
             # Count annotation (bold, bottom)
             annotations.append(
                 dict(
@@ -176,11 +176,15 @@ def generate_roc_curve_plot(
     roc_auc = auc(fpr, tpr)
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=fpr, y=tpr, mode="lines", name=f"ROC (AUC={roc_auc:.3f})"))
+    fig.add_trace(go.Scatter(
+        x=fpr, y=tpr, mode="lines",
+        name=f"ROC (AUC={roc_auc:.3f})",
+        line=dict(width=3)
+    ))
 
     # 45° chance line (no legend to keep it clean)
     fig.add_trace(go.Scatter(x=[0, 1], y=[0, 1], mode="lines",
-                             line=dict(dash="dash"), showlegend=False))
+                             line=dict(dash="dash", width=2, color="#888"), showlegend=False))
 
     # Optional marker at the user threshold
     if marker_threshold is not None and len(thr):
@@ -196,7 +200,7 @@ def generate_roc_curve_plot(
                     x=[x_m], y=[y_m],
                     mode="markers",
                     name=f"@ {float(marker_threshold):.2f}",
-                    marker=dict(size=10)
+                    marker=dict(size=12, color="red", symbol="x")
                 )
             )
 
@@ -224,7 +228,11 @@ def generate_pr_curve_plot(
     pr_auc = auc(recall, precision)
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=recall, y=precision, mode="lines", name=f"PR (AUC={pr_auc:.3f})"))
+    fig.add_trace(go.Scatter(
+        x=recall, y=precision, mode="lines",
+        name=f"PR (AUC={pr_auc:.3f})",
+        line=dict(width=3)
+    ))
 
     # Optional marker at the user threshold
     if marker_threshold is not None and len(thr):
@@ -238,7 +246,7 @@ def generate_pr_curve_plot(
                 x=[x_m], y=[y_m],
                 mode="markers",
                 name=f"@ {float(marker_threshold):.2f}",
-                marker=dict(size=10)
+                marker=dict(size=12, color="red", symbol="x")
             )
         )
 
@@ -264,9 +272,17 @@ def generate_calibration_plot(
     """
     prob_true, prob_pred = calibration_curve(y_true_bin, y_prob, n_bins=n_bins, strategy="uniform")
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=prob_pred, y=prob_true, mode="lines+markers", name="Model"))
+    fig.add_trace(go.Scatter(
+        x=prob_pred, y=prob_true, mode="lines+markers", name="Model",
+        line=dict(color="#1f77b4", width=3), marker=dict(size=7, color="#1f77b4")
+    ))
     fig.add_trace(
-        go.Scatter(x=[0, 1], y=[0, 1], mode="lines", line=dict(dash="dash"), name="Perfect")
+        go.Scatter(
+            x=[0, 1], y=[0, 1],
+            mode="lines",
+            line=dict(dash="dash", color="#808080", width=2),
+            name="Perfect"
+        )
     )
     fig.update_layout(
         title=None,
@@ -275,6 +291,7 @@ def generate_calibration_plot(
         yaxis=dict(range=[0, 1]),
         xaxis=dict(range=[0, 1]),
         template="plotly_white",
+        margin=dict(l=60, r=40, t=50, b=50),
     )
     _save_plotly(fig, path)
     return fig
@@ -288,36 +305,48 @@ def generate_threshold_plot(
 ) -> go.Figure:
     y_true = np.asarray(y_true_bin, dtype=int).ravel()
     p = np.asarray(y_prob, dtype=float).ravel()
+    p = np.nan_to_num(p, nan=0.0)
+    p = np.clip(p, 0.0, 1.0)
 
-    # Use uniform threshold grid for smoother curves (0 to 1 in steps of 0.01)
+    def _compute_metrics(thresholds: np.ndarray):
+        """Vectorized-ish helper to compute precision/recall/F1/queue rate arrays."""
+        prec, rec, f1, qrate = [], [], [], []
+        for t in thresholds:
+            yhat = (p >= t).astype(int)
+            tp = int(((yhat == 1) & (y_true == 1)).sum())
+            fp = int(((yhat == 1) & (y_true == 0)).sum())
+            fn = int(((yhat == 0) & (y_true == 1)).sum())
+
+            pr = tp / (tp + fp) if (tp + fp) else np.nan  # undefined when no predicted positives
+            rc = tp / (tp + fn) if (tp + fn) else 0.0
+            f  = (2 * pr * rc) / (pr + rc) if (pr + rc) and not np.isnan(pr) else 0.0
+            q  = float(yhat.mean())
+
+            prec.append(pr)
+            rec.append(rc)
+            f1.append(f)
+            qrate.append(q)
+        return np.asarray(prec, dtype=float), np.asarray(rec, dtype=float), np.asarray(f1, dtype=float), np.asarray(qrate, dtype=float)
+
+    # Use uniform threshold grid for plotting (0 to 1 in steps of 0.01)
     th = np.linspace(0.0, 1.0, 101)
+    prec, rec, f1_arr, qrate = _compute_metrics(th)
 
-    prec, rec, f1, qrate = [], [], [], []
-    for t in th:
-        yhat = (p >= t).astype(int)
-        tp = int(((yhat == 1) & (y_true == 1)).sum())
-        fp = int(((yhat == 1) & (y_true == 0)).sum())
-        fn = int(((yhat == 0) & (y_true == 1)).sum())
+    # Compute F1*-optimal threshold using actual score distribution (more precise than grid)
+    cand_th = np.unique(np.concatenate(([0.0, 1.0], p)))
+    # cap to a reasonable size by sampling if extremely large
+    if cand_th.size > 2000:
+        cand_th = np.linspace(0.0, 1.0, 2001)
+    _, _, f1_cand, _ = _compute_metrics(cand_th)
 
-        pr = tp / (tp + fp) if (tp + fp) else np.nan  # undefined when no predicted positives
-        rc = tp / (tp + fn) if (tp + fn) else 0.0
-        f  = (2 * pr * rc) / (pr + rc) if (pr + rc) and not np.isnan(pr) else 0.0
-        q  = float(yhat.mean())
-
-        prec.append(pr)
-        rec.append(rc)
-        f1.append(f)
-        qrate.append(q)
-
-    # Choose t* where F1 is maximized (ignore NaN precision rows)
-    f1_arr = np.asarray(f1, dtype=float)
-    # Filter out NaN values for finding optimal threshold
-    valid_f1_mask = ~np.isnan(f1_arr)
-    if np.any(valid_f1_mask):
-        best_idx = int(np.nanargmax(f1_arr))
-        t_star = float(th[best_idx])
+    if np.all(np.isnan(f1_cand)):
+        t_star = 0.5  # fallback when no valid F1 can be computed
     else:
-        t_star = 0.5  # fallback
+        f1_max = np.nanmax(f1_cand)
+        best_idxs = np.where(np.isclose(f1_cand, f1_max, equal_nan=False))[0]
+        # pick the middle of the best candidates to avoid biasing toward 0
+        best_idx = int(best_idxs[len(best_idxs) // 2])
+        t_star = float(cand_th[best_idx])
 
     # Replace NaNs for plotting (set to 0 where precision is undefined)
     prec_plot = np.nan_to_num(prec, nan=0.0)
@@ -736,7 +765,15 @@ def plot_confidence_histogram(
     fig = px.histogram(x=confidences, nbins=bins, range_x=(0, 1),
                        labels={"x": "Confidence (max predicted probability)"},
                        title=None)
-    fig.update_layout(yaxis_title="Count", template="plotly_white")
+    # Convert counts to percentages so datasets are comparable in one glance
+    total = len(confidences)
+    if total > 0 and fig.data:
+        counts = np.array(fig.data[0].y if fig.data[0].y is not None else [], dtype=float)
+        counts = np.nan_to_num(counts, nan=0.0)
+        percent = counts / max(total, 1) * 100.0
+        fig.data[0].y = percent.tolist()
+        fig.update_traces(hovertemplate="Conf=%{x:.2f}<br>%{y:.2f}%<extra></extra>")
+    fig.update_layout(yaxis_title="Percent of samples (%)", template="plotly_white")
     _save_plotly(fig, path)
     return fig
 
@@ -757,7 +794,8 @@ def generate_learning_curve_from_predictions(
     seed: int = 42,
     title: str = "Learning Curve",
     path: str | None = None,
-) -> go.Figure:
+    return_stats: bool = False,
+) -> Union[go.Figure, tuple[list[int], list[float], list[float]]]:
     rng = np.random.default_rng(seed)
     y_true = np.asarray(y_true)
     N = len(y_true)
@@ -790,9 +828,12 @@ def generate_learning_curve_from_predictions(
         means.append(np.mean(vals))
         stds.append(np.std(vals))
 
+    if return_stats:
+        return sizes, means, stds
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=sizes, y=means, mode="lines+markers", name=("training" if metric == "log_loss" else "learning"),
+        x=sizes, y=means, mode="lines+markers", name="Train",
         line=dict(width=3, shape="spline"), marker=dict(size=7),
         error_y=dict(type="data", array=stds, visible=True)
     ))
@@ -814,13 +855,14 @@ def build_train_html_and_plots(
     df_train: pd.DataFrame,
     label_column: str,
     tmpdir: str,
+    df_val: Optional[pd.DataFrame] = None,
     seed: int = 42,
     perf_table_html: str | None = None,
     threshold: Optional[float] = None,
     section_tile: str = "Training Diagnostics",
 ) -> str:
     y_true = df_train[label_column].values
-    threshold = None
+    y_true_val = df_val[label_column].values if df_val is not None else None
     # predictions on TRAIN
     pred_labels, pred_proba = None, None
     try:
@@ -833,48 +875,385 @@ def build_train_html_and_plots(
     except Exception:
         pred_proba = None
 
-    if problem_type == "binary" and threshold is not None and pred_proba is not None:
-        classes = np.unique(y_true)
-        pos_label, neg_label = classes.max(), classes.min()
-        pos_scores = pred_proba.reshape(-1) if pred_proba.ndim == 1 or pred_proba.shape[1] == 1 else pred_proba[:, -1]
-        pred_labels = np.where(pos_scores >= float(threshold), pos_label, neg_label)
+    # predictions on VAL (if provided)
+    pred_labels_val, pred_proba_val = None, None
+    if df_val is not None:
+        try:
+            pred_labels_val = predictor.predict(df_val)
+        except Exception:
+            pred_labels_val = None
+        try:
+            proba_raw_val = predictor.predict_proba(df_val)
+            pred_proba_val = proba_raw_val.to_numpy() if isinstance(proba_raw_val, (pd.Series, pd.DataFrame)) else np.asarray(proba_raw_val)
+        except Exception:
+            pred_proba_val = None
 
-    pieces: list[str] = []
+    pos_scores_train: Optional[np.ndarray] = None
+    pos_scores_val: Optional[np.ndarray] = None
+    if problem_type == "binary":
+        if pred_proba is not None:
+            pos_scores_train = (
+                pred_proba.reshape(-1)
+                if pred_proba.ndim == 1 or (pred_proba.ndim == 2 and pred_proba.shape[1] == 1)
+                else pred_proba[:, -1]
+            )
+        if pred_proba_val is not None:
+            pos_scores_val = (
+                pred_proba_val.reshape(-1)
+                if pred_proba_val.ndim == 1 or (pred_proba_val.ndim == 2 and pred_proba_val.shape[1] == 1)
+                else pred_proba_val[:, -1]
+            )
 
-    # 0) Model Performance Summary (no Test) — FIRST
-    if perf_table_html:
-        pieces.append(f"<div class='card'>{perf_table_html}</div>")
+    # Collect plots then append in desired order
+    perf_card = f"<div class='card'>{perf_table_html}</div>" if perf_table_html else None
+    acc_plot = loss_plot = None
+    cm_train = pc_train = cm_val = pc_val = None
+    threshold_val_plot = None
+    roc_combined = pr_combined = cal_combined = None
+    mc_roc_val = None
+    conf_train = conf_val = None
+    bar_train = bar_val = None
 
     # 1) Learning Curve — Accuracy
-    if problem_type in ("binary", "multiclass") and pred_labels is not None:
-        fig_acc = generate_learning_curve_from_predictions(
-            y_true=y_true, y_pred=np.asarray(pred_labels),
-            metric="accuracy", title="Learning Curves — Label Accuracy", seed=seed
-        )
-        pieces.append(plot_with_table_style_title(fig_acc, "Learning Curves — Label Accuracy"))
+    if problem_type in ("binary", "multiclass"):
+        acc_fig = go.Figure()
+        added_acc = False
+        if pred_labels is not None:
+            train_sizes, train_means, train_stds = generate_learning_curve_from_predictions(
+                y_true=y_true,
+                y_pred=np.asarray(pred_labels),
+                metric="accuracy",
+                title="Learning Curves — Label Accuracy",
+                seed=seed,
+                return_stats=True,
+            )
+            acc_fig.add_trace(go.Scatter(
+                x=train_sizes, y=train_means, mode="lines+markers", name="Train",
+                line=dict(color="#1f77b4", width=3, shape="spline"), marker=dict(size=7),
+                error_y=dict(type="data", array=train_stds, visible=True),
+            ))
+            added_acc = True
+        if pred_labels_val is not None and y_true_val is not None:
+            val_sizes, val_means, val_stds = generate_learning_curve_from_predictions(
+                y_true=y_true_val,
+                y_pred=np.asarray(pred_labels_val),
+                metric="accuracy",
+                title="Learning Curves — Label Accuracy",
+                seed=seed,
+                return_stats=True,
+            )
+            acc_fig.add_trace(go.Scatter(
+                x=val_sizes, y=val_means, mode="lines+markers", name="Validation",
+                line=dict(color="#ff7f0e", width=3, shape="spline"), marker=dict(size=7),
+                error_y=dict(type="data", array=val_stds, visible=True),
+            ))
+            added_acc = True
+        if added_acc:
+            acc_fig.update_layout(
+                title=None,
+                template="plotly_white",
+                xaxis=dict(title="samples", gridcolor="#eee"),
+                yaxis=dict(title="accuracy", gridcolor="#eee"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0),
+                margin=dict(l=50, r=20, t=60, b=50),
+            )
+            acc_plot = plot_with_table_style_title(acc_fig, "Learning Curves — Label Accuracy")
 
     # 2) Learning Curve — Loss
-    if problem_type in ("binary", "multiclass") and pred_proba is not None:
+    if problem_type in ("binary", "multiclass"):
         classes = np.unique(y_true)
-        pp = pred_proba.reshape(-1) if pred_proba.ndim == 1 or (pred_proba.ndim == 2 and pred_proba.shape[1] == 1) else pred_proba
-        fig_ll = generate_learning_curve_from_predictions(
-            y_true=y_true, y_proba=pp, classes=classes,
-            metric="log_loss", title="Learning Curves — Label Loss", seed=seed
-        )
-        pieces.append(plot_with_table_style_title(fig_ll, "Learning Curves — Label Loss"))
+        loss_fig = go.Figure()
+        added_loss = False
+        if pred_proba is not None:
+            pp = pred_proba.reshape(-1) if pred_proba.ndim == 1 or (pred_proba.ndim == 2 and pred_proba.shape[1] == 1) else pred_proba
+            train_sizes, train_means, train_stds = generate_learning_curve_from_predictions(
+                y_true=y_true,
+                y_proba=pp,
+                classes=classes,
+                metric="log_loss",
+                title="Learning Curves — Label Loss",
+                seed=seed,
+                return_stats=True,
+            )
+            loss_fig.add_trace(go.Scatter(
+                x=train_sizes, y=train_means, mode="lines+markers", name="Train",
+                line=dict(color="#1f77b4", width=3, shape="spline"), marker=dict(size=7),
+                error_y=dict(type="data", array=train_stds, visible=True),
+            ))
+            added_loss = True
+        if pred_proba_val is not None and y_true_val is not None:
+            pp_val = pred_proba_val.reshape(-1) if pred_proba_val.ndim == 1 or (pred_proba_val.ndim == 2 and pred_proba_val.shape[1] == 1) else pred_proba_val
+            val_sizes, val_means, val_stds = generate_learning_curve_from_predictions(
+                y_true=y_true_val,
+                y_proba=pp_val,
+                classes=classes,
+                metric="log_loss",
+                title="Learning Curves — Label Loss",
+                seed=seed,
+                return_stats=True,
+            )
+            loss_fig.add_trace(go.Scatter(
+                x=val_sizes, y=val_means, mode="lines+markers", name="Validation",
+                line=dict(color="#ff7f0e", width=3, shape="spline"), marker=dict(size=7),
+                error_y=dict(type="data", array=val_stds, visible=True),
+            ))
+            added_loss = True
+        if added_loss:
+            loss_fig.update_layout(
+                title=None,
+                template="plotly_white",
+                xaxis=dict(title="epoch", gridcolor="#eee"),
+                yaxis=dict(title="loss", gridcolor="#eee"),
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0),
+                margin=dict(l=50, r=20, t=60, b=50),
+            )
+            loss_plot = plot_with_table_style_title(loss_fig, "Learning Curves — Label Loss")
 
-    # 3) Threshold Plot (binary only)
-    if problem_type == "binary" and pred_proba is not None:
-        pos_scores = pred_proba.reshape(-1) if pred_proba.ndim == 1 else pred_proba[:, -1]
-        y_bin = (y_true == np.max(np.unique(y_true))).astype(int)
-        fig_thr = generate_threshold_plot(y_true_bin=y_bin, y_prob=pos_scores, title="Threshold Plot",
-                                          user_threshold=threshold)
-        pieces.append(plot_with_table_style_title(fig_thr, "Threshold Plot"))
+    # Confusion matrices & per-class metrics
+    if problem_type in ("binary", "multiclass") and pred_labels is not None:
+        fig_cm_train = generate_confusion_matrix_plot(y_true, pred_labels, title="Confusion Matrix (Train)")
+        cm_train = plot_with_table_style_title(fig_cm_train, "Confusion Matrix (Train)")
+
+        fig_pc_train = generate_per_class_metrics_plot(y_true, pred_labels, title="Per-Class Metrics (Train)")
+        pc_train = plot_with_table_style_title(fig_pc_train, "Per-Class Metrics (Train)")
+
+    if problem_type in ("binary", "multiclass") and pred_labels_val is not None and y_true_val is not None:
+        fig_cm_val = generate_confusion_matrix_plot(y_true_val, pred_labels_val, title="Confusion Matrix (Validation)")
+        cm_val = plot_with_table_style_title(fig_cm_val, "Confusion Matrix (Validation)")
+
+        fig_pc_val = generate_per_class_metrics_plot(y_true_val, pred_labels_val, title="Per-Class Metrics (Validation)")
+        pc_val = plot_with_table_style_title(fig_pc_val, "Per-Class Metrics (Validation)")
+
+    # Probability diagnostics (binary)
+    if problem_type == "binary":
+        # Combined Calibration (Train/Val)
+        cal_fig = go.Figure()
+        added_cal = False
+        if pos_scores_train is not None:
+            y_bin_train = (y_true == np.max(np.unique(y_true))).astype(int)
+            prob_true, prob_pred = calibration_curve(y_bin_train, pos_scores_train, n_bins=10, strategy="uniform")
+            cal_fig.add_trace(go.Scatter(
+                x=prob_pred, y=prob_true, mode="lines+markers",
+                name="Train",
+                line=dict(color="#1f77b4", width=3),
+                marker=dict(size=7, color="#1f77b4"),
+            ))
+            added_cal = True
+        if pos_scores_val is not None and y_true_val is not None:
+            y_bin_val = (y_true_val == np.max(np.unique(y_true_val))).astype(int)
+            prob_true_v, prob_pred_v = calibration_curve(y_bin_val, pos_scores_val, n_bins=10, strategy="uniform")
+            cal_fig.add_trace(go.Scatter(
+                x=prob_pred_v, y=prob_true_v, mode="lines+markers",
+                name="Validation",
+                line=dict(color="#ff7f0e", width=3),
+                marker=dict(size=7, color="#ff7f0e"),
+            ))
+            added_cal = True
+        if added_cal:
+            cal_fig.add_trace(go.Scatter(
+                x=[0, 1], y=[0, 1],
+                mode="lines",
+                line=dict(dash="dash", color="#808080", width=2),
+                name="Perfect",
+                showlegend=True,
+            ))
+            cal_fig.update_layout(
+                title=None,
+                xaxis_title="Predicted Probability",
+                yaxis_title="Observed Probability",
+                xaxis=dict(range=[0, 1]),
+                yaxis=dict(range=[0, 1]),
+                template="plotly_white",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0),
+                margin=dict(l=60, r=40, t=50, b=50),
+            )
+            cal_combined = plot_with_table_style_title(cal_fig, "Calibration Curve (Train vs Validation)")
+
+        # Combined ROC (Train/Val)
+        roc_fig = go.Figure()
+        added_roc = False
+        if pos_scores_train is not None:
+            y_bin_train = (y_true == np.max(np.unique(y_true))).astype(int)
+            fpr_tr, tpr_tr, thr_tr = roc_curve(y_bin_train, pos_scores_train)
+            roc_fig.add_trace(go.Scatter(
+                x=fpr_tr, y=tpr_tr, mode="lines",
+                name="Train",
+                line=dict(color="#1f77b4", width=3),
+            ))
+            if threshold is not None and np.isfinite(thr_tr).any():
+                finite = np.isfinite(thr_tr)
+                idx_local = int(np.argmin(np.abs(thr_tr[finite] - float(threshold))))
+                idx = int(np.nonzero(finite)[0][idx_local])
+                roc_fig.add_trace(go.Scatter(
+                    x=[fpr_tr[idx]], y=[tpr_tr[idx]],
+                    mode="markers",
+                    name="Train @ threshold",
+                    marker=dict(size=12, color="#1f77b4", symbol="x")
+                ))
+            added_roc = True
+        if pos_scores_val is not None and y_true_val is not None:
+            y_bin_val = (y_true_val == np.max(np.unique(y_true_val))).astype(int)
+            fpr_v, tpr_v, thr_v = roc_curve(y_bin_val, pos_scores_val)
+            roc_fig.add_trace(go.Scatter(
+                x=fpr_v, y=tpr_v, mode="lines",
+                name="Validation",
+                line=dict(color="#ff7f0e", width=3),
+            ))
+            if threshold is not None and np.isfinite(thr_v).any():
+                finite = np.isfinite(thr_v)
+                idx_local = int(np.argmin(np.abs(thr_v[finite] - float(threshold))))
+                idx = int(np.nonzero(finite)[0][idx_local])
+                roc_fig.add_trace(go.Scatter(
+                    x=[fpr_v[idx]], y=[tpr_v[idx]],
+                    mode="markers",
+                    name="Val @ threshold",
+                    marker=dict(size=12, color="#ff7f0e", symbol="x")
+                ))
+            added_roc = True
+        if added_roc:
+            roc_fig.add_trace(go.Scatter(
+                x=[0, 1], y=[0, 1], mode="lines",
+                line=dict(dash="dash", width=2, color="#808080"),
+                showlegend=False
+            ))
+            roc_fig.update_layout(
+                title=None,
+                xaxis_title="False Positive Rate",
+                yaxis_title="True Positive Rate",
+                template="plotly_white",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0),
+                margin=dict(l=60, r=20, t=60, b=60),
+            )
+            roc_combined = plot_with_table_style_title(roc_fig, "ROC Curve (Train vs Validation)")
+
+        # Combined PR (Train/Val)
+        pr_fig = go.Figure()
+        added_pr = False
+        if pos_scores_train is not None:
+            y_bin_train = (y_true == np.max(np.unique(y_true))).astype(int)
+            prec_tr, rec_tr, thr_tr = precision_recall_curve(y_bin_train, pos_scores_train)
+            pr_auc_tr = auc(rec_tr, prec_tr)
+            pr_fig.add_trace(go.Scatter(
+                x=rec_tr, y=prec_tr, mode="lines",
+                name=f"Train (AUC={pr_auc_tr:.3f})",
+                line=dict(color="#1f77b4", width=3),
+            ))
+            if threshold is not None and len(thr_tr):
+                j = int(np.argmin(np.abs(thr_tr - float(threshold))))
+                j = int(np.clip(j, 0, len(thr_tr) - 1))
+                pr_fig.add_trace(go.Scatter(
+                    x=[rec_tr[j + 1]], y=[prec_tr[j + 1]],
+                    mode="markers",
+                    name="Train @ threshold",
+                    marker=dict(size=12, color="#1f77b4", symbol="x")
+                ))
+            added_pr = True
+        if pos_scores_val is not None and y_true_val is not None:
+            y_bin_val = (y_true_val == np.max(np.unique(y_true_val))).astype(int)
+            prec_v, rec_v, thr_v = precision_recall_curve(y_bin_val, pos_scores_val)
+            pr_auc_v = auc(rec_v, prec_v)
+            pr_fig.add_trace(go.Scatter(
+                x=rec_v, y=prec_v, mode="lines",
+                name=f"Validation (AUC={pr_auc_v:.3f})",
+                line=dict(color="#ff7f0e", width=3),
+            ))
+            if threshold is not None and len(thr_v):
+                j = int(np.argmin(np.abs(thr_v - float(threshold))))
+                j = int(np.clip(j, 0, len(thr_v) - 1))
+                pr_fig.add_trace(go.Scatter(
+                    x=[rec_v[j + 1]], y=[prec_v[j + 1]],
+                    mode="markers",
+                    name="Val @ threshold",
+                    marker=dict(size=12, color="#ff7f0e", symbol="x")
+                ))
+            added_pr = True
+        if added_pr:
+            pr_fig.update_layout(
+                title=None,
+                xaxis_title="Recall",
+                yaxis_title="Precision",
+                template="plotly_white",
+                legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1.0),
+                margin=dict(l=60, r=20, t=60, b=60),
+            )
+            pr_combined = plot_with_table_style_title(pr_fig, "Precision–Recall Curve (Train vs Validation)")
+
+        if pos_scores_val is not None and y_true_val is not None:
+            y_bin_val = (y_true_val == np.max(np.unique(y_true_val))).astype(int)
+            fig_thr_val = generate_threshold_plot(y_true_bin=y_bin_val, y_prob=pos_scores_val, title="Threshold Plot (Validation)",
+                                                  user_threshold=threshold)
+            threshold_val_plot = plot_with_table_style_title(fig_thr_val, "Threshold Plot (Validation)")
+
+    # Multiclass OVR ROC (validation)
+    if problem_type == "multiclass" and pred_proba_val is not None and pred_proba_val.ndim >= 2 and y_true_val is not None:
+        classes_val = np.unique(y_true_val)
+        fig_mc_roc_val = generate_multiclass_roc_curve_plot(y_true_val, pred_proba_val, classes_val, title="One-vs-Rest ROC (Validation)")
+        mc_roc_val = plot_with_table_style_title(fig_mc_roc_val, "One-vs-Rest ROC (Validation)")
+
+    # Prediction Confidence Histogram (train/val)
+    if pred_proba is not None:
+        conf_fig_train = plot_confidence_histogram(pred_proba, bins=20, title="Prediction Confidence (Train)")
+        conf_train = plot_with_table_style_title(conf_fig_train, "Prediction Confidence (Train)")
+    if pred_proba_val is not None:
+        conf_fig_val = plot_confidence_histogram(pred_proba_val, bins=20, title="Prediction Confidence (Validation)")
+        conf_val = plot_with_table_style_title(conf_fig_val, "Prediction Confidence (Validation)")
+
+    # Per-class accuracy bars
+    if problem_type in ("binary", "multiclass") and pred_labels is not None:
+        classes_for_bar = pd.Index(np.unique(y_true), dtype=object).tolist()
+        acc_vals = []
+        for c in classes_for_bar:
+            mask = y_true == c
+            acc_vals.append(float((np.asarray(pred_labels)[mask] == c).mean()) if mask.any() else 0.0)
+        bar_fig = go.Figure(data=go.Bar(x=[str(c) for c in classes_for_bar], y=acc_vals, marker_color="#1f77b4"))
+        bar_fig.update_layout(
+            title=None,
+            template="plotly_white",
+            xaxis=dict(title="Label", gridcolor="#eee"),
+            yaxis=dict(title="Accuracy", gridcolor="#eee", range=[0, 1]),
+            margin=dict(l=50, r=20, t=60, b=50),
+        )
+        bar_train = plot_with_table_style_title(bar_fig, "Per-Class Training Accuracy")
+    if problem_type in ("binary", "multiclass") and pred_labels_val is not None and y_true_val is not None:
+        classes_for_bar_val = pd.Index(np.unique(y_true_val), dtype=object).tolist()
+        acc_vals_val = []
+        for c in classes_for_bar_val:
+            mask = y_true_val == c
+            acc_vals_val.append(float((np.asarray(pred_labels_val)[mask] == c).mean()) if mask.any() else 0.0)
+        bar_fig_val = go.Figure(data=go.Bar(x=[str(c) for c in classes_for_bar_val], y=acc_vals_val, marker_color="#ff7f0e"))
+        bar_fig_val.update_layout(
+            title=None,
+            template="plotly_white",
+            xaxis=dict(title="Label", gridcolor="#eee"),
+            yaxis=dict(title="Accuracy", gridcolor="#eee", range=[0, 1]),
+            margin=dict(l=50, r=20, t=60, b=50),
+        )
+        bar_val = plot_with_table_style_title(bar_fig_val, "Per-Class Validation Accuracy")
+
+    # Assemble in requested order
+    pieces: list[str] = []
+    if perf_card:
+        pieces.append(perf_card)
+    if acc_plot:
+        pieces.append(acc_plot)
+    if loss_plot:
+        pieces.append(loss_plot)
+    if threshold_val_plot:
+        pieces.append(threshold_val_plot)
+    if roc_combined:
+        pieces.append(roc_combined)
+    if pr_combined:
+        pieces.append(pr_combined)
+
+    # Remaining plots
+    for block in (cal_combined, cm_train, pc_train, cm_val, pc_val, mc_roc_val, conf_train, conf_val, bar_train, bar_val):
+        if block:
+            pieces.append(block)
 
     if not pieces:
         return "<h2>Training Diagnostics</h2><p><em>No training diagnostics available for this run.</em></p>"
 
-    return "<h2>Train/Validation Performance Summary</h2>" + "".join(pieces)
+    return "<h2>Train and Validation Performance Summary</h2>" + "".join(pieces)
 
 def generate_learning_curve(
     estimator,
@@ -1026,7 +1405,6 @@ def build_summary_html(
     extra_run_rows: Optional[list[tuple[str, str]]] = None,
     class_balance_html: Optional[str] = None,
     perf_table_html: Optional[str] = None,
-    feature_html: Optional[str] = None,
 ) -> str:
     sections = []
     
@@ -1080,17 +1458,6 @@ def build_summary_html(
   <h2 class="section-title">Dataset Overview</h2>
   <div class="card">
     {class_balance_html}
-  </div>
-</section>
-""".strip())
-
-    # Feature Importance
-    if feature_html:
-        sections.append(f"""
-<section class="section">
-  <h2 class="section-title">Feature Importance Analysis</h2>
-  <div class="card">
-    {feature_html}
   </div>
 </section>
 """.strip())
@@ -1227,6 +1594,18 @@ def build_test_html_and_plots(
 
             fig_pr = generate_pr_curve_plot(y_bin, pos_scores, title="Precision–Recall Curve", marker_threshold=threshold)
             plots.append(plot_with_table_style_title(fig_pr, f"Precision–Recall Curve{'' if threshold is None else f' (marker at threshold={threshold:.2f})'}"))
+
+            # Additional diagnostics aligned with ImageLearner style
+            if problem_type == "binary":
+                conf_fig = plot_confidence_histogram(pos_scores, bins=20, title="Prediction Confidence (Test)")
+                plots.append(plot_with_table_style_title(conf_fig, "Prediction Confidence (Test)"))
+            else:
+                conf_fig = plot_confidence_histogram(proba_arr, bins=20, title="Prediction Confidence (Top-1, Test)")
+                plots.append(plot_with_table_style_title(conf_fig, "Prediction Confidence (Top-1, Test)"))
+
+            if problem_type == "multiclass" and proba_arr is not None and proba_arr.ndim >= 2:
+                fig_mc_roc = generate_multiclass_roc_curve_plot(y_true, proba_arr, classes, title="One-vs-Rest ROC (Test)")
+                plots.append(plot_with_table_style_title(fig_mc_roc, "One-vs-Rest ROC (Test)"))
 
     # Regression visuals
     if problem_type == "regression":
