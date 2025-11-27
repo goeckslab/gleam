@@ -472,7 +472,7 @@
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Test Performance Summary" />
-                    <has_text text="Train/Validation Results" />
+                    <has_text text="Training and Validation Results" />
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
