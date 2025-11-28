@@ -26,6 +26,7 @@ from report_utils import (
     get_html_closing,
     build_tabbed_html,
 )
+from feature_help_modal import get_metrics_help_modal
 
 # Matplotlib / SHAP only where interactivity is limited or APIs are tight
 import matplotlib.pyplot as plt
@@ -1686,6 +1687,9 @@ def assemble_full_html_report(
   .js-plotly-plot, .plotly-graph-div { margin-left: auto !important; margin-right: auto !important; }
 </style>
 """
+    # Help modal HTML/JS
+    html_out += get_metrics_help_modal()
+
     html_out += tabs
     html_out += get_html_closing()
     return html_out
