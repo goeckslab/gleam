@@ -795,6 +795,7 @@ class LudwigDirectBackend:
 
         base_viz_dir = exp_dir / "visualizations"
         train_viz_dir = base_viz_dir / "train"
+        test_viz_dir = base_viz_dir / "test"
 
         html = get_html_template()
 
@@ -862,6 +863,7 @@ class LudwigDirectBackend:
         metrics_html = ""
         train_val_metrics_html = ""
         test_metrics_html = ""
+        output_type = None
         train_stats_path = exp_dir / "training_statistics.json"
         test_stats_path = exp_dir / TEST_STATISTICS_FILE_NAME
         try:
@@ -1051,6 +1053,7 @@ class LudwigDirectBackend:
                 logger.warning(f"Could not build Predictions vs GT table: {e}")
 
         tab3_content = test_metrics_html + preds_section
+        test_plotly_added = False
 
         if output_type == "regression" and train_stats_path.exists():
             try:
@@ -1061,6 +1064,7 @@ class LudwigDirectBackend:
                         f"<div class='plotly-center'>{plot['html']}</div>"
                     )
                 if test_plots:
+                    test_plotly_added = True
                     logger.info(f"Generated {len(test_plots)} regression test plots")
             except Exception as e:
                 logger.warning(f"Could not generate regression test plots: {e}")
@@ -1082,6 +1086,8 @@ class LudwigDirectBackend:
                         f"<h2 style='text-align: center;'>{plot['title']}</h2>"
                         f"<div class='plotly-center'>{plot['html']}</div>"
                     )
+                if interactive_plots:
+                    test_plotly_added = True
                 logger.info(f"Generated {len(interactive_plots)} interactive Plotly plots")
             except Exception as e:
                 logger.warning(f"Could not generate Plotly plots: {e}")
@@ -1102,9 +1108,18 @@ class LudwigDirectBackend:
                         f"<div class='plotly-center'>{plot['html']}</div>"
                     )
                 if diag_plots:
+                    test_plotly_added = True
                     logger.info(f"Generated {len(diag_plots)} prediction diagnostic plots")
             except Exception as e:
                 logger.warning(f"Could not generate prediction diagnostics: {e}")
+
+        # Fallback: include static PNGs if no interactive plots were added
+        if not test_plotly_added:
+            tab3_content += render_img_section(
+                "Test Visualizations (PNG fallback)",
+                test_viz_dir,
+                output_type,
+            )
 
         # Add static TEST PNGs (with default dedupe/exclusions)
         tabbed_html = build_tabbed_html(tab1_content, tab2_content, tab3_content)
