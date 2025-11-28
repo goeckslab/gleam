@@ -203,6 +203,13 @@ def generate_roc_curve_plot(
                     marker=dict(size=12, color="red", symbol="x")
                 )
             )
+            fig.add_annotation(
+                x=0.02, y=0.98, xref="paper", yref="paper",
+                text=f"threshold = {float(marker_threshold):.2f}",
+                showarrow=False,
+                font=dict(color="black", size=12),
+                align="left"
+            )
 
     fig.update_layout(
         title=None,
@@ -248,6 +255,13 @@ def generate_pr_curve_plot(
                 name=f"@ {float(marker_threshold):.2f}",
                 marker=dict(size=12, color="red", symbol="x")
             )
+        )
+        fig.add_annotation(
+            x=0.02, y=0.98, xref="paper", yref="paper",
+            text=f"threshold = {float(marker_threshold):.2f}",
+            showarrow=False,
+            font=dict(color="black", size=12),
+            align="left"
         )
 
     fig.update_layout(
@@ -762,16 +776,15 @@ def plot_confidence_histogram(
     else:
         confidences = np.max(y_proba, axis=1)
 
-    fig = px.histogram(x=confidences, nbins=bins, range_x=(0, 1),
-                       labels={"x": "Confidence (max predicted probability)"},
-                       title=None)
-    # Convert counts to percentages so datasets are comparable in one glance
-    total = len(confidences)
-    if total > 0 and fig.data:
-        counts = np.array(fig.data[0].y if fig.data[0].y is not None else [], dtype=float)
-        counts = np.nan_to_num(counts, nan=0.0)
-        percent = counts / max(total, 1) * 100.0
-        fig.data[0].y = percent.tolist()
+    fig = px.histogram(
+        x=confidences,
+        nbins=bins,
+        range_x=(0, 1),
+        histnorm="percent",
+        labels={"x": "Confidence (max predicted probability)", "y": "Percent of samples (%)"},
+        title=None,
+    )
+    if fig.data:
         fig.update_traces(hovertemplate="Conf=%{x:.2f}<br>%{y:.2f}%<extra></extra>")
     fig.update_layout(yaxis_title="Percent of samples (%)", template="plotly_white")
     _save_plotly(fig, path)
@@ -1010,19 +1023,7 @@ def build_train_html_and_plots(
             loss_plot = plot_with_table_style_title(loss_fig, "Learning Curves — Label Loss")
 
     # Confusion matrices & per-class metrics
-    if problem_type in ("binary", "multiclass") and pred_labels is not None:
-        fig_cm_train = generate_confusion_matrix_plot(y_true, pred_labels, title="Confusion Matrix (Train)")
-        cm_train = plot_with_table_style_title(fig_cm_train, "Confusion Matrix (Train)")
-
-        fig_pc_train = generate_per_class_metrics_plot(y_true, pred_labels, title="Per-Class Metrics (Train)")
-        pc_train = plot_with_table_style_title(fig_pc_train, "Per-Class Metrics (Train)")
-
-    if problem_type in ("binary", "multiclass") and pred_labels_val is not None and y_true_val is not None:
-        fig_cm_val = generate_confusion_matrix_plot(y_true_val, pred_labels_val, title="Confusion Matrix (Validation)")
-        cm_val = plot_with_table_style_title(fig_cm_val, "Confusion Matrix (Validation)")
-
-        fig_pc_val = generate_per_class_metrics_plot(y_true_val, pred_labels_val, title="Per-Class Metrics (Validation)")
-        pc_val = plot_with_table_style_title(fig_pc_val, "Per-Class Metrics (Validation)")
+    cm_train = pc_train = cm_val = pc_val = None
 
     # Probability diagnostics (binary)
     if problem_type == "binary":
@@ -1191,12 +1192,7 @@ def build_train_html_and_plots(
         mc_roc_val = plot_with_table_style_title(fig_mc_roc_val, "One-vs-Rest ROC (Validation)")
 
     # Prediction Confidence Histogram (train/val)
-    if pred_proba is not None:
-        conf_fig_train = plot_confidence_histogram(pred_proba, bins=20, title="Prediction Confidence (Train)")
-        conf_train = plot_with_table_style_title(conf_fig_train, "Prediction Confidence (Train)")
-    if pred_proba_val is not None:
-        conf_fig_val = plot_confidence_histogram(pred_proba_val, bins=20, title="Prediction Confidence (Validation)")
-        conf_val = plot_with_table_style_title(conf_fig_val, "Prediction Confidence (Validation)")
+    conf_train = conf_val = None
 
     # Per-class accuracy bars
     if problem_type in ("binary", "multiclass") and pred_labels is not None:

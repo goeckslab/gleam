@@ -191,25 +191,6 @@ def write_outputs(
     if "Test" in raw_metrics and "Test" in ag_by_split:
         _inject_ag(ag_by_split["Test"], raw_metrics["Test"])
 
-    # CSV
-    all_keys: List[str] = []
-    for split in ("Train", "Validation", "Test", "Test (external)"):
-        if split in raw_metrics:
-            for k in raw_metrics[split].keys():
-                if k not in all_keys:
-                    all_keys.append(k)
-    rows = []
-    if "Train" in raw_metrics:
-        rows.append({"phase": "train", **{k: raw_metrics["Train"].get(k, np.nan) for k in all_keys}})
-    if "Validation" in raw_metrics:
-        rows.append({"phase": "validation", **{k: raw_metrics["Validation"].get(k, np.nan) for k in all_keys}})
-    if "Test" in raw_metrics:
-        rows.append({"phase": "test", **{k: raw_metrics["Test"].get(k, np.nan) for k in all_keys}})
-    if "Test (external)" in raw_metrics:
-        rows.append({"phase": "test_external", **{k: raw_metrics["Test (external)"].get(k, np.nan) for k in all_keys}})
-    pd.DataFrame(rows).to_csv(args.output_csv, index=False)
-    logger.info(f"Wrote metrics CSV → {args.output_csv}")
-
     # JSON
     with open(args.output_json, "w") as f:
         json.dump(
@@ -370,7 +351,6 @@ def write_outputs(
     _copy_config_if_available(pred_path, args.output_config)
 
     outputs_to_check = [
-        (args.output_csv, "CSV metrics"),
         (args.output_json, "JSON results"),
         (args.output_html, "HTML report"),
     ]

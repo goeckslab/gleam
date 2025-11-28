@@ -50,7 +50,6 @@ def parse_args(argv=None):
     parser.add_argument("--input_csv_train", dest="train_dataset", required=True)
     parser.add_argument("--input_csv_test", dest="test_dataset", default=None)
     parser.add_argument("--target_column", required=True)
-    parser.add_argument("--output_csv", default="results.csv", required=True)
     parser.add_argument("--output_json", default="results.json")
     parser.add_argument("--output_html", default="report.html")
     parser.add_argument("--output_config", default=None)

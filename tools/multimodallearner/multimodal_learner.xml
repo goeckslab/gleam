@@ -102,7 +102,6 @@ python '$__tool_directory__/multimodal_learner.py'
     #end if
   #end if
 
-  --output_csv '$output_csv'
   --output_json '$output_json'
   --output_html '$output_html'
   --output_config '$output_config'
@@ -221,10 +220,9 @@ python '$__tool_directory__/multimodal_learner.py'
   </inputs>
 
   <outputs>
-    <data name="output_csv" format="csv" label="$tool.name - Metrics Summary"/>
-    <data name="output_json" format="json" label="$tool.name - Full Results"/>
-    <data name="output_html" format="html" label="$tool.name - Interactive Report"/>
-    <data name="output_config" format="yaml" label="$tool.name - Training Config"/>
+    <data name="output_html" format="html" label="Multimodal Learner analysis report on data ${input_csv.name}"/>
+    <data name="output_config" format="yaml" label="Multimodal Learner training config on data ${input_csv.name}"/>
+    <data name="output_json" format="json" label="Multimodal Learner metric results on data ${input_csv.name}"/>
   </outputs>
 
   <tests>
