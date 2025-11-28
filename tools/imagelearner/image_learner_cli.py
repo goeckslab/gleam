@@ -159,6 +159,7 @@ def main():
             "pearson_r",
             "mae",
             "mse",
+            "rmse",
             "mape",
             "r2",
             "explained_variance",
