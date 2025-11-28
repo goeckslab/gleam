@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 
 from pycaret_classification import ClassificationModelTrainer
 from pycaret_regression import RegressionModelTrainer
@@ -115,6 +116,13 @@ def main():
         help="Random seed for PyCaret setup",
     )
     parser.add_argument(
+        "--n-jobs",
+        dest="n_jobs",
+        type=int,
+        default=None,
+        help="Number of parallel jobs; defaults to GALAXY_SLOTS or 1 if unset/invalid.",
+    )
+    parser.add_argument(
         "--probability_threshold",
         type=float,
         default=None,
@@ -128,6 +136,16 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # Derive n_jobs from CLI or GALAXY_SLOTS env var
+    if args.n_jobs is not None:
+        n_jobs = args.n_jobs
+    else:
+        slots_str = os.environ.get("GALAXY_SLOTS")
+        try:
+            n_jobs = int(slots_str) if slots_str is not None else 1
+        except ValueError:
+            n_jobs = 1
 
     # Normalize cross-validation flags: --no_cross_validation overrides --cross_validation
     if args.no_cross_validation:
@@ -149,6 +167,7 @@ def main():
         "feature_ratio": args.feature_ratio,
         "fix_imbalance": args.fix_imbalance,
         "tune_model": args.tune_model,
+        "n_jobs": n_jobs,
         "probability_threshold": args.probability_threshold,
         "best_model_metric": args.best_model_metric,
     }

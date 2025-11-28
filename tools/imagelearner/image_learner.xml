@@ -1,16 +1,21 @@
-<tool id="image_learner" name="Image Learner" version="0.1.2" profile="22.05">
+<tool id="image_learner" name="Image Learner" version="0.1.4" profile="22.05">
     <description>trains and evaluates an image classification/regression model</description>
     <requirements>
-        <container type="docker">quay.io/goeckslab/galaxy-ludwig-gpu:latest</container>
+        <container type="docker">quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1</container>
     </requirements>
     <required_files>
-        <include path="utils.py" />
         <include path="constants.py" />
+        <include path="html_structure.py" />
         <include path="image_learner_cli.py" />
-
+        <include path="image_workflow.py" />
+        <include path="ludwig_backend.py" />
+        <include path="metaformer_setup.py" />
+        <include path="plotly_plots.py" />
+        <include path="split_data.py" />
+        <include path="utils.py" />
+        <include path="MetaFormer/__init__.py" />
         <include path="MetaFormer/metaformer_models.py" />
         <include path="MetaFormer/metaformer_stacked_cnn.py" />
-        <include path="MetaFormer/__init__.py" />
     </required_files>
     <stdio>
         <exit_code range="137" level="fatal_oom" description="Out of Memory" />
@@ -24,6 +29,16 @@
             ln -sf '$input_csv' "./${sanitized_input_csv}";
             #end if
 
+            #if $task_selection.task == "binary"
+                #set $selected_validation_metric = $task_selection.validation_metric_binary
+            #elif $task_selection.task == "classification"
+                #set $selected_validation_metric = $task_selection.validation_metric_multiclass
+            #elif $task_selection.task == "regression"
+                #set $selected_validation_metric = $task_selection.validation_metric_regression
+            #else
+                #set $selected_validation_metric = None
+            #end if
+
             python '$__tool_directory__/image_learner_cli.py'
                 --csv-file "./${sanitized_input_csv}"
                 --image-zip "$image_zip"
@@ -34,26 +49,37 @@
                         --fine-tune
                     #end if
                 #end if
-                #if $customize_defaults == "true"
-                    #if $epochs
-                        --epochs "$epochs"
+                #if $advanced_settings.customize_defaults == "true"
+                    #if $advanced_settings.epochs
+                        --epochs "$advanced_settings.epochs"
                     #end if
-                    #if $early_stop
-                        --early-stop "$early_stop"
+                    #if $advanced_settings.early_stop
+                        --early-stop "$advanced_settings.early_stop"
                     #end if
-                    #if $learning_rate_define == "true"
-                        --learning-rate "$learning_rate"
+                    #if $advanced_settings.learning_rate_condition.learning_rate_define == "true"
+                        --learning-rate "$advanced_settings.learning_rate_condition.learning_rate"
                     #end if
-                    #if $batch_size_define == "true"
-                        --batch-size "$batch_size"
+                    #if $advanced_settings.batch_size_condition.batch_size_define == "true"
+                        --batch-size "$advanced_settings.batch_size_condition.batch_size"
                     #end if
-                    --split-probabilities "$train_split" "$val_split" "$test_split"
-                    #if $threshold
-                        --threshold "$threshold"
+                    --split-probabilities "$advanced_settings.train_split" "$advanced_settings.val_split" "$advanced_settings.test_split"
+                    #if $advanced_settings.threshold
+                        --threshold "$advanced_settings.threshold"
                     #end if
                 #end if
                 #if $augmentation
                     --augmentation "$augmentation"
+                #end if
+                #if $selected_validation_metric
+                    --validation-metric "$selected_validation_metric"
+                #end if
+                #if $column_override.override_columns == "true"
+                    #if $column_override.target_column
+                        --target-column "$column_override.target_column"
+                    #end if
+                    #if $column_override.image_column
+                        --image-column "$column_override.image_column"
+                    #end if
                 #end if
                 --image-resize "$image_resize"
                 --random-seed "$random_seed"
@@ -67,8 +93,70 @@
     </command>
 
     <inputs>
-        <param name="input_csv" argument="input_csv" type="data" format="csv" optional="false" label="the metadata csv containing image_path column, label column and optional split column" />
+        <param name="input_csv" type="data" format="csv" optional="false" label="the metadata csv containing image_path column, label column and optional split column" />
         <param name="image_zip" type="data" format="zip" optional="false" label="Image zip" help="Image zip file containing your image data"/>
+        <conditional name="task_selection">
+            <param name="task" type="select" label="Task type" help="Pick task to see only metrics Ludwig accepts for that task; Auto lets the tool infer task and metric.">
+                <option value="auto" selected="true">Auto (infer and use defaults)</option>
+                <option value="binary">Binary Classification</option>
+                <option value="classification">Multi-class Classification</option>
+                <option value="regression">Regression</option>
+            </param>
+            <when value="binary">
+                <param name="validation_metric_binary" type="select" optional="true" label="Validation metric (binary)" help="Metrics accepted by Ludwig for binary outputs.">
+                    <option value="roc_auc" selected="true">ROC-AUC</option>
+                    <option value="accuracy">Accuracy</option>
+                    <option value="balanced_accuracy">Balanced Accuracy</option>
+                    <option value="precision">Precision</option>
+                    <option value="recall">Recall</option>
+                    <option value="f1">F1</option>
+                    <option value="specificity">Specificity</option>
+                    <option value="log_loss">Log Loss</option>
+                    <option value="loss">Loss</option>
+                </param>
+            </when>
+            <when value="classification">
+                <param name="validation_metric_multiclass" type="select" optional="true" label="Validation metric (multi-class)" help="Metrics accepted by Ludwig for multi-class outputs.">
+                    <option value="accuracy" selected="true">Accuracy</option>
+                    <option value="roc_auc">ROC-AUC</option>
+                    <option value="loss">Loss</option>
+                    <option value="balanced_accuracy">Balanced Accuracy</option>
+                    <option value="precision">Precision</option>
+                    <option value="recall">Recall</option>
+                    <option value="f1">F1</option>
+                    <option value="specificity">Specificity</option>
+                    <option value="log_loss">Log Loss</option>
+                </param>
+            </when>
+            <when value="regression">
+                <param name="validation_metric_regression" type="select" optional="true" label="Validation metric (regression)" help="Metrics accepted by Ludwig for regression outputs.">
+                    <option value="pearson_r" selected="true">Pearson r</option>
+                    <option value="mae">MAE</option>
+                    <option value="mse">MSE</option>
+                    <option value="rmse">RMSE</option>
+                    <option value="mape">MAPE</option>
+                    <option value="r2">R²</option>
+                    <option value="explained_variance">Explained Variance</option>
+                    <option value="loss">Loss</option>
+                </param>
+            </when>
+            <when value="auto">
+                <!-- No validation metric selection; tool will infer task and metric. -->
+            </when>
+        </conditional>
+        <conditional name="column_override">
+            <param name="override_columns" type="select" label="Overwrite label and/or image column names?" help="Select yes to specify custom column names instead of the defaults 'label' and 'image_path'.">
+                <option value="false" selected="true">No</option>
+                <option value="true">Yes</option>
+            </param>
+            <when value="true">
+                <param name="target_column" type="text" optional="true" label="Target/label column name" help="Overrides the default 'label' column name in the metadata CSV." />
+                <param name="image_column" type="text" optional="true" label="Image column name" help="Overrides the default 'image_path' column name in the metadata CSV." />
+            </when>
+            <when value="false">
+                <!-- No additional parameters -->
+            </when>
+        </conditional>
         <param name="model_name" type="select" optional="false" label="Select a model for your experiment" >
 
             <option value="resnet18">Resnet18</option>
@@ -221,8 +309,7 @@
                 <!-- No additional parameters to show if the user selects 'No' -->
             </when>
         </conditional>
-        <param argument="image_resize"
-               name="image_resize"
+        <param name="image_resize"
                type="select"
                label="Image Resize"
                help="Select the size to resize images to. Original size keeps images as-is, while other options resize all images to the specified dimensions.">
@@ -240,8 +327,7 @@
             <option value="448x448">448x448</option>
             <option value="512x512">512x512</option>
         </param>
-        <param argument="augmentation"
-               name="augmentation"
+        <param name="augmentation"
                type="select"
                multiple="true"
                display="checkboxes"
@@ -321,51 +407,13 @@
             <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="resnet18" />
-            <output name="output_report">
-                <assert_contents>
-                    <has_text text="Results Summary" />
-                    <has_text text="Train/Validation Results" />
-                    <has_text text="Test Results" />
-                </assert_contents>
-            </output>
-
-            <output_collection name="output_pred_csv" type="list" >
-                <element name="predictions.csv" >
-                    <assert_contents>
-                        <has_n_columns n="1" />
-                    </assert_contents>
-                </element>
-            </output_collection>
-        </test>
-         <test expect_num_outputs="3">
-            <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
-            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
-            <param name="model_name" value="vit_b_16" />
-            <output name="output_report">
-                <assert_contents>
-                    <has_text text="Results Summary" />
-                    <has_text text="Train/Validation Results" />
-                    <has_text text="Test Results" />
-                </assert_contents>
-            </output>
-
-            <output_collection name="output_pred_csv" type="list" >
-                <element name="predictions.csv" >
-                    <assert_contents>
-                        <has_n_columns n="1" />
-                    </assert_contents>
-                </element>
-            </output_collection>
-        </test>
-        <test expect_num_outputs="3">
-            <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
-            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
-            <param name="model_name" value="resnet18" />
             <param name="augmentation" value="random_horizontal_flip,random_vertical_flip,random_rotate" />
+            <param name="task_selection|task" value="classification" />
+            <param name="task_selection|validation_metric_multiclass" value="accuracy" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Results Summary" />
-                    <has_text text="Train/Validation Results" />
+                    <has_text text="Config and Overall Performance Summary" />
+                    <has_text text="Training and Validation Results" />
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
@@ -384,8 +432,8 @@
             <param name="model_name" value="resnet18" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Results Summary" />
-                    <has_text text="Train/Validation Results" />
+                    <has_text text="Config and Overall Performance Summary" />
+                    <has_text text="Training and Validation Results" />
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
@@ -403,8 +451,8 @@
             <param name="model_name" value="caformer_s18" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Results Summary" />
-                    <has_text text="Train/Validation Results" />
+                    <has_text text="Config and Overall Performance Summary" />
+                    <has_text text="Training and Validation Results" />
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
@@ -421,12 +469,12 @@
             <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="randformer_s12" />
-            <param name="customize_defaults" value="true" />
-            <param name="epochs" value="5" />
+            <param name="advanced_settings|customize_defaults" value="true" />
+            <param name="advanced_settings|epochs" value="5" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Results Summary" />
-                    <has_text text="Train/Validation Results" />
+                    <has_text text="Test Performance Summary" />
+                    <has_text text="Training and Validation Results" />
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
@@ -447,8 +495,8 @@
             <param name="image_resize" value="384x384" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Results Summary" />
-                    <has_text text="Train/Validation Results" />
+                    <has_text text="Config and Overall Performance Summary" />
+                    <has_text text="Training and Validation Results" />
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
@@ -470,8 +518,8 @@
             <param name="input_csv" value="binary_classification.csv" ftype="csv" />
             <param name="image_zip" value="binary_images.zip" ftype="zip" />
             <param name="model_name" value="resnet18" />
-            <param name="customize_defaults" value="true" />
-            <param name="threshold" value="0.6" />
+            <param name="advanced_settings|customize_defaults" value="true" />
+            <param name="advanced_settings|threshold" value="0.6" />
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Results Summary" />
@@ -494,32 +542,13 @@
             </output_collection>
         </test> -->
         <!-- Test 9: PoolFormerV2 model configuration - verifies custom_model parameter persists in config -->
-        <test expect_num_outputs="3">
-            <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
-            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
-            <param name="model_name" value="poolformerv2_s12" />
-            <output name="output_report">
-                <assert_contents>
-                    <has_text text="Results Summary" />
-                    <has_text text="Train/Validation Results" />
-                    <has_text text="Test Results" />
-                </assert_contents>
-            </output>
-            <output_collection name="output_pred_csv" type="list" >
-                <element name="predictions.csv" >
-                    <assert_contents>
-                        <has_n_columns n="1" />
-                    </assert_contents>
-                </element>
-            </output_collection>
-        </test>
         <!-- Test 10: Multi-class classification with ROC curves - verifies robust ROC-AUC plot generation -->
         <!-- <test expect_num_outputs="3">
             <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="resnet18" />
-            <param name="customize_defaults" value="true" />
-            <param name="epochs" value="3" />
+            <param name="advanced_settings|customize_defaults" value="true" />
+            <param name="advanced_settings|epochs" value="3" />
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Results Summary" />
@@ -537,6 +566,31 @@
                 </element>
             </output_collection>
         </test> -->
+        <test expect_num_outputs="3">
+            <param name="input_csv" value="mnist_subset_binary.csv" ftype="csv" />
+            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
+            <param name="model_name" value="resnet18" />
+            <param name="advanced_settings|customize_defaults" value="true" />
+            <param name="advanced_settings|threshold" value="0.6" />
+            <param name="task_selection|task" value="classification" />
+            <param name="task_selection|validation_metric_multiclass" value="balanced_accuracy" />
+            <output name="output_report">
+                <assert_contents>
+                    <has_text text="Config and Overall Performance Summary" />
+                    <has_text text="Training and Validation Results" />
+                    <has_text text="Test Results" />
+                    <has_text text="Threshold" />
+                    <has_text text="0.60" />
+                </assert_contents>
+            </output>
+            <output_collection name="output_pred_csv" type="list" >
+                <element name="predictions.csv" >
+                    <assert_contents>
+                        <has_n_columns n="1" />
+                    </assert_contents>
+                </element>
+            </output_collection>
+        </test>
     </tests>
     <help>
         <![CDATA[

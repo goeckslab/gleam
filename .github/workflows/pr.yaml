@@ -132,6 +132,14 @@ jobs:
       if: ${{ github.event_name != 'pull_request' }}
       run:
         echo "FAIL_LEVEL=error" >> "$GITHUB_ENV"
+    - name: Set skip version check for push event (i.e. merge to main)
+      if: ${{ github.event_name != 'pull_request' }}
+      run:
+        echo "EXTRA_SKIP=--skip version_bumped" >> "$GITHUB_ENV"
+    - name: Set no skip for pull_request events
+      if: ${{ github.event_name == 'pull_request' }}
+      run:
+        echo "EXTRA_SKIP=" >> "$GITHUB_ENV"
     - name: Planemo lint
       uses: galaxyproject/planemo-ci-action@v1
       id: lint
@@ -140,7 +148,7 @@ jobs:
         fail-level: ${{ env.FAIL_LEVEL }}
         repository-list: ${{ needs.setup.outputs.repository-list }}
         tool-list: ${{ needs.setup.outputs.tool-list }}
-        additional-planemo-options: --skip version_bumped
+        additional-planemo-options: ${{ env.EXTRA_SKIP }}
     - uses: actions/upload-artifact@v4
       if: ${{ failure() }}
       with:

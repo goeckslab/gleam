@@ -224,6 +224,7 @@ class BaseModelTrainer:
             "feature_interaction",
             "feature_ratio",
             "fix_imbalance",
+            "n_jobs",
         ]:
             val = getattr(self, attr, None)
             if val is not None:

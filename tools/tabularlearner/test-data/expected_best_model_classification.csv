@@ -9,7 +9,7 @@ min_child_samples,20
 min_child_weight,0.001
 min_split_gain,0.0
 n_estimators,100
-n_jobs,-1
+n_jobs,1
 num_leaves,31
 objective,
 random_state,42

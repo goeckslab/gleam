@@ -2,7 +2,7 @@
     <description>Extract image embeddings using a deep learning model</description>
 
     <requirements>
-        <container type="docker">quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1</container>
+        <container type="docker">quay.io/goeckslab/galaxy-ludwig-gpu:extract_embeddings</container>
     </requirements>
     <stdio>
         <exit_code range="137" level="fatal_oom" description="Out of Memory" />
