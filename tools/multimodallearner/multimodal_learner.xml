@@ -226,9 +226,65 @@ python '$__tool_directory__/multimodal_learner.py'
   </outputs>
 
   <tests>
-    <test>
+    <!-- Basic run with images + external test set -->
+    <test expect_num_outputs="3">
       <param name="input_csv" value="train.csv"/>
-      <param name="target_column" value="7"/>
+      <param name="target_column" value="target"/>
+      <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
+      <param name="test_dataset_conditional|input_test" value="test.csv"/>
+      <param name="use_images_conditional|use_images" value="yes"/>
+      <param name="use_images_conditional|images_zip_repeat_0|images_zip" value="images.zip"/>
+      <param name="backbone_image" value="resnet50"/>
+      <param name="backbone_text" value="google/electra-base-discriminator"/>
+      <output name="output_html">
+        <assert_contents>
+          <has_text text="Model Performance Summary"/>
+        </assert_contents>
+      </output>
+    </test>
+
+    <!-- Custom threshold -->
+    <test expect_num_outputs="3">
+      <param name="input_csv" value="train.csv"/>
+      <param name="target_column" value="target"/>
+      <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
+      <param name="test_dataset_conditional|input_test" value="test.csv"/>
+      <param name="use_images_conditional|use_images" value="yes"/>
+      <param name="use_images_conditional|images_zip_repeat_0|images_zip" value="images.zip"/>
+      <param name="threshold" value="0.4"/>
+      <output name="output_json">
+        <assert_contents>
+          <has_text text="&quot;threshold&quot;: 0.4"/>
+        </assert_contents>
+      </output>
+    </test>
+
+    <!-- No external test set; internal split -->
+    <test expect_num_outputs="3">
+      <param name="input_csv" value="train.csv"/>
+      <param name="target_column" value="target"/>
+      <param name="test_dataset_conditional|has_test_dataset" value="no"/>
+      <param name="use_images_conditional|use_images" value="yes"/>
+      <param name="use_images_conditional|images_zip_repeat_0|images_zip" value="images.zip"/>
+      <output name="output_json">
+        <assert_contents>
+          <has_text text="&quot;val&quot;"/>
+        </assert_contents>
+      </output>
+    </test>
+
+    <!-- Text/tabular only (ignore images) -->
+    <test expect_num_outputs="3">
+      <param name="input_csv" value="train.csv"/>
+      <param name="target_column" value="target"/>
+      <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
+      <param name="test_dataset_conditional|input_test" value="test.csv"/>
+      <param name="use_images_conditional|use_images" value="no"/>
+      <output name="output_html">
+        <assert_contents>
+          <has_text text="Train and Validation Performance Summary"/>
+        </assert_contents>
+      </output>
     </test>
   </tests>
 
