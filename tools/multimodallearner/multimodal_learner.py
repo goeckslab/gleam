@@ -268,6 +268,30 @@ def main():
     if test_dataset is not None and args.target_column not in test_dataset.columns:
         logger.error(f"Target column '{args.target_column}' not found in test data.")
         sys.exit(1)
+
+    # Threshold is only meaningful for binary classification; ignore otherwise.
+    threshold_for_run = args.threshold
+    unique_labels = None
+    target_looks_binary = False
+    try:
+        unique_labels = train_dataset[args.target_column].nunique(dropna=True)
+        target_looks_binary = unique_labels == 2
+    except Exception:
+        logger.warning("Could not inspect target column '%s' for threshold validation; proceeding without binary check.", args.target_column)
+
+    if threshold_for_run is not None:
+        if target_looks_binary:
+            threshold_for_run = float(threshold_for_run)
+            logger.info("Applying custom decision threshold %.4f for binary evaluation.", threshold_for_run)
+        else:
+            logger.warning(
+                "Threshold %.3f provided but target '%s' does not appear binary (unique labels=%s); ignoring threshold.",
+                threshold_for_run,
+                args.target_column,
+                unique_labels if unique_labels is not None else "unknown",
+            )
+            threshold_for_run = None
+    args.threshold = threshold_for_run
     # Image columns are auto-inferred; image_cols already resolved to absolute paths.
     # ------------------------------------------------------------------
     # Build AutoGluon configuration from CLI knobs

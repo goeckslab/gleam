@@ -245,11 +245,14 @@ def write_outputs(
 
     cfg_yaml = _load_config_yaml(args, predictor)
     config_rows = _summarize_config(cfg_yaml, args)
+    threshold_rows = []
+    if problem_type == "binary" and args.threshold is not None:
+        threshold_rows.append(("Decision threshold (Test)", f"{float(args.threshold):.3f}"))
     extra_run_rows = [
         ("Target column", label_col),
         ("Model evaluation metric", args.eval_metric or "AutoGluon default"),
         ("Experiment quality", args.preset or "AutoGluon default"),
-    ] + config_rows
+    ] + threshold_rows + config_rows
 
     summary_html = build_summary_html(
         predictor=predictor,
