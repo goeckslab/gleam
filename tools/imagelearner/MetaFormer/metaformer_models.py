@@ -3,15 +3,12 @@ MetaFormer baselines including IdentityFormer, RandFormer, PoolFormerV2,
 ConvFormer and CAFormer.
 Standalone implementation for Galaxy Image Learner tool (no timm dependency).
 """
-import logging
 from functools import partial
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.init import trunc_normal_  # use torch's built-in truncated normal
-
-logger = logging.getLogger(__name__)
 
 
 def to_2tuple(v):
@@ -299,29 +296,25 @@ class RandomMixing(nn.Module):
     def __init__(self, num_tokens=196, **kwargs):
         super().__init__()
         self.num_tokens = num_tokens
-        base_matrix = torch.softmax(torch.rand(num_tokens, num_tokens), dim=-1)
-        self.register_buffer("random_matrix", base_matrix, persistent=True)
+        # Initialize with default size, but we'll recreate dynamically if needed
+        self.random_matrix = nn.parameter.Parameter(
+            data=torch.softmax(torch.rand(num_tokens, num_tokens), dim=-1),
+            requires_grad=False)
 
     def forward(self, x):
         B, H, W, C = x.shape
         actual_tokens = H * W
 
-        if actual_tokens == self.random_matrix.shape[0]:
-            mixing = self.random_matrix
-        else:
-            base = self.random_matrix
-            if base.device != x.device:
-                base = base.to(x.device)
-            resized = F.interpolate(
-                base.unsqueeze(0).unsqueeze(0),
-                size=(actual_tokens, actual_tokens),
-                mode='bilinear',
-                align_corners=False,
-            ).squeeze(0).squeeze(0)
-            mixing = torch.softmax(resized, dim=-1)
-
+        # If the actual number of tokens doesn't match our matrix size, recreate it
+        if actual_tokens != self.random_matrix.shape[0]:
+            # Create new random matrix with correct size and move to same device
+            device = self.random_matrix.device
+            new_matrix = torch.softmax(torch.rand(actual_tokens, actual_tokens, device=device), dim=-1)
+            # Update the parameter (note: this is for inference/dynamic sizing)
+            with torch.no_grad():
+                self.random_matrix.data = new_matrix
         x = x.reshape(B, actual_tokens, C)
-        x = torch.einsum('mn, bnc -> bmc', mixing, x)
+        x = torch.einsum('mn, bnc -> bmc', self.random_matrix, x)
         x = x.reshape(B, H, W, C)
         return x
 
@@ -750,8 +743,7 @@ def poolformerv2_s24(pretrained=False, **kwargs):
     model.default_cfg = default_cfgs['poolformerv2_s24']
     if pretrained:
         try:
-            logger.info("Loading pretrained weights for poolformerv2_s24 from: %s", model.default_cfg['url'])
-
+            print(f"Loading pretrained weights for poolformerv2_s24 from: {model.default_cfg['url']}")
             # Add timeout to prevent hanging in CI environments
             import socket
             original_timeout = socket.getdefaulttimeout()
@@ -763,8 +755,8 @@ def poolformerv2_s24(pretrained=False, **kwargs):
             finally:
                 socket.setdefaulttimeout(original_timeout)
         except Exception as e:
-            logger.warning("Failed to load pretrained weights for poolformerv2_s24: %s", e)
-            logger.info("Continuing with randomly initialized weights...")
+            print(f"⚠ Warning: Failed to load pretrained weights for poolformerv2_s24: {e}")
+            print("Continuing with randomly initialized weights...")
     return model
 
 
