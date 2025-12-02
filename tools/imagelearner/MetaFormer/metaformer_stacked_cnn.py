@@ -165,13 +165,18 @@ class MetaFormerStackedCNN(nn.Module):
             raise ValueError(f"Unknown MetaFormer model: {self.custom_model}")
 
         cfg = META_DEFAULT_CFGS.get(self.custom_model, {})
-        weights_url = cfg.get('url')
+        if not cfg:
+            logger.warning("MetaFormer config missing for %s; will fall back to random initialization", self.custom_model)
+        weights_url = cfg.get('url') if isinstance(cfg, dict) else None
         # track loading
         self._pretrained_loaded = False
         self._loaded_weights_url: Optional[str] = None
         if self.use_pretrained and weights_url:
             print(f"LOADING MetaFormer pretrained weights from: {weights_url}")
             logger.info(f"Loading pretrained weights from: {weights_url}")
+        elif self.use_pretrained and not weights_url:
+            logger.warning("MetaFormer: no pretrained URL found for %s; continuing with random weights", self.custom_model)
+            self.use_pretrained = False
         # Ensure we log whenever the factories call torch.hub.load_state_dict_from_url
         orig_loader = getattr(torch.hub, 'load_state_dict_from_url', None)
 
