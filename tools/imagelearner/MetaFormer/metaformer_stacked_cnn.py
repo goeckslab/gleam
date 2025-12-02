@@ -378,6 +378,12 @@ def patch_ludwig_direct():
             if custom_model is None:
                 custom_model = getattr(patch_ludwig_direct, '_metaformer_model', None)
 
+            logger.info(
+                "patched Stacked2DCNN init called; custom_model=%s kwargs_keys=%s",
+                custom_model,
+                list(kwargs.keys()),
+            )
+
             try:
                 if META_MODELS_AVAILABLE and _is_supported_metaformer(custom_model):
                     print(f"DETECTED MetaFormer model: {custom_model}")
