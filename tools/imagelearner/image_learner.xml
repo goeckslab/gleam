@@ -43,9 +43,9 @@
                 --csv-file "./${sanitized_input_csv}"
                 --image-zip "$image_zip"
                 --model-name "$model_name"
-                #if $use_pretrained == "true"
+                #if $scratch_fine_tune.use_pretrained == "true"
                     --use-pretrained
-                    #if $fine_tune == "true"
+                    #if $scratch_fine_tune.fine_tune == "true"
                         --fine-tune
                     #end if
                 #end if
