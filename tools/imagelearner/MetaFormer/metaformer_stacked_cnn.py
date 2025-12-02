@@ -99,6 +99,17 @@ class MetaFormerStackedCNN(nn.Module):
         else:
             expected_channels, expected_height, expected_width = 3, 224, 224
 
+        # If user requests smaller spatial size than pretrained default, prefer the user size to avoid massive upsample/OOM.
+        if height < expected_height or width < expected_width:
+            logger.info(
+                "Using requested spatial size %sx%s instead of pretrained default %sx%s to reduce memory.",
+                height,
+                width,
+                expected_height,
+                expected_width,
+            )
+            expected_height, expected_width = height, width
+
         self.expected_channels = expected_channels
         self.expected_height = expected_height
         self.expected_width = expected_width
