@@ -177,6 +177,13 @@ class LudwigDirectBackend:
             weights_url = None
             if isinstance(model_cfg, dict):
                 weights_url = model_cfg.get("url")
+            logger.info(
+                "MetaFormer cfg lookup: model=%s has_cfg=%s url=%s use_pretrained=%s",
+                custom_model,
+                bool(model_cfg),
+                weights_url,
+                use_pretrained,
+            )
             if use_pretrained and not weights_url:
                 logger.warning(
                     "MetaFormer pretrained requested for %s but no URL found in default cfgs; model will be randomly initialized",

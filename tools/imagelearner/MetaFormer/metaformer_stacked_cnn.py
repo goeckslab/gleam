@@ -164,10 +164,13 @@ class MetaFormerStackedCNN(nn.Module):
         if ctor is None:
             raise ValueError(f"Unknown MetaFormer model: {self.custom_model}")
 
+        logger.info("MetaFormer backbone requested: %s, use_pretrained=%s", self.custom_model, self.use_pretrained)
         cfg = META_DEFAULT_CFGS.get(self.custom_model, {})
+        logger.info("MetaFormer cfg present=%s", bool(cfg))
         if not cfg:
             logger.warning("MetaFormer config missing for %s; will fall back to random initialization", self.custom_model)
         weights_url = cfg.get('url') if isinstance(cfg, dict) else None
+        logger.info("MetaFormer weights_url=%s", weights_url)
         # track loading
         self._pretrained_loaded = False
         self._loaded_weights_url: Optional[str] = None
