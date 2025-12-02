@@ -99,16 +99,14 @@ class MetaFormerStackedCNN(nn.Module):
         else:
             expected_channels, expected_height, expected_width = 3, 224, 224
 
-        # If user requests smaller spatial size than pretrained default, prefer the user size to avoid massive upsample/OOM.
-        if height < expected_height or width < expected_width:
+        # Use legacy behavior: keep requested size for adapters but align backbone to 224 for stability
+        if expected_height != 224 or expected_width != 224:
             logger.info(
-                "Using requested spatial size %sx%s instead of pretrained default %sx%s to reduce memory.",
-                height,
-                width,
+                "Overriding expected backbone size to 224x224 for compatibility (was %sx%s)",
                 expected_height,
                 expected_width,
             )
-            expected_height, expected_width = height, width
+            expected_height = expected_width = 224
 
         self.expected_channels = expected_channels
         self.expected_height = expected_height

@@ -227,7 +227,7 @@ class LudwigDirectBackend:
                 target_height, target_width = detected_height, detected_width
                 if use_pretrained and (detected_height, detected_width) != (cfg_height, cfg_width):
                     logger.info(
-                        "MetaFormer pretrained weights expect %sx%s; proceeding with detected %sx%s to avoid heavy upsample",
+                        "MetaFormer pretrained weights expect %sx%s; proceeding with detected %sx%s",
                         cfg_height,
                         cfg_width,
                         detected_height,
