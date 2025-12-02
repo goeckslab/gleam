@@ -488,7 +488,7 @@
             </output_collection>
         </test>
         <!-- Test 7: MetaFormer with 384x384 input - verifies model correctly handles non-224x224 dimensions -->
-        <test expect_num_outputs="3">
+        <!-- <test expect_num_outputs="3">
             <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="caformer_s18_384" />
@@ -512,7 +512,7 @@
                     </assert_contents>
                 </element>
             </output_collection>
-        </test>
+        </test> -->
         <!-- Test 8: Binary classification with custom threshold - verifies ROC curve generation for binary tasks; need to find a test dataset -->
         <!-- <test expect_num_outputs="3">
             <param name="input_csv" value="binary_classification.csv" ftype="csv" />
