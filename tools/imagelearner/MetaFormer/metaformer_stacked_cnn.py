@@ -377,6 +377,11 @@ def patch_ludwig_direct():
             custom_model = kwargs.pop("custom_model", None)
             if custom_model is None:
                 custom_model = getattr(patch_ludwig_direct, '_metaformer_model', None)
+            if custom_model is None:
+                # Fallback for multi-process contexts
+                custom_model = os.environ.get("GLEAM_META_FORMER_MODEL")
+                if custom_model:
+                    logger.info("Recovered MetaFormer model from env: %s", custom_model)
 
             logger.info(
                 "patched Stacked2DCNN init called; custom_model=%s kwargs_keys=%s",

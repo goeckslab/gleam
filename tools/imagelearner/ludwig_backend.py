@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional, Protocol, Tuple
 
@@ -162,6 +163,15 @@ class LudwigDirectBackend:
                 custom_model = model_name
 
             logger.info(f"DETECTED MetaFormer model: {custom_model}")
+            # Stash the model name for patched Stacked2DCNN in case Ludwig drops custom_model from kwargs
+            try:
+                from MetaFormer.metaformer_stacked_cnn import set_current_metaformer_model
+
+                set_current_metaformer_model(custom_model)
+            except Exception:
+                logger.debug("Could not set current MetaFormer model hint; proceeding without global override")
+            # Also pass via environment to survive process boundaries (e.g., Ray workers)
+            os.environ["GLEAM_META_FORMER_MODEL"] = custom_model
             cfg_channels, cfg_height, cfg_width = 3, 224, 224
             model_cfg = {}
             if META_DEFAULT_CFGS:
