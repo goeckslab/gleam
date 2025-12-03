@@ -1,8 +1,18 @@
-FROM python:3.10-slim
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
-# Install system dependencies, including those required for building matplotlib and headless Chrome for Kaleido
-RUN apt-get update && apt-get install -y \
+ENV DEBIAN_FRONTEND=noninteractive
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# Install system dependencies, Python, and Chromium bits needed for Kaleido
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 \
+    python3-pip \
+    python3-dev \
+    python3-venv \
+    ca-certificates \
     build-essential \
+    gnupg \
     libblas-dev \
     liblapack-dev \
     libgomp1 \
@@ -12,7 +22,6 @@ RUN apt-get update && apt-get install -y \
     libfreetype6-dev \
     libpng-dev \
     libqhull-dev \
-    chromium \
     fonts-liberation \
     libasound2 \
     libatk-bridge2.0-0 \
@@ -46,28 +55,34 @@ RUN apt-get update && apt-get install -y \
     lsb-release \
     wget \
     xdg-utils \
-  && rm -rf /var/lib/apt/lists/*
+    && ln -sf /usr/bin/python3 /usr/bin/python \
+    && ln -sf /usr/bin/pip3 /usr/bin/pip \
+    && rm -rf /var/lib/apt/lists/*
 
-# Pin setuptools <81 to avoid pkg_resources warnings
-RUN pip install --no-cache-dir 'setuptools<81.0.0'
+# Pin setuptools <81 to avoid pkg_resources warnings and upgrade pip/wheel
+RUN pip install --no-cache-dir 'setuptools<81.0.0' && \
+    pip install --no-cache-dir --upgrade pip wheel
 
-# Upgrade pip and wheel
-RUN pip install --no-cache-dir --upgrade pip wheel
+# Install GPU-enabled PyTorch stack before AutoGluon so it picks up CUDA
+RUN pip install --no-cache-dir \
+    torch==2.1.2+cu118 \
+    torchvision==0.16.2+cu118 \
+    torchaudio==2.1.2+cu118 \
+    --extra-index-url https://download.pytorch.org/whl/cu118
 
-# Install AutoGluon 1.4.0
-RUN pip install --no-cache-dir autogluon==1.4.0
+# Core Python dependencies
+RUN pip install --no-cache-dir \
+    autogluon==1.4.0 \
+    pyarrow==20.0.0 \
+    matplotlib \
+    seaborn \
+    shap
 
-# Install pyarrow
-RUN pip install --no-cache-dir pyarrow==20.0.0
-
-# Install matplotlib and seaborn for plotting in the script
-RUN pip install --no-cache-dir matplotlib seaborn
-
-RUN pip install shap
-
-RUN pip install --upgrade kaleido
+# Update kaleido for plotting support
+RUN pip install --no-cache-dir --upgrade kaleido
 
 RUN apt-get update && apt-get install -y curl \
     && curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
     && apt-get install -y nodejs \
-    && npm install -g yarn
+    && npm install -g yarn \
+    && rm -rf /var/lib/apt/lists/*
