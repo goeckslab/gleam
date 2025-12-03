@@ -1,0 +1,17 @@
+owner: goeckslab
+categories:
+  - Machine Learning
+remote_repository_url: https://github.com/goeckslab/gleam.git
+homepage_url: https://github.com/goeckslab/gleam/tree/main/tools/multimodallearner
+long_description: |
+    Multimodal Learner is a galaxy tool for training and evaluating multimodal machine learn.
+    It supports the joint usef of structured data-numerical and categorical-and unstructured data-pixel images and text-, providing a user-friendly interface for configuring model backbones, fusion strategies, and evaluation settings. The tool streamlines dataset management and reoprt generation, making multimodal modeling accessible to user with varying levels of expertise in machine learning.
+auto_tool_repositories:
+  name_template: "{{ tool_id }}"
+  description_template: "Wrapper for Multimodallearner tool: {{ tool_name }}"
+suite:
+  name: suite_multimodallearner
+  description: MultimodalLearner is a Galaxy tool for training and evaluating multimodal machine learning models.
+  long_description: |
+    MultimodalLearner is a Galaxy tool for training and evaluating multimodal machine learning models.
+    It supports the joint use of tabular, image, and text data, providing a user-friendly interface for configuring model backbones, fusion strategies, and evaluation settings. The tool streamlines dataset management and report generation, making multimodal modeling accessible to users with varying levels of expertise in machine learning.
