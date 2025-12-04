@@ -5,10 +5,7 @@ from typing import Dict
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
-from base_model_trainer import BaseModelTrainer
-from dashboard import generate_classifier_explainer_dashboard
 from pycaret.classification import ClassificationExperiment
-from plotly.subplots import make_subplots
 from sklearn.metrics import (
     auc,
     confusion_matrix,
@@ -17,6 +14,8 @@ from sklearn.metrics import (
     precision_recall_fscore_support,
     roc_curve,
 )
+from base_model_trainer import BaseModelTrainer
+from dashboard import generate_classifier_explainer_dashboard
 from utils import predict_proba
 
 LOG = logging.getLogger(__name__)
