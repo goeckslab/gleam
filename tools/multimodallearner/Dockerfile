@@ -65,10 +65,11 @@ RUN pip install --no-cache-dir 'setuptools<81.0.0' && \
 
 # Install GPU-enabled PyTorch stack before AutoGluon so it picks up CUDA
 RUN pip install --no-cache-dir \
-    torch==2.1.2+cu118 \
-    torchvision==0.16.2+cu118 \
-    torchaudio==2.1.2+cu118 \
-    --extra-index-url https://download.pytorch.org/whl/cu118
+    --index-url https://download.pytorch.org/whl/cu118 \
+    --extra-index-url https://pypi.org/simple \
+    torch==2.1.2 \
+    torchvision==0.16.2 \
+    torchaudio==2.1.2
 
 # Core Python dependencies
 RUN pip install --no-cache-dir \
