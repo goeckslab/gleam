@@ -132,23 +132,6 @@ jobs:
         ports:
           - 5432:5432
     steps:
-    # checkout the repository
-    # and use it as the current working directory
-    - uses: actions/checkout@v4
-      with:
-        fetch-depth: 1
-    - uses: actions/setup-python@v5
-      with:
-        python-version: ${{ matrix.python-version }}
-    - name: Cache .cache/pip
-      uses: actions/cache@v4
-      id: cache-pip
-      with:
-        path: ~/.cache/pip
-        key: pip_cache_py_${{ matrix.python-version }}_gxy_${{ needs.setup.outputs.galaxy-head-sha }}
-    - name: Get number of CPU cores
-      uses: SimenB/github-actions-cpu-cores@v2
-      id: cpu-cores
     - name: Free disk space
       run: |
         echo "Disk usage BEFORE cleanup:"
@@ -166,6 +149,23 @@ jobs:
         sudo docker system prune -af || true
         echo "Disk usage AFTER cleanup:"
         df -h
+    # checkout the repository
+    # and use it as the current working directory
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 1
+    - uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Cache .cache/pip
+      uses: actions/cache@v4
+      id: cache-pip
+      with:
+        path: ~/.cache/pip
+        key: pip_cache_py_${{ matrix.python-version }}_gxy_${{ needs.setup.outputs.galaxy-head-sha }}
+    - name: Get number of CPU cores
+      uses: SimenB/github-actions-cpu-cores@v2
+      id: cpu-cores
     - name: Planemo test
       uses: galaxyproject/planemo-ci-action@v1
       id: test
