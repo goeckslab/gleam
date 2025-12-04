@@ -7,6 +7,8 @@ import h5py
 import joblib
 import numpy as np
 import pandas as pd
+from feature_help_modal import get_feature_metrics_help_modal
+from feature_importance import FeatureImportanceAnalyzer
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -17,9 +19,6 @@ from sklearn.metrics import (
     recall_score,
     roc_auc_score,
 )
-
-from feature_help_modal import get_feature_metrics_help_modal
-from feature_importance import FeatureImportanceAnalyzer
 from utils import (
     add_hr_to_html,
     add_plot_to_html,
