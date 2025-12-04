@@ -2,7 +2,7 @@
   <description>Train and evaluate an AutoGluon Multimodal model (tabular + image + text)</description>
 
   <requirements>
-    <container type='docker'>autogluon:latest</container>
+    <container type='docker'>quay.io/goeckslab/multimodal-learner:1.4.0</container>
   </requirements>
 
   <required_files>
