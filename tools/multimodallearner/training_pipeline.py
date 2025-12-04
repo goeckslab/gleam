@@ -11,12 +11,11 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from autogluon.multimodal import MultiModalPredictor
 import numpy as np
 import pandas as pd
 import torch
 from packaging.version import Version
-
-from autogluon.multimodal import MultiModalPredictor
 
 from metrics_logic import compute_metrics_for_split, evaluate_all_transparency
 
@@ -100,9 +99,6 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
             ag_version = Version(str(ag_ver))
     except Exception:
         ag_mod = None
-
-    supports_tabular_override = bool(ag_version and ag_version >= Version("1.1.0"))
-    supports_fusion_override = bool(ag_version and ag_version >= Version("1.1.0"))
 
     def _log_missing_support(key: str) -> None:
         logger.info(

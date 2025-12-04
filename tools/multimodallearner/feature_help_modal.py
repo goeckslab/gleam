@@ -1,7 +1,6 @@
-import matplotlib.pyplot as plt
-import seaborn as sns
-import os
 import base64
+
+
 def get_metrics_help_modal() -> str:
     # The HTML structure of the modal
     modal_html = """
@@ -121,9 +120,11 @@ document.addEventListener("DOMContentLoaded", function() {
 """
     return modal_css + modal_html + modal_js
 
+
 def encode_image_to_base64(image_path):
     with open(image_path, "rb") as img_file:
         return base64.b64encode(img_file.read()).decode("utf-8")
+
 
 def generate_feature_importance(*args, **kwargs):
     return "<p><em>Feature importance visualizations are not supported for this MultiModal workflow.</em></p>"

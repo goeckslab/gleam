@@ -2,6 +2,7 @@
 
 import pandas as pd
 
+
 def build_feature_importance_html(predictor, df_train: pd.DataFrame, label_column: str) -> str:
     """Feature importance is not currently available for the MultiModal workflow."""
     return (

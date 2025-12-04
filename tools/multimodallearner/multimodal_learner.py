@@ -4,36 +4,33 @@ Main entrypoint for AutoGluon multimodal training wrapper.
 """
 
 import argparse
-import json
 import logging
 import os
 import sys
-import tempfile
-
-import numpy as np
-import pandas as pd
-from sklearn.model_selection import KFold, StratifiedKFold
 from typing import List, Optional
 
+import pandas as pd
+from sklearn.model_selection import KFold, StratifiedKFold
+
+from metrics_logic import aggregate_metrics
+from plot_logic import infer_problem_type
+from report_utils import write_outputs
+from split_logic import split_dataset
+from test_pipeline import run_autogluon_test_experiment
+from training_pipeline import autogluon_hyperparameters, handle_missing_images, run_autogluon_experiment
 # ------------------------------------------------------------------
 # Local imports (your split utilities)
 # ------------------------------------------------------------------
 from utils import (
-    set_seeds,
+    absolute_path_expander,
     enable_deterministic_mode,
     enable_tensor_cores_if_available,
     ensure_local_tmp,
     load_file,
     prepare_image_search_dirs,
-    absolute_path_expander,
+    set_seeds,
     str2bool,
 )
-from training_pipeline import handle_missing_images, autogluon_hyperparameters, run_autogluon_experiment
-from test_pipeline import run_autogluon_test_experiment
-from metrics_logic import aggregate_metrics
-from plot_logic import infer_problem_type
-from report_utils import write_outputs
-from split_logic import split_dataset
 
 # ------------------------------------------------------------------
 # Logger setup
@@ -46,7 +43,7 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Train & report an AutoGluon model")
-    
+
     parser.add_argument("--input_csv_train", dest="train_dataset", required=True)
     parser.add_argument("--input_csv_test", dest="test_dataset", default=None)
     parser.add_argument("--target_column", required=True)
@@ -360,7 +357,7 @@ def main():
         )
         raw_metrics = eval_results.get("raw_metrics", {})
         ag_by_split = eval_results.get("ag_eval", {})
-        raw_folds = ag_folds = raw_metrics_std = ag_by_split_std = folds_info = None
+        raw_folds = ag_folds = raw_metrics_std = ag_by_split_std = None
 
     logger.info("Transparent metrics by split: %s", eval_results["raw_metrics"])
     logger.info("AutoGluon evaluate() by split: %s", eval_results["ag_eval"])
@@ -381,8 +378,6 @@ def main():
         raw_metrics_std=raw_metrics_std,
         ag_by_split_std=ag_by_split_std,
     )
-
-
 
 
 if __name__ == "__main__":

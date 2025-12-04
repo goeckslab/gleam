@@ -1,43 +1,33 @@
 from __future__ import annotations
 
+import html
 import os
-from typing import Iterable, List, Mapping, Optional, Sequence, Tuple, Union, Dict, Any
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
+import shap
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
-    average_precision_score,
-    classification_report,
     confusion_matrix,
     precision_recall_curve,
     roc_auc_score,
     roc_curve,
     auc,
-    accuracy_score,
-    log_loss,
 )
 from sklearn.model_selection import learning_curve as skl_learning_curve
 from sklearn.preprocessing import label_binarize
-from report_utils import (
-    get_html_template,
-    get_html_closing,
-    build_tabbed_html,
-)
 from feature_help_modal import get_metrics_help_modal
+from report_utils import build_tabbed_html, get_html_closing, get_html_template
 
-# Matplotlib / SHAP only where interactivity is limited or APIs are tight
-import matplotlib.pyplot as plt
-import seaborn as sns
-import shap
-from html import escape as _escape
-import html
 
 # =========================
 # Utilities
 # =========================
+
+
 def plot_with_table_style_title(fig, title: str) -> str:
     """
     Render a Plotly figure with a report-style <h2> header so it matches the
@@ -55,6 +45,7 @@ def plot_with_table_style_title(fig, title: str) -> str:
 <div class="plotly-center">{plot_html}</div>
 """.strip()
 
+
 def _save_plotly(fig: go.Figure, path: Optional[str]) -> None:
     """
     Save a Plotly figure. If `path` ends with `.html`, save interactive HTML.
@@ -71,6 +62,7 @@ def _save_plotly(fig: go.Figure, path: Optional[str]) -> None:
         fig.write_image(path)
 
 
+
 def _save_matplotlib(path: Optional[str]) -> None:
     """Save current Matplotlib figure if `path` is provided, else show()."""
     if path:
@@ -83,6 +75,7 @@ def _save_matplotlib(path: Optional[str]) -> None:
 # =========================
 # Classification Plots
 # =========================
+
 
 def generate_confusion_matrix_plot(
     y_true,
@@ -98,9 +91,9 @@ def generate_confusion_matrix_plot(
     max_val = cm.max() if cm.size else 0
 
     # Use categorical axes by passing string labels for x/y
-    cats = [str(l) for l in labels]
+    cats = [str(label) for label in labels]
     total = int(cm.sum())
-    
+
     fig = go.Figure(
         data=go.Heatmap(
             z=cm,
@@ -163,6 +156,7 @@ def generate_confusion_matrix_plot(
         annotations=annotations
     )
     return fig
+
 
 def generate_roc_curve_plot(
     y_true_bin: np.ndarray,
@@ -275,6 +269,7 @@ def generate_pr_curve_plot(
     )
     return fig
 
+
 def generate_calibration_plot(
     y_true_bin: np.ndarray,
     y_prob: np.ndarray,
@@ -312,6 +307,7 @@ def generate_calibration_plot(
     return fig
 
 
+
 def generate_threshold_plot(
     y_true_bin: np.ndarray,
     y_prob: np.ndarray,
@@ -334,8 +330,8 @@ def generate_threshold_plot(
 
             pr = tp / (tp + fp) if (tp + fp) else np.nan  # undefined when no predicted positives
             rc = tp / (tp + fn) if (tp + fn) else 0.0
-            f  = (2 * pr * rc) / (pr + rc) if (pr + rc) and not np.isnan(pr) else 0.0
-            q  = float(yhat.mean())
+            f = (2 * pr * rc) / (pr + rc) if (pr + rc) and not np.isnan(pr) else 0.0
+            q = float(yhat.mean())
 
             prec.append(pr)
             rec.append(rc)
@@ -1389,8 +1385,8 @@ def evaluate_all(
             return predictor.evaluate(df)
 
     train_scores = _safe_floatify(_evaluate(df_train))
-    val_scores   = _safe_floatify(_evaluate(df_val))
-    test_scores  = _safe_floatify(_evaluate(df_test))
+    val_scores = _safe_floatify(_evaluate(df_val))
+    test_scores = _safe_floatify(_evaluate(df_test))
     return train_scores, val_scores, test_scores
 
 def build_summary_html(
@@ -1528,7 +1524,7 @@ def build_test_html_and_plots(
 
     # Try proba/labels where meaningful
     pred_labels = None
-    pred_proba  = None
+    pred_proba = None
     try:
         pred_labels = predictor.predict(df_test)
     except Exception:

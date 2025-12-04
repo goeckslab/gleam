@@ -1,16 +1,16 @@
-import os
-import tempfile
-import zipfile
-from typing import List
+import json
 import logging
+import os
 import random
 import sys
+import tempfile
+import zipfile
 from pathlib import Path
-from typing import List, Optional, Sequence, Union
+from typing import List, Optional
 
 import numpy as np
-import torch
 import pandas as pd
+import torch
 
 LOG = logging.getLogger(__name__)
 
@@ -34,22 +34,23 @@ def load_user_hparams(hp_arg: Optional[str]) -> dict:
         LOG.warning(f"Could not parse --hyperparameters: {e}. Ignoring.")
         return {}
 
+
 def set_seeds(seed: int = 42):
-    import random
-    import numpy as np
-    import torch
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
+
 def ensure_local_tmp():
     os.makedirs("/tmp", exist_ok=True)
 
+
 def enable_tensor_cores_if_available():
     if torch.cuda.is_available():
-        torch.set_float32_matmul_precision('high')
+        torch.set_float32_matmul_precision("high")
+
 
 def enable_deterministic_mode(seed: Optional[int] = None):
     """
@@ -78,6 +79,7 @@ def enable_deterministic_mode(seed: Optional[int] = None):
     except Exception:
         pass
 
+
 def load_file(path: str) -> pd.DataFrame:
     if not path:
         return None
@@ -85,6 +87,7 @@ def load_file(path: str) -> pd.DataFrame:
     if not path.exists():
         raise FileNotFoundError(f"Dataset not found: {path}")
     return pd.read_csv(path, sep=None, engine="python")
+
 
 def prepare_image_search_dirs(args) -> Optional[Path]:
     if not args.images_zip:

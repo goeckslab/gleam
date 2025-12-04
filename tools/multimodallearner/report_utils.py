@@ -1,22 +1,24 @@
-import logging
-import os
-import sys
+import base64
 import html
 import json
+import logging
+import os
 import platform
 import shutil
-import subprocess
-import yaml
+import sys
+import tempfile
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
-import tempfile
+import yaml
 
 from utils import verify_outputs
 
 logger = logging.getLogger(__name__)
+
+
 def _escape(s: Any) -> str:
     return html.escape(str(s))
 
@@ -225,8 +227,6 @@ def write_outputs(
 
     # HTML report assembly
     label_col = args.target_column
-    image_cols = []
-    include_text = False
 
     class_balance_block_html = build_class_balance_html(
         df_train=df_train,
@@ -687,7 +687,7 @@ def encode_image_to_base64(image_path: str) -> str:
         with open(image_path, "rb") as img_f:
             return base64.b64encode(img_f.read()).decode("utf-8")
     except Exception as e:
-        LOG.error(f"Failed to encode image '{image_path}': {e}")
+        logger.error(f"Failed to encode image '{image_path}': {e}")
         return ""
 
 
@@ -1025,14 +1025,16 @@ def build_model_performance_summary_table(
     }
 
     # Build ordered list: all non-preferred metrics sorted alphabetically, then preferred metrics in the requested order if present
-    preferred_norms = [ _norm(x) for x in preferred_display ]
+    preferred_norms = [_norm(x) for x in preferred_display]
     all_metrics = list(metrics)
     # Partition
     preferred_present = []
     others = []
     for m in sorted(all_metrics):
         nm = _norm(m)
-        if nm in preferred_norms or any(p in nm for p in ['rocauc','prauc','f1','mcc','logloss','accuracy','precision','recall','specificity']):
+        if nm in preferred_norms or any(
+            p in nm for p in ["rocauc", "prauc", "f1", "mcc", "logloss", "accuracy", "precision", "recall", "specificity"]
+        ):
             # Defer preferred-like metrics to the end (we will place them in canonical order)
             preferred_present.append(m)
         else:
