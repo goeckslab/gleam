@@ -3,12 +3,12 @@ import logging
 import tempfile
 from pathlib import Path
 
+from feature_help_modal import get_feature_metrics_help_modal
+from feature_importance import FeatureImportanceAnalyzer
 import h5py
 import joblib
 import numpy as np
 import pandas as pd
-from feature_help_modal import get_feature_metrics_help_modal
-from feature_importance import FeatureImportanceAnalyzer
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
@@ -1273,11 +1273,11 @@ class BaseModelTrainer:
         raise NotImplementedError("Subclasses should implement this method")
 
     def generate_tree_plots(self):
+        from explainerdashboard.explainers import RandomForestExplainer
         from sklearn.ensemble import (
             RandomForestClassifier, RandomForestRegressor
         )
         from xgboost import XGBClassifier, XGBRegressor
-        from explainerdashboard.explainers import RandomForestExplainer
 
         LOG.info("Generating tree plots")
         X_test = self.exp.X_test_transformed.copy()

@@ -255,10 +255,10 @@ def build_tabbed_html(
     contents = []
     if config_html:
         contents.append(
-            f'<div id="config" class="tab-content {"active" if default_active=="config" else ""}">{config_html}</div>'
+            f'<div id="config" class="tab-content {"active" if default_active == "config" else ""}">{config_html}</div>'
         )
     contents.append(
-        f'<div id="summary" class="tab-content {"active" if default_active=="summary" else ""}">{summary_html}</div>'
+        f'<div id="summary" class="tab-content {"active" if default_active == "summary" else ""}">{summary_html}</div>'
     )
     contents.append(f'<div id="test" class="tab-content">{test_html}</div>')
     contents.append(f'<div id="feature" class="tab-content">{feature_html}</div>')
