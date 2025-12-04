@@ -13,7 +13,6 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 import yaml
-
 from utils import verify_outputs
 
 logger = logging.getLogger(__name__)
@@ -635,6 +634,7 @@ def get_html_closing():
 </html>
 """
 
+
 def build_tabbed_html(
     summary_html: str,
     train_html: str,
@@ -677,6 +677,7 @@ function showTab(id) {
 </script>
 """
     return tabs_section + "\n" + content_section + "\n" + js
+
 
 def encode_image_to_base64(image_path: str) -> str:
     """
@@ -724,6 +725,7 @@ def get_model_architecture(predictor: Any) -> str:
 
     # Fallback
     return type(predictor).__name__
+
 
 def collect_run_context(args, predictor, problem_type: str,
                         df_train: pd.DataFrame, df_val: pd.DataFrame, df_test: pd.DataFrame,
@@ -793,6 +795,7 @@ def collect_run_context(args, predictor, problem_type: str,
         pass
     return ctx
 
+
 def build_class_balance_html(
     df_train: Optional[pd.DataFrame],
     label_col: str,
@@ -850,6 +853,7 @@ def build_class_balance_html(
     </table>
     """
 
+
 def build_leaderboard_html(predictor) -> str:
     try:
         lb = predictor.leaderboard(silent=True)
@@ -860,6 +864,7 @@ def build_leaderboard_html(predictor) -> str:
         return "<h3>Model Leaderboard (Validation)</h3>" + lb[cols].to_html(index=False)
     except Exception as e:
         return f"<h3>Model Leaderboard</h3><p>Unavailable: {_escape(e)}</p>"
+
 
 def build_ignored_features_html(predictor, df_any: pd.DataFrame) -> str:
     # MultiModalPredictor does not always expose .features(); guard accordingly.
@@ -880,6 +885,7 @@ def build_ignored_features_html(predictor, df_any: pd.DataFrame) -> str:
     <ul>{items}</ul>
     """
 
+
 def build_presets_hparams_html(predictor) -> str:
     # MultiModalPredictor path
     mm_hp = {}
@@ -894,6 +900,7 @@ def build_presets_hparams_html(predictor) -> str:
     hp_html = f"<pre>{html.escape(json.dumps(mm_hp, indent=2))}</pre>" if mm_hp else "<i>Unavailable</i>"
     return f"<h3>Training Presets & Hyperparameters</h3><details open><summary>Show hyperparameters</summary>{hp_html}</details>"
 
+
 def build_warnings_html(warnings_list: List[str], notes_list: List[str]) -> str:
     if not warnings_list and not notes_list:
         return ""
@@ -904,6 +911,7 @@ def build_warnings_html(warnings_list: List[str], notes_list: List[str]) -> str:
     {'<h4>Warnings</h4><ul>'+w_html+'</ul>' if warnings_list else ''}
     {'<h4>Notices</h4><ul>'+n_html+'</ul>' if notes_list else ''}
     """
+
 
 def build_reproducibility_html(args, ctx: Dict[str, Any], model_path: Optional[str]) -> str:
     cmd = " ".join(_escape(x) for x in sys.argv)
@@ -944,6 +952,7 @@ predictor = MultiModalPredictor.load("{_escape(model_path)}")
     {load_snippet or '<i>Model path not available</i>'}
     """
 
+
 def build_modalities_html(predictor, df_any: pd.DataFrame, label_col: str, image_col: Optional[str]) -> str:
     """Summarize which inputs/modalities are used for MultiModalPredictor."""
     cols = [c for c in df_any.columns]
@@ -970,6 +979,8 @@ def build_modalities_html(predictor, df_any: pd.DataFrame, label_col: str, image
     {img_block}
     {tab_block}
     """
+
+
 def build_model_performance_summary_table(
     train_scores: dict,
     val_scores: dict,

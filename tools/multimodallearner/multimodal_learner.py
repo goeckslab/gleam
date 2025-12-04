@@ -10,11 +10,10 @@ import sys
 from typing import List, Optional
 
 import pandas as pd
-from sklearn.model_selection import KFold, StratifiedKFold
-
 from metrics_logic import aggregate_metrics
 from plot_logic import infer_problem_type
 from report_utils import write_outputs
+from sklearn.model_selection import KFold, StratifiedKFold
 from split_logic import split_dataset
 from test_pipeline import run_autogluon_test_experiment
 from training_pipeline import autogluon_hyperparameters, handle_missing_images, run_autogluon_experiment

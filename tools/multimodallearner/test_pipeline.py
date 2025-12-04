@@ -4,7 +4,6 @@ import logging
 from typing import Dict, Optional
 
 import pandas as pd
-
 from plot_logic import infer_problem_type
 from training_pipeline import evaluate_predictor_all_splits, fit_summary_safely
 

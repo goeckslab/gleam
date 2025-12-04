@@ -2,26 +2,30 @@ from __future__ import annotations
 
 import html
 import os
+from html import escape as _escape
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 import shap
+from feature_help_modal import get_metrics_help_modal
+from report_utils import build_tabbed_html, get_html_closing, get_html_template
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
+    auc,
+    average_precision_score,
+    classification_report,
     confusion_matrix,
+    log_loss,
     precision_recall_curve,
     roc_auc_score,
     roc_curve,
-    auc,
 )
 from sklearn.model_selection import learning_curve as skl_learning_curve
 from sklearn.preprocessing import label_binarize
-from feature_help_modal import get_metrics_help_modal
-from report_utils import build_tabbed_html, get_html_closing, get_html_template
-
 
 # =========================
 # Utilities
@@ -62,7 +66,6 @@ def _save_plotly(fig: go.Figure, path: Optional[str]) -> None:
         fig.write_image(path)
 
 
-
 def _save_matplotlib(path: Optional[str]) -> None:
     """Save current Matplotlib figure if `path` is provided, else show()."""
     if path:
@@ -70,7 +73,6 @@ def _save_matplotlib(path: Optional[str]) -> None:
         plt.close()
     else:
         plt.show()
-
 
 # =========================
 # Classification Plots
@@ -307,7 +309,6 @@ def generate_calibration_plot(
     return fig
 
 
-
 def generate_threshold_plot(
     y_true_bin: np.ndarray,
     y_prob: np.ndarray,
@@ -363,28 +364,28 @@ def generate_threshold_plot(
     prec_plot = np.nan_to_num(prec, nan=0.0)
 
     fig = go.Figure()
-    
+
     # Precision (blue line)
     fig.add_trace(go.Scatter(
         x=th, y=prec_plot, mode="lines", name="Precision",
         line=dict(width=3, color="#1f77b4"),
         hovertemplate="Threshold=%{x:.3f}<br>Precision=%{y:.3f}<extra></extra>"
     ))
-    
+
     # Recall (orange line)
     fig.add_trace(go.Scatter(
         x=th, y=rec, mode="lines", name="Recall",
         line=dict(width=3, color="#ff7f0e"),
         hovertemplate="Threshold=%{x:.3f}<br>Recall=%{y:.3f}<extra></extra>"
     ))
-    
+
     # F1 (green line)
     fig.add_trace(go.Scatter(
         x=th, y=f1_arr, mode="lines", name="F1",
         line=dict(width=3, color="#2ca02c"),
         hovertemplate="Threshold=%{x:.3f}<br>F1=%{y:.3f}<extra></extra>"
     ))
-    
+
     # Queue Rate (grey dashed line)
     fig.add_trace(go.Scatter(
         x=th, y=qrate, mode="lines", name="Queue Rate",
@@ -394,9 +395,9 @@ def generate_threshold_plot(
 
     # F1*-optimal threshold marker (dashed vertical line)
     fig.add_vline(
-        x=t_star, 
-        line_width=2, 
-        line_dash="dash", 
+        x=t_star,
+        line_width=2,
+        line_dash="dash",
         line_color="black",
         annotation_text=f"t* = {t_star:.2f}",
         annotation_position="top"
@@ -405,8 +406,8 @@ def generate_threshold_plot(
     # User threshold (solid red line) if provided
     if user_threshold is not None:
         fig.add_vline(
-            x=float(user_threshold), 
-            line_width=2, 
+            x=float(user_threshold),
+            line_width=2,
             line_color="red",
             annotation_text=f"threshold = {float(user_threshold):.2f}",
             annotation_position="top"
@@ -416,24 +417,24 @@ def generate_threshold_plot(
         title=None,
         template="plotly_white",
         xaxis=dict(
-            title="Discrimination Threshold", 
-            range=[0, 1], 
+            title="Discrimination Threshold",
+            range=[0, 1],
             gridcolor="#e0e0e0",
             showgrid=True,
             zeroline=False
         ),
         yaxis=dict(
-            title="Score", 
-            range=[0, 1], 
+            title="Score",
+            range=[0, 1],
             gridcolor="#e0e0e0",
             showgrid=True,
             zeroline=False
         ),
         legend=dict(
-            orientation="h", 
-            yanchor="bottom", 
-            y=1.02, 
-            xanchor="right", 
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
             x=1.0
         ),
         margin=dict(l=60, r=20, t=40, b=50),
@@ -441,6 +442,7 @@ def generate_threshold_plot(
         paper_bgcolor="white",
     )
     return fig
+
 
 def generate_per_class_metrics_plot(
     y_true: Sequence,
@@ -610,10 +612,10 @@ def generate_metric_comparison_bar(
     _save_plotly(fig, path)
     return fig
 
-
 # =========================
 # Regression Plots
 # =========================
+
 
 def generate_scatter_plot(
     y_true: Sequence[float],
@@ -713,10 +715,10 @@ def generate_regression_calibration_plot(
     _save_plotly(fig, path)
     return fig
 
-
 # =========================
 # Confidence / Diagnostics
 # =========================
+
 
 def plot_error_vs_confidence(
     y_true: Union[Sequence[int], np.ndarray],
@@ -786,7 +788,6 @@ def plot_confidence_histogram(
     fig.update_layout(yaxis_title="Percent of samples (%)", template="plotly_white")
     _save_plotly(fig, path)
     return fig
-
 
 # =========================
 # Learning Curve
@@ -858,6 +859,7 @@ def generate_learning_curve_from_predictions(
     if path:
         _save_plotly(fig, path)
     return fig
+
 
 def build_train_html_and_plots(
     predictor,
@@ -1248,6 +1250,7 @@ def build_train_html_and_plots(
 
     return "<h2>Train and Validation Performance Summary</h2>" + "".join(pieces)
 
+
 def generate_learning_curve(
     estimator,
     X,
@@ -1288,10 +1291,10 @@ def generate_learning_curve(
     _save_plotly(fig, path)
     return fig
 
-
 # =========================
 # SHAP (Matplotlib-based)
 # =========================
+
 
 def generate_shap_summary_plot(
     shap_values, features: pd.DataFrame, title: str = "SHAP Summary Plot", path: Optional[str] = None
@@ -1389,6 +1392,7 @@ def evaluate_all(
     test_scores = _safe_floatify(_evaluate(df_test))
     return train_scores, val_scores, test_scores
 
+
 def build_summary_html(
     predictor,
     df_train: pd.DataFrame,
@@ -1400,7 +1404,7 @@ def build_summary_html(
     perf_table_html: Optional[str] = None,
 ) -> str:
     sections = []
-    
+
     # Performance Summary
     if perf_table_html:
         sections.append(f"""
@@ -1457,6 +1461,7 @@ def build_summary_html(
 
     return "\n".join(sections).strip()
 
+
 def build_feature_importance_html(predictor, df_train: pd.DataFrame, label_column: str) -> str:
     """Build a visualization of feature importance."""
     try:
@@ -1501,9 +1506,10 @@ def build_feature_importance_html(predictor, df_train: pd.DataFrame, label_colum
         </table>
         """
         return table_html
-        
+
     except Exception as e:
         return f"<p>Error building feature importance visualization: {e}</p>"
+
 
 def build_test_html_and_plots(
     predictor,
