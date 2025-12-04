@@ -65,6 +65,28 @@ def get_html_template() -> str:
               color: white;
           }
 
+          /* Center specific numeric columns */
+          .table-dataset-overview td:nth-child(n+2),
+          .table-dataset-overview th:nth-child(n+2) {
+              text-align: center;
+          }
+          .table-perf-summary td:nth-child(n+2),
+          .table-perf-summary th:nth-child(n+2) {
+              text-align: center;
+          }
+          .table-setup-params td:nth-child(2),
+          .table-setup-params th:nth-child(2) {
+              text-align: center;
+          }
+          .table-hyperparams td:nth-child(2),
+          .table-hyperparams th:nth-child(2) {
+              text-align: center;
+          }
+          .table-fi-scope td:nth-child(2),
+          .table-fi-scope th:nth-child(2) {
+              text-align: center;
+          }
+
           .plot {
               text-align: center;
               margin: 20px 0;
@@ -194,6 +216,7 @@ def build_tabbed_html(
     test_html: str,
     feature_html: str,
     explainer_html: Optional[str] = None,
+    config_html: Optional[str] = None,
 ) -> str:
     """
     Render the tabbed sections and an always-visible Help button.
@@ -202,12 +225,24 @@ def build_tabbed_html(
     css = get_html_template().split("<body>")[1].rsplit("</style>", 1)[0] + "</style>"
 
     # Tabs header
-    tabs = [
-        '<div class="tabs">',
-        '<div class="tab active" onclick="showTab(\'summary\')">Validation Summary and Config</div>',
+    tabs = ['<div class="tabs">']
+    default_active = "summary"
+    if config_html:
+        default_active = "config"
+        tabs.append(
+            '<div class="tab active" onclick="showTab(\'config\')">Model Config Summary</div>'
+        )
+        tabs.append(
+            '<div class="tab" onclick="showTab(\'summary\')">Validation Summary</div>'
+        )
+    else:
+        tabs.append(
+            '<div class="tab active" onclick="showTab(\'summary\')">Validation Summary</div>'
+        )
+    tabs.extend([
         '<div class="tab" onclick="showTab(\'test\')">Test Summary</div>',
         '<div class="tab" onclick="showTab(\'feature\')">Feature Importance</div>',
-    ]
+    ])
     if explainer_html:
         tabs.append(
             '<div class="tab" onclick="showTab(\'explainer\')">Explainer Plots</div>'
@@ -217,11 +252,16 @@ def build_tabbed_html(
     tabs_section = "\n".join(tabs)
 
     # Content
-    contents = [
-        f'<div id="summary" class="tab-content active">{summary_html}</div>',
-        f'<div id="test" class="tab-content">{test_html}</div>',
-        f'<div id="feature" class="tab-content">{feature_html}</div>',
-    ]
+    contents = []
+    if config_html:
+        contents.append(
+            f'<div id="config" class="tab-content {"active" if default_active=="config" else ""}">{config_html}</div>'
+        )
+    contents.append(
+        f'<div id="summary" class="tab-content {"active" if default_active=="summary" else ""}">{summary_html}</div>'
+    )
+    contents.append(f'<div id="test" class="tab-content">{test_html}</div>')
+    contents.append(f'<div id="feature" class="tab-content">{feature_html}</div>')
     if explainer_html:
         contents.append(
             f'<div id="explainer" class="tab-content">{explainer_html}</div>'
