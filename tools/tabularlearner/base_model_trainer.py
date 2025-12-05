@@ -426,13 +426,20 @@ class BaseModelTrainer:
 
         # Prefer PyCaret-configured splits; fall back to raw inputs.
         y_train = _get_from_config(["y_train_transformed", "y_train"])
-        y_val = _get_from_config(["y_test_transformed", "y_test"])
-        y_test = None
+        y_holdout = _get_from_config(["y_test_transformed", "y_test"])
 
         if y_train is None and self.data is not None and self.target in self.data.columns:
             y_train = self.data[self.target]
+
+        # Route the holdout labels depending on whether an external test file exists.
+        # - Two-file case: holdout → Validation, external test → Test.
+        # - Single-file case: holdout → Test (no Validation).
         if self.test_data is not None and self.target in self.test_data.columns:
+            y_val = y_holdout
             y_test = self.test_data[self.target]
+        else:
+            y_val = None
+            y_test = y_holdout
 
         split_map = {
             "Train": _safe_series(y_train),
@@ -607,18 +614,16 @@ class BaseModelTrainer:
                     return val
             return None
 
-        splits = {
-            "Train": (
-                _get_from_config(["X_train_transformed", "X_train"]),
-                _get_from_config(["y_train_transformed", "y_train"]),
-            ),
-            "Validation": (
-                _get_from_config(["X_test_transformed", "X_test"]),
-                _get_from_config(["y_test_transformed", "y_test"]),
-            ),
-        }
+        X_train = _get_from_config(["X_train_transformed", "X_train"])
+        y_train = _get_from_config(["y_train_transformed", "y_train"])
+        X_holdout = _get_from_config(["X_test_transformed", "X_test"])
+        y_holdout = _get_from_config(["y_test_transformed", "y_test"])
+
+        splits = {"Train": (X_train, y_train)}
 
         if self.test_data is not None and self.target in self.test_data.columns:
+            # Two-file case: holdout → Validation, external test → Test.
+            splits["Validation"] = (X_holdout, y_holdout)
             try:
                 X_external = self.test_data.drop(columns=[self.target])
                 y_external = self.test_data[self.target]
@@ -628,6 +633,10 @@ class BaseModelTrainer:
                     "Could not prepare external test data for performance summary: %s",
                     exc,
                 )
+        else:
+            # Single-file case: holdout → Test; no Validation split.
+            splits["Validation"] = (None, None)
+            splits["Test"] = (X_holdout, y_holdout)
 
         predictions = {}
         for split_name, (X_split, y_split) in splits.items():
