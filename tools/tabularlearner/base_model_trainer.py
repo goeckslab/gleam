@@ -412,32 +412,27 @@ class BaseModelTrainer:
             except Exception:
                 return None
 
+        def _get_from_config(keys):
+            if self.exp is None:
+                return None
+            for key in keys:
+                try:
+                    val = self.exp.get_config(key)
+                except Exception:
+                    val = getattr(self.exp, key, None)
+                if val is not None:
+                    return val
+            return None
+
         # Prefer PyCaret-configured splits; fall back to raw inputs.
-        y_train = None
+        y_train = _get_from_config(["y_train_transformed", "y_train"])
+        y_val = _get_from_config(["y_test_transformed", "y_test"])
         y_test = None
-        y_val = getattr(self, "validation_data", None)
-        for key in ("y_train",):
-            try:
-                y_train = self.exp.get_config(key)
-                break
-            except Exception:
-                y_train = getattr(self.exp, key, None)
-                if y_train is not None:
-                    break
 
-        for key in ("y_test",):
-            try:
-                y_test = self.exp.get_config(key)
-                break
-            except Exception:
-                y_test = getattr(self.exp, key, None)
-                if y_test is not None:
-                    break
-
-        if y_test is None and self.test_data is not None and self.target in self.test_data.columns:
-            y_test = self.test_data[self.target]
         if y_train is None and self.data is not None and self.target in self.data.columns:
             y_train = self.data[self.target]
+        if self.test_data is not None and self.target in self.test_data.columns:
+            y_test = self.test_data[self.target]
 
         split_map = {
             "Train": _safe_series(y_train),
