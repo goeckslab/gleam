@@ -425,25 +425,48 @@ class BaseModelTrainer:
             return None
 
         # Prefer PyCaret-configured splits; fall back to raw inputs.
+        X_train = _get_from_config(["X_train_transformed", "X_train"])
         y_train = _get_from_config(["y_train_transformed", "y_train"])
-        y_holdout = _get_from_config(["y_test_transformed", "y_test"])
+        y_test_cfg = _get_from_config(["y_test_transformed", "y_test"])
 
         if y_train is None and self.data is not None and self.target in self.data.columns:
             y_train = self.data[self.target]
 
-        # Route the holdout labels depending on whether an external test file exists.
-        # - Two-file case: holdout → Validation, external test → Test.
-        # - Single-file case: holdout → Test (no Validation).
-        if self.test_data is not None and self.target in self.test_data.columns:
-            y_val = y_holdout
-            y_test = self.test_data[self.target]
+        y_train_series = _safe_series(y_train)
+
+        # Build a cross-validation generator to derive a validation subset size.
+        cv_gen = self._get_cv_generator(y_train_series)
+        y_train_fold = y_train_series
+        y_val_fold = None
+        if cv_gen is not None and y_train_series is not None:
+            try:
+                # Use the first fold to approximate Train/Validation split sizes.
+                splitter = cv_gen.split(
+                    pd.DataFrame(X_train).reset_index(drop=True)
+                    if X_train is not None
+                    else y_train_series,
+                    y_train_series,
+                )
+                train_idx, val_idx = next(iter(splitter))
+                y_train_fold = y_train_series.iloc[train_idx].reset_index(drop=True)
+                y_val_fold = y_train_series.iloc[val_idx].reset_index(drop=True)
+            except Exception as exc:
+                LOG.warning("Could not derive validation split for dataset overview: %s", exc)
+
+        # Test labels: prefer PyCaret transformed holdout (single file) or external test.
+        if self.test_data is not None:
+            if y_test_cfg is not None:
+                y_test = y_test_cfg
+            elif self.target in self.test_data.columns:
+                y_test = self.test_data[self.target]
+            else:
+                y_test = None
         else:
-            y_val = None
-            y_test = y_holdout
+            y_test = y_test_cfg
 
         split_map = {
-            "Train": _safe_series(y_train),
-            "Validation": _safe_series(y_val),
+            "Train": _safe_series(y_train_fold),
+            "Validation": _safe_series(y_val_fold),
             "Test": _safe_series(y_test),
         }
         available = {k: v for k, v in split_map.items() if v is not None and not v.empty}
@@ -596,6 +619,187 @@ class BaseModelTrainer:
             "neg_label": neg_label,
         }
 
+    def _get_cv_generator(self, y_series):
+        """
+        Build a cross-validation splitter that mirrors the experiment's
+        configuration. Returns None when CV is disabled or not applicable.
+        """
+        if self.task_type != "classification":
+            return None
+
+        if getattr(self, "cross_validation", None) is False:
+            return None
+
+        try:
+            cfg_gen = self.exp.get_config("fold_generator")
+            if cfg_gen is not None:
+                return cfg_gen
+        except Exception:
+            cfg_gen = None
+
+        folds = (
+            getattr(self, "cross_validation_folds", None)
+            or self.setup_params.get("fold")
+            or getattr(self.exp, "fold", None)
+            or 10
+        )
+        try:
+            folds = int(folds)
+        except Exception:
+            folds = 10
+
+        try:
+            y_series = pd.Series(y_series).reset_index(drop=True)
+        except Exception:
+            y_series = None
+        if y_series is None or y_series.empty:
+            return None
+
+        if folds < 2:
+            return None
+        if len(y_series) < folds:
+            folds = len(y_series)
+        if folds < 2:
+            return None
+
+        try:
+            from sklearn.model_selection import KFold, StratifiedKFold
+
+            if self.task_type == "classification":
+                return StratifiedKFold(
+                    n_splits=folds,
+                    shuffle=True,
+                    random_state=self.random_seed,
+                )
+            return KFold(
+                n_splits=folds,
+                shuffle=True,
+                random_state=self.random_seed,
+            )
+        except Exception as exc:
+            LOG.warning("Could not build CV generator: %s", exc)
+            return None
+
+    def _get_cross_validated_predictions(self, X, y):
+        """
+        Generate cross-validated predictions for the validation split so we
+        can report validation metrics for the selected best model.
+        """
+        if self.task_type != "classification":
+            return None
+        if getattr(self, "cross_validation", None) is False:
+            return None
+        if X is None or y is None:
+            return None
+
+        try:
+            from sklearn.model_selection import cross_val_predict
+        except Exception as exc:
+            LOG.warning("cross_val_predict unavailable: %s", exc)
+            return None
+
+        y_series = pd.Series(y).reset_index(drop=True)
+        if y_series.empty:
+            return None
+
+        cv_gen = self._get_cv_generator(y_series)
+        if cv_gen is None:
+            return None
+
+        X_df = pd.DataFrame(X).reset_index(drop=True)
+        if len(X_df) != len(y_series):
+            X_df = X_df.iloc[: len(y_series)].reset_index(drop=True)
+
+        classes = list(getattr(self.best_model, "classes_", []))
+        if len(classes) > 1:
+            try:
+                pos_idx = classes.index(1)
+            except Exception:
+                pos_idx = 1
+        else:
+            pos_idx = 0
+        pos_idx = min(pos_idx, len(classes) - 1) if classes else 0
+        pos_label = (
+            classes[pos_idx] if len(classes) > pos_idx else 1
+        )
+        neg_label = None
+        if len(classes) >= 2:
+            neg_candidates = [c for c in classes if c != pos_label]
+            if neg_candidates:
+                neg_label = neg_candidates[0]
+
+        prob_thresh = getattr(self, "probability_threshold", None)
+        n_jobs = getattr(self, "n_jobs", None)
+
+        y_scores = None
+        if not getattr(self.exp, "is_multiclass", False):
+            try:
+                proba = cross_val_predict(
+                    self.best_model,
+                    X_df,
+                    y_series,
+                    cv=cv_gen,
+                    method="predict_proba",
+                    n_jobs=n_jobs,
+                )
+                y_scores = np.asarray(proba)
+            except Exception as exc:
+                LOG.debug("Could not compute CV probabilities: %s", exc)
+
+        y_pred = None
+        if (
+            prob_thresh is not None
+            and not getattr(self.exp, "is_multiclass", False)
+            and y_scores is not None
+            and y_scores.ndim == 2
+            and y_scores.shape[1] > 1
+        ):
+            pos_idx = min(pos_idx, y_scores.shape[1] - 1)
+            neg_idx = 1 - pos_idx if y_scores.shape[1] > 1 else 0
+            if neg_label is None and len(classes) > neg_idx:
+                neg_label = classes[neg_idx]
+            y_pred = np.where(
+                y_scores[:, pos_idx] >= prob_thresh,
+                pos_label,
+                neg_label if neg_label is not None else 0,
+            )
+            y_scores = y_scores[:, pos_idx]
+        else:
+            try:
+                y_pred = cross_val_predict(
+                    self.best_model,
+                    X_df,
+                    y_series,
+                    cv=cv_gen,
+                    method="predict",
+                    n_jobs=n_jobs,
+                )
+            except Exception as exc:
+                LOG.warning(
+                    "Could not compute cross-validated predictions: %s",
+                    exc,
+                )
+                return None
+            if (
+                not getattr(self.exp, "is_multiclass", False)
+                and y_scores is not None
+                and y_scores.ndim == 2
+                and y_scores.shape[1] > 1
+            ):
+                pos_idx = min(pos_idx, y_scores.shape[1] - 1)
+                y_scores = y_scores[:, pos_idx]
+
+        if y_scores is not None and getattr(self.exp, "is_multiclass", False):
+            y_scores = None
+
+        return {
+            "y_true": y_series,
+            "y_pred": pd.Series(y_pred).reset_index(drop=True),
+            "y_scores": y_scores,
+            "pos_label": pos_label,
+            "neg_label": neg_label,
+        }
+
     def _get_split_predictions_for_report(self):
         """
         Collect predictions/probabilities for Train/Validation/Test splits so the
@@ -619,37 +823,52 @@ class BaseModelTrainer:
         X_holdout = _get_from_config(["X_test_transformed", "X_test"])
         y_holdout = _get_from_config(["y_test_transformed", "y_test"])
 
-        splits = {"Train": (X_train, y_train)}
+        predictions = {}
 
-        if self.test_data is not None and self.target in self.test_data.columns:
-            # Two-file case: holdout → Validation, external test → Test.
-            splits["Validation"] = (X_holdout, y_holdout)
+        # Train metrics (best model on training data)
+        if X_train is not None and y_train is not None:
             try:
-                X_external = self.test_data.drop(columns=[self.target])
-                y_external = self.test_data[self.target]
-                splits["Test"] = (X_external, y_external)
+                train_preds = self._predict_with_thresholds(X_train, y_train)
+                if train_preds is not None:
+                    predictions["Train"] = train_preds
+            except Exception as exc:
+                LOG.warning(
+                    "Could not score Train split for performance summary: %s",
+                    exc,
+                )
+
+        # Validation metrics via cross-validation on training data
+        try:
+            val_preds = self._get_cross_validated_predictions(X_train, y_train)
+            if val_preds is not None:
+                predictions["Validation"] = val_preds
+        except Exception as exc:
+            LOG.warning(
+                "Could not score Validation split for performance summary: %s",
+                exc,
+            )
+
+        # Test metrics (holdout from single file, or provided test file)
+        X_test = X_holdout
+        y_test = y_holdout
+        if (X_test is None or y_test is None) and self.test_data is not None:
+            try:
+                X_test = self.test_data.drop(columns=[self.target])
+                y_test = self.test_data[self.target]
             except Exception as exc:
                 LOG.warning(
                     "Could not prepare external test data for performance summary: %s",
                     exc,
                 )
-        else:
-            # Single-file case: holdout → Test; no Validation split.
-            splits["Validation"] = (None, None)
-            splits["Test"] = (X_holdout, y_holdout)
 
-        predictions = {}
-        for split_name, (X_split, y_split) in splits.items():
-            if X_split is None or y_split is None:
-                continue
+        if X_test is not None and y_test is not None:
             try:
-                preds = self._predict_with_thresholds(X_split, y_split)
-                if preds is not None:
-                    predictions[split_name] = preds
+                test_preds = self._predict_with_thresholds(X_test, y_test)
+                if test_preds is not None:
+                    predictions["Test"] = test_preds
             except Exception as exc:
                 LOG.warning(
-                    "Could not score %s split for performance summary: %s",
-                    split_name,
+                    "Could not score Test split for performance summary: %s",
                     exc,
                 )
         return predictions
@@ -773,7 +992,14 @@ class BaseModelTrainer:
             return ""
 
         split_predictions = self._get_split_predictions_for_report()
-        if not split_predictions:
+        validation_best_row = None
+        try:
+            if isinstance(self.results, pd.DataFrame) and not self.results.empty:
+                validation_best_row = self.results.iloc[0]
+        except Exception:
+            validation_best_row = None
+
+        if not split_predictions and validation_best_row is None:
             return ""
 
         metric_names = [
@@ -787,6 +1013,17 @@ class BaseModelTrainer:
             "MCC",
         ]
 
+        validation_column_map = {
+            "Accuracy": ["Accuracy"],
+            "ROC-AUC": ["ROC-AUC", "AUC"],
+            "Precision": ["Precision", "Prec.", "Prec"],
+            "Recall": ["Recall"],
+            "F1-Score": ["F1-Score", "F1"],
+            "PR-AUC": ["PR-AUC", "PR-AUC-Weighted", "PRC"],
+            "Specificity": ["Specificity"],
+            "MCC": ["MCC"],
+        }
+
         def _fmt(value):
             if value is None:
                 return "—"
@@ -799,13 +1036,40 @@ class BaseModelTrainer:
             except Exception:
                 return str(value)
 
+        def _validation_metric(metric_name):
+            if validation_best_row is None:
+                return None
+            cols = validation_column_map.get(metric_name, [])
+            for col in cols:
+                if col in validation_best_row:
+                    try:
+                        return validation_best_row[col]
+                    except Exception:
+                        return None
+            return None
+
         rows = []
         for metric in metric_names:
             row = [metric]
-            for split in ["Train", "Validation", "Test"]:
-                preds = split_predictions.get(split)
-                val = self._compute_metric_value(metric, preds, split)
-                row.append(_fmt(val))
+            # Train
+            train_val = self._compute_metric_value(
+                metric, split_predictions.get("Train"), "Train"
+            )
+            row.append(_fmt(train_val))
+
+            # Validation from Train & Validation Summary first row; fallback to computed CV.
+            val_val = _validation_metric(metric)
+            if val_val is None:
+                val_val = self._compute_metric_value(
+                    metric, split_predictions.get("Validation"), "Validation"
+                )
+            row.append(_fmt(val_val))
+
+            # Test
+            test_val = self._compute_metric_value(
+                metric, split_predictions.get("Test"), "Test"
+            )
+            row.append(_fmt(test_val))
             rows.append(row)
 
         df = pd.DataFrame(rows, columns=["Metric", "Train", "Validation", "Test"])
