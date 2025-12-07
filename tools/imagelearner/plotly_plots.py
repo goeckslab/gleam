@@ -6,7 +6,15 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
+from plotly.colors import qualitative
 from constants import LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME
+from sklearn.metrics import (
+    auc,
+    average_precision_score,
+    precision_recall_curve,
+    roc_curve,
+)
+from sklearn.preprocessing import label_binarize
 
 
 def _style_fig(fig: go.Figure, font_size: int = 12) -> go.Figure:
@@ -206,15 +214,15 @@ def build_classification_plots(
         )
     })
 
-    # 1) ROC Curve (from test_statistics)
-    roc_plot = _build_static_roc_plot(label_stats, common_cfg, friendly_labels=labels)
-    if roc_plot:
-        plots.append(roc_plot)
+    # 1) ROC / PR curves only for binary tasks
+    if n_classes == 2:
+        roc_plot = _build_static_roc_plot(label_stats, common_cfg, friendly_labels=labels)
+        if roc_plot:
+            plots.append(roc_plot)
 
-    # 2) Precision-Recall Curve (from test_statistics)
-    pr_plot = _build_precision_recall_plot(label_stats, common_cfg)
-    if pr_plot:
-        plots.append(pr_plot)
+        pr_plot = _build_precision_recall_plot(label_stats, common_cfg)
+        if pr_plot:
+            plots.append(pr_plot)
 
     # 2) Classification Report Heatmap
     pcs = label_stats.get("per_class_stats", {})
@@ -471,14 +479,27 @@ def build_train_validation_plots(train_stats_path: str) -> List[Dict[str, str]]:
     if roc_val:
         best_idx = int(np.argmax(roc_val))
         best_epoch = best_idx + 1
-        spec_val = _get_series(label_val, "specificity")
-        metrics_at_best = {
-            "ROC-AUC": roc_val[best_idx] if best_idx < len(roc_val) else None,
-            "Precision": val_prec[best_idx] if best_idx < len(val_prec) else None,
-            "Recall": val_rec[best_idx] if best_idx < len(val_rec) else None,
-            "Specificity": spec_val[best_idx] if best_idx < len(spec_val) else None,
-            "F1-Score": f1_val[best_idx] if best_idx < len(f1_val) else None,
-        }
+        metrics_at_best: Dict[str, Optional[float]] = {}
+        # Always include ROC-AUC (used for best-epoch selection)
+        metrics_at_best["ROC-AUC"] = roc_val[best_idx] if best_idx < len(roc_val) else None
+
+        # Add commonly available validation metrics when present
+        for metric_key, label in [
+            ("accuracy", "Accuracy"),
+            ("balanced_accuracy", "Balanced Accuracy"),
+            ("precision", "Precision"),
+            ("recall", "Recall"),
+            ("specificity", "Specificity"),
+            ("loss", "Loss"),
+        ]:
+            series = _get_series(label_val, metric_key)
+            if series and best_idx < len(series):
+                metrics_at_best[label] = series[best_idx]
+
+        # Derived F1 from validation precision/recall if available
+        if f1_val and best_idx < len(f1_val):
+            metrics_at_best["F1-Score (derived)"] = f1_val[best_idx]
+
         fig_best = go.Figure()
         for name, value in metrics_at_best.items():
             if value is not None:
@@ -882,13 +903,61 @@ def build_prediction_diagnostics(
         print(f"Warning: Unable to read predictions CSV: {exc}")
         return []
 
+    # If a split column exists, focus on the requested split (e.g., validation=1, test=2)
+    if SPLIT_COLUMN_NAME in df_pred.columns:
+        df_pred = df_pred[df_pred[SPLIT_COLUMN_NAME] == split_value].reset_index(drop=True)
+        if df_pred.empty:
+            return plots
+
     plots: List[Dict[str, str]] = []
+
+    def _strip_prob_prefix(col: str) -> str:
+        if col.startswith("label_probabilities_"):
+            return col.replace("label_probabilities_", "")
+        if col.startswith("probabilities_"):
+            return col.replace("probabilities_", "")
+        return col
+
+    def _maybe_expand_probabilities_column(df: pd.DataFrame, labels_guess: List[str]) -> List[str]:
+        """If only a single 'probabilities' column exists (list-like), expand it into per-class columns."""
+        if "probabilities" not in df.columns:
+            return []
+        try:
+            # Parse first non-null entry to infer length
+            first_val = df["probabilities"].dropna().iloc[0]
+            parsed = first_val
+            if isinstance(first_val, str):
+                parsed = json.loads(first_val)
+            probs = list(parsed)
+            n = len(probs)
+            if n == 0:
+                return []
+            # Build labels: prefer provided guess; otherwise numeric
+            if labels_guess and len(labels_guess) == n:
+                labels_use = labels_guess
+            else:
+                labels_use = [str(i) for i in range(n)]
+            # Expand column
+            for idx, lbl in enumerate(labels_use):
+                df[f"probabilities_{lbl}"] = df["probabilities"].apply(
+                    lambda v: (json.loads(v)[idx] if isinstance(v, str) else list(v)[idx]) if pd.notnull(v) else np.nan
+                )
+            return [f"probabilities_{lbl}" for lbl in labels_use]
+        except Exception:
+            return []
 
     # Identify probability columns
     prob_cols = [
-        c for c in df_pred.columns
-        if c.startswith("label_probabilities_") and c != "label_probabilities"
+        c
+        for c in df_pred.columns
+        if (
+            (c.startswith("label_probabilities_") or c.startswith("probabilities_"))
+            and c != "label_probabilities"
+        )
     ]
+    if not prob_cols and "probabilities" in df_pred.columns:
+        labels_guess = sorted([str(u) for u in pd.unique(df_pred[LABEL_COLUMN_NAME])])
+        prob_cols = _maybe_expand_probabilities_column(df_pred, labels_guess)
     prob_cols_sorted = sorted(prob_cols)
 
     def _select_positive_prob():
@@ -897,14 +966,14 @@ def build_prediction_diagnostics(
         # Prefer a column indicating positive/event/true/1
         preferred_keys = ("event", "true", "positive", "pos", "1")
         for col in prob_cols_sorted:
-            suffix = col.replace("label_probabilities_", "").lower()
+            suffix = _strip_prob_prefix(col).lower()
             if any(k in suffix for k in preferred_keys):
                 return col, suffix
         if len(prob_cols_sorted) == 2:
             col = prob_cols_sorted[1]
-            return col, col.replace("label_probabilities_", "")
+            return col, _strip_prob_prefix(col)
         col = prob_cols_sorted[0]
-        return col, col.replace("label_probabilities_", "")
+        return col, _strip_prob_prefix(col)
 
     pos_prob_col, pos_label_hint = _select_positive_prob()
     pos_prob_series = df_pred[pos_prob_col] if pos_prob_col and pos_prob_col in df_pred else None
@@ -1004,116 +1073,328 @@ def build_prediction_diagnostics(
 
     y_true = (y_true_raw == positive_label).astype(int).values
 
-    # Plot 2: Calibration Curve
-    bins = np.linspace(0.0, 1.0, 11)
-    bin_ids = np.digitize(y_score, bins, right=True)
-    bin_centers = []
-    frac_positives = []
-    for b in range(1, len(bins)):
-        mask = bin_ids == b
-        if not np.any(mask):
-            continue
-        bin_centers.append(y_score[mask].mean())
-        frac_positives.append(y_true[mask].mean())
-    if bin_centers and frac_positives:
-        fig_cal = go.Figure()
-        fig_cal.add_trace(
-            go.Scatter(
-                x=bin_centers,
-                y=frac_positives,
-                mode="lines+markers",
-                name="Calibration",
-                line=dict(color="#2ca02c", width=4),
+    # Utility: compute calibration points
+    def _calibration_points(y_true_bin: np.ndarray, scores: np.ndarray):
+        bins = np.linspace(0.0, 1.0, 11)
+        bin_ids = np.digitize(scores, bins, right=True)
+        bin_centers, frac_positives = [], []
+        for b in range(1, len(bins)):
+            mask = bin_ids == b
+            if not np.any(mask):
+                continue
+            bin_centers.append(scores[mask].mean())
+            frac_positives.append(y_true_bin[mask].mean())
+        return bin_centers, frac_positives
+
+    # Plot 2: Calibration Curve (multi-class aware; one-vs-rest per label)
+    label_prob_map = {}
+    for col in prob_cols_sorted:
+        if col.startswith("label_probabilities_"):
+            cls = col.replace("label_probabilities_", "")
+            label_prob_map[cls] = col
+
+    unique_label_strs = [str(u) for u in unique_labels_list]
+    if len(label_prob_map) > 1 and len(unique_label_strs) > 2:
+        # Skip multi-class calibration curve for now (not informative in current report)
+        pass
+    else:
+        # Binary/unknown fallback (previous behavior)
+        bin_centers, frac_positives = _calibration_points(y_true, y_score)
+        if bin_centers and frac_positives:
+            fig_cal = go.Figure()
+            fig_cal.add_trace(
+                go.Scatter(
+                    x=bin_centers,
+                    y=frac_positives,
+                    mode="lines+markers",
+                    name="Calibration",
+                    line=dict(color="#2ca02c", width=4),
+                )
             )
+            fig_cal.add_trace(
+                go.Scatter(
+                    x=[0, 1],
+                    y=[0, 1],
+                    mode="lines",
+                    name="Perfect Calibration",
+                    line=dict(color="gray", width=2, dash="dash"),
+                )
+            )
+            fig_cal.update_layout(
+                title=dict(text="Calibration Curve", x=0.5),
+                xaxis_title="Predicted probability",
+                yaxis_title="Observed frequency",
+                width=700,
+                height=500,
+            )
+            _style_fig(fig_cal)
+            plots.append({
+                "title": "Calibration Curve (Predicted Probability vs Observed Frequency)",
+                "html": pio.to_html(fig_cal, full_html=False, include_plotlyjs=False),
+            })
+
+    # Utility: metric curves vs thresholds
+    def _threshold_curves(y_true_bin: np.ndarray, scores: np.ndarray):
+        if scores.size == 0:
+            return [], [], [], [], []
+        s_min, s_max = float(np.nanmin(scores)), float(np.nanmax(scores))
+        if not np.isfinite(s_min) or not np.isfinite(s_max):
+            return [], [], [], [], []
+        if s_min == s_max:
+            thresholds = np.linspace(0.0, 1.0, 21)
+        else:
+            thresholds = np.linspace(max(0.0, s_min), min(1.0, s_max), 21)
+        thresholds = thresholds.tolist()
+        accs, f1s, sens, specs = [], [], [], []
+        for t in thresholds:
+            y_pred = (scores >= t).astype(int)
+            tp = np.sum((y_true_bin == 1) & (y_pred == 1))
+            tn = np.sum((y_true_bin == 0) & (y_pred == 0))
+            fp = np.sum((y_true_bin == 0) & (y_pred == 1))
+            fn = np.sum((y_true_bin == 1) & (y_pred == 0))
+            acc = (tp + tn) / max(len(y_true_bin), 1)
+            prec = tp / max(tp + fp, 1e-9)
+            rec = tp / max(tp + fn, 1e-9)
+            f1 = 0 if (prec + rec) == 0 else 2 * prec * rec / (prec + rec)
+            sensitivity = rec
+            specificity = tn / max(tn + fp, 1e-9)
+            accs.append(acc)
+            f1s.append(f1)
+            sens.append(sensitivity)
+            specs.append(specificity)
+        return thresholds, accs, f1s, sens, specs
+
+    return plots
+
+
+def build_multiclass_roc_pr_plots(
+    predictions_path: str,
+    split_value: int = 2,
+) -> List[Dict[str, str]]:
+    """Build one-vs-rest ROC and PR curves for multi-class classification from predictions."""
+    preds_file = Path(predictions_path)
+    if not preds_file.exists():
+        return []
+    try:
+        df_pred = pd.read_csv(predictions_path)
+    except Exception as exc:
+        print(f"Warning: Unable to read predictions CSV: {exc}")
+        return []
+
+    if SPLIT_COLUMN_NAME in df_pred.columns:
+        df_pred = df_pred[df_pred[SPLIT_COLUMN_NAME] == split_value].reset_index(drop=True)
+    if df_pred.empty:
+        return []
+
+    if LABEL_COLUMN_NAME not in df_pred.columns:
+        return []
+
+    # Identify per-class probability columns
+    prob_cols = [
+        c
+        for c in df_pred.columns
+        if (
+            (c.startswith("label_probabilities_") or c.startswith("probabilities_"))
+            and c != "label_probabilities"
         )
-        fig_cal.add_trace(
+    ]
+    if not prob_cols:
+        return []
+    labels = [c.replace("label_probabilities_", "").replace("probabilities_", "") for c in prob_cols]
+    labels_sorted = sorted(labels)
+
+    # Ensure all labels are present as probability columns
+    prob_map = {
+        c.replace("label_probabilities_", "").replace("probabilities_", ""): c
+        for c in prob_cols
+    }
+    if len(labels_sorted) < 3:
+        return []
+
+    y_true_raw = df_pred[LABEL_COLUMN_NAME].astype(str)
+    # Drop rows with NaN probabilities across any class to avoid metric errors
+    prob_matrix = df_pred[[prob_map[lbl] for lbl in labels_sorted]].astype(float)
+    mask_valid = ~prob_matrix.isnull().any(axis=1)
+    prob_matrix = prob_matrix[mask_valid]
+    y_true_raw = y_true_raw[mask_valid]
+    if prob_matrix.empty:
+        return []
+
+    y_true_bin = label_binarize(y_true_raw, classes=labels_sorted)
+    y_score = prob_matrix.to_numpy()
+
+    plots: List[Dict[str, str]] = []
+
+    # ROC: one-vs-rest + micro
+    fig_roc = go.Figure()
+    added_any = False
+    for idx, lbl in enumerate(labels_sorted):
+        if y_true_bin[:, idx].sum() == 0 or y_true_bin[:, idx].sum() == len(y_true_bin):
+            continue  # skip classes without both positives and negatives
+        fpr, tpr, _ = roc_curve(y_true_bin[:, idx], y_score[:, idx])
+        fig_roc.add_trace(
             go.Scatter(
-                x=[0, 1],
-                y=[0, 1],
+                x=fpr,
+                y=tpr,
                 mode="lines",
-                name="Perfect Calibration",
-                line=dict(color="gray", width=2, dash="dash"),
+                name=f"{lbl} (AUC={auc(fpr, tpr):.3f})",
+                line=dict(width=3),
             )
         )
-        fig_cal.update_layout(
-            title=dict(text="Calibration Curve", x=0.5),
-            xaxis_title="Predicted probability",
-            yaxis_title="Observed frequency",
-            width=700,
-            height=500,
+        added_any = True
+    # Micro-average only if we have mixed labels
+    if y_true_bin.sum() > 0 and y_true_bin.sum() < y_true_bin.size:
+        fpr_micro, tpr_micro, _ = roc_curve(y_true_bin.ravel(), y_score.ravel())
+        fig_roc.add_trace(
+            go.Scatter(
+                x=fpr_micro,
+                y=tpr_micro,
+                mode="lines",
+                name=f"Micro-average (AUC={auc(fpr_micro, tpr_micro):.3f})",
+                line=dict(width=3, dash="dash"),
+            )
         )
-        _style_fig(fig_cal)
-        plots.append({
-            "title": "Calibration Curve (Predicted Probability vs Observed Frequency)",
-            "html": pio.to_html(fig_cal, full_html=False, include_plotlyjs=False),
-        })
-
-    # Plot 3: Threshold vs Metrics
-    thresholds = np.linspace(0.0, 1.0, 21)
-    accs, f1s, sens, specs = [], [], [], []
-    for t in thresholds:
-        y_pred = (y_score >= t).astype(int)
-        tp = np.sum((y_true == 1) & (y_pred == 1))
-        tn = np.sum((y_true == 0) & (y_pred == 0))
-        fp = np.sum((y_true == 0) & (y_pred == 1))
-        fn = np.sum((y_true == 1) & (y_pred == 0))
-        acc = (tp + tn) / max(len(y_true), 1)
-        prec = tp / max(tp + fp, 1e-9)
-        rec = tp / max(tp + fn, 1e-9)
-        f1 = 0 if (prec + rec) == 0 else 2 * prec * rec / (prec + rec)
-        sensitivity = rec
-        specificity = tn / max(tn + fp, 1e-9)
-        accs.append(acc)
-        f1s.append(f1)
-        sens.append(sensitivity)
-        specs.append(specificity)
-
-    fig_thresh = go.Figure()
-    fig_thresh.add_trace(go.Scatter(x=thresholds, y=accs, mode="lines", name="Accuracy", line=dict(width=4)))
-    fig_thresh.add_trace(go.Scatter(x=thresholds, y=f1s, mode="lines", name="F1", line=dict(width=4)))
-    fig_thresh.add_trace(go.Scatter(x=thresholds, y=sens, mode="lines", name="Sensitivity", line=dict(width=4)))
-    fig_thresh.add_trace(go.Scatter(x=thresholds, y=specs, mode="lines", name="Specificity", line=dict(width=4)))
-    fig_thresh.update_layout(
-        title=dict(text="Threshold Sweep: Accuracy, F1, Sensitivity, Specificity", x=0.5),
-        xaxis_title="Decision threshold",
-        yaxis_title="Metric value",
-        width=700,
-        height=500,
+        added_any = True
+    if not added_any:
+        return []
+    fig_roc.add_trace(
+        go.Scatter(
+            x=[0, 1],
+            y=[0, 1],
+            mode="lines",
+            name="Random",
+            line=dict(color="gray", width=2, dash="dot"),
+        )
+    )
+    fig_roc.update_layout(
+        title=dict(text="Multi-class ROC-AUC (one-vs-rest)", x=0.5),
+        xaxis_title="False Positive Rate",
+        yaxis_title="True Positive Rate",
+        width=820,
+        height=620,
         legend=dict(
-            x=0.7,
-            y=0.2,
+            x=0.62,
+            y=0.05,
             bgcolor="rgba(255,255,255,0.9)",
             bordercolor="rgba(0,0,0,0.2)",
             borderwidth=1,
         ),
-        shapes=[
-            dict(
-                type="line",
-                x0=threshold,
-                x1=threshold,
-                y0=0,
-                y1=1,
-                xref="x",
-                yref="paper",
-                line=dict(color="#d62728", width=2, dash="dash"),
-            )
-        ] if isinstance(threshold, (int, float)) else [],
-        annotations=[
-            dict(
-                x=threshold,
-                y=1.02,
-                xref="x",
-                yref="paper",
-                showarrow=False,
-                text=f"Threshold = {threshold:.2f}",
-                font=dict(size=11, color="#d62728"),
-            )
-        ] if isinstance(threshold, (int, float)) else [],
     )
-    _style_fig(fig_thresh)
+    _style_fig(fig_roc)
     plots.append({
-        "title": "Threshold Sweep: Accuracy, F1, Sensitivity, Specificity",
-        "html": pio.to_html(fig_thresh, full_html=False, include_plotlyjs=False),
+        "title": "Multi-class ROC-AUC (one-vs-rest)",
+        "html": pio.to_html(fig_roc, full_html=False, include_plotlyjs=False),
+    })
+
+    # PR: one-vs-rest + micro AP
+    fig_pr = go.Figure()
+    added_pr = False
+    for idx, lbl in enumerate(labels_sorted):
+        if y_true_bin[:, idx].sum() == 0:
+            continue
+        prec, rec, _ = precision_recall_curve(y_true_bin[:, idx], y_score[:, idx])
+        ap = average_precision_score(y_true_bin[:, idx], y_score[:, idx])
+        fig_pr.add_trace(
+            go.Scatter(
+                x=rec,
+                y=prec,
+                mode="lines",
+                name=f"{lbl} (AP={ap:.3f})",
+                line=dict(width=3),
+            )
+        )
+        added_pr = True
+    if y_true_bin.sum() > 0:
+        prec_micro, rec_micro, _ = precision_recall_curve(y_true_bin.ravel(), y_score.ravel())
+        ap_micro = average_precision_score(y_true_bin, y_score, average="micro")
+        fig_pr.add_trace(
+            go.Scatter(
+                x=rec_micro,
+                y=prec_micro,
+                mode="lines",
+                name=f"Micro-average (AP={ap_micro:.3f})",
+                line=dict(width=3, dash="dash"),
+            )
+        )
+        added_pr = True
+    if not added_pr:
+        return plots
+    fig_pr.update_layout(
+        title=dict(text="Multi-class Precision-Recall (one-vs-rest)", x=0.5),
+        xaxis_title="Recall",
+        yaxis_title="Precision",
+        width=820,
+        height=620,
+        legend=dict(
+            x=0.62,
+            y=0.05,
+            bgcolor="rgba(255,255,255,0.9)",
+            bordercolor="rgba(0,0,0,0.2)",
+            borderwidth=1,
+        ),
+    )
+    _style_fig(fig_pr)
+    plots.append({
+        "title": "Multi-class Precision-Recall (one-vs-rest)",
+        "html": pio.to_html(fig_pr, full_html=False, include_plotlyjs=False),
     })
 
     return plots
+
+
+def build_multiclass_metric_plots(test_stats_path: str) -> List[Dict[str, str]]:
+    """Alternative multi-class transparency plots using test_statistics.json per-class stats."""
+    ts_path = Path(test_stats_path)
+    if not ts_path.exists():
+        return []
+    try:
+        with open(ts_path, "r") as f:
+            test_stats = json.load(f)
+    except Exception:
+        return []
+
+    label_stats = test_stats.get("label", {})
+    pcs = label_stats.get("per_class_stats", {})
+    if not pcs:
+        return []
+    classes = list(pcs.keys())
+    if not classes:
+        return []
+
+    metrics = ["precision", "recall", "f1_score", "specificity", "accuracy"]
+    fig_bar = go.Figure()
+    for metric in metrics:
+        values = []
+        for cls in classes:
+            v = pcs.get(cls, {}).get(metric)
+            values.append(v if isinstance(v, (int, float)) else 0)
+        fig_bar.add_trace(
+            go.Bar(
+                x=classes,
+                y=values,
+                name=metric.replace("_", " ").title(),
+            )
+        )
+    fig_bar.update_layout(
+        title=dict(text="Per-Class Metrics (Test)", x=0.5),
+        xaxis_title="Class",
+        yaxis_title="Metric value",
+        barmode="group",
+        width=900,
+        height=600,
+        legend=dict(
+            x=1.02,
+            y=1.0,
+            bgcolor="rgba(255,255,255,0.9)",
+            bordercolor="rgba(0,0,0,0.2)",
+            borderwidth=1,
+        ),
+    )
+    _style_fig(fig_bar)
+
+    return [
+        {
+            "title": "Per-Class Metrics (Test)",
+            "html": pio.to_html(fig_bar, full_html=False, include_plotlyjs=False),
+        },
+    ]

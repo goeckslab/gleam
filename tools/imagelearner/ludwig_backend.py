@@ -17,6 +17,7 @@ from html_structure import (
     build_tabbed_html,
     encode_image_to_base64,
     format_config_table_html,
+    format_dataset_overview_table,
     format_stats_table_html,
     format_test_merged_stats_table_html,
     format_train_val_stats_table_html,
@@ -34,6 +35,7 @@ from ludwig.utils.data_utils import get_split_path
 from metaformer_setup import get_visualizations_registry, META_DEFAULT_CFGS
 from plotly_plots import (
     build_classification_plots,
+    build_multiclass_metric_plots,
     build_prediction_diagnostics,
     build_regression_test_plots,
     build_regression_train_val_plots,
@@ -267,6 +269,23 @@ class LudwigDirectBackend:
         else:
             encoder_config = {"type": raw_encoder}
 
+        # Set a human-friendly architecture string for reporting
+        arch_display = None
+        if is_metaformer and custom_model:
+            arch_display = str(custom_model)
+        elif isinstance(raw_encoder, dict):
+            enc_type = raw_encoder.get("type")
+            enc_variant = raw_encoder.get("model_variant")
+            if enc_type:
+                base = str(enc_type).replace("_", " ").title()
+                arch_display = f"{base} {enc_variant}" if enc_variant is not None else base
+        else:
+            arch_display = str(raw_encoder).replace("_", " ").title()
+
+        if not arch_display:
+            arch_display = str(model_name)
+        config_params["architecture"] = arch_display
+
         batch_size_cfg = batch_size or "auto"
 
         label_column_path = config_params.get("label_column_data_path")
@@ -343,6 +362,7 @@ class LudwigDirectBackend:
             # Force Ludwig to respect our dimensions by setting additional parameters
             image_feat["preprocessing"]["requires_equal_dimensions"] = False
             logger.info(f"Set preprocessing dimensions for MetaFormer: {height}x{width} (infer_dimensions=True with max dimensions to allow validation)")
+            config_params["image_size"] = f"{height}x{width}"
         # Now set the encoder configuration
         image_feat["encoder"] = encoder_config
 
@@ -374,8 +394,12 @@ class LudwigDirectBackend:
                     image_feat["preprocessing"]["infer_image_max_height"] = height
                     image_feat["preprocessing"]["infer_image_max_width"] = width
                     logger.info(f"Added resize preprocessing: {height}x{width} for standard encoder with infer_image_dimensions=True and max dimensions")
+                    config_params["image_size"] = f"{height}x{width}"
             except (ValueError, IndexError):
                 logger.warning(f"Invalid image resize format: {config_params['image_resize']}, skipping resize preprocessing")
+        elif not is_metaformer:
+            # No explicit resize provided; keep for reporting purposes
+            config_params.setdefault("image_size", "original")
 
         def _resolve_validation_metric(task: str, requested: Optional[str]) -> Optional[str]:
             """Pick a validation metric that Ludwig will accept for the resolved task."""
@@ -470,6 +494,9 @@ class LudwigDirectBackend:
                 "binary" if num_unique_labels == 2 else "category",
                 config_params.get("validation_metric"),
             )
+
+        # Propagate the resolved validation metric (including any task-based fallback or alias normalization)
+        config_params["validation_metric"] = val_metric
 
         conf: Dict[str, Any] = {
             "model_type": "ecd",
@@ -642,17 +669,30 @@ class LudwigDirectBackend:
             logger.error(f"Error converting Parquet to CSV: {e}")
 
     def generate_plots(self, output_dir: Path) -> None:
-        """Generate all registered Ludwig visualizations for the latest experiment run."""
-        logger.info("Generating all Ludwig visualizations…")
+        """Generate Ludwig visualizations (train/val + test) for the latest experiment run."""
+        logger.info("Generating Ludwig visualizations (train/val + test)…")
 
-        # Keep only lightweight plots (drop compare_performance/roc_curves)
-        test_plots = {
-            "roc_curves_from_test_statistics",
-            "confusion_matrix",
-        }
+        # Train/validation visualizations
         train_plots = {
             "learning_curves",
-            "compare_classifiers_performance_subset",
+        }
+
+        # Test visualizations (multi-class transparency)
+        test_plots = {
+            "confusion_matrix",
+            "compare_performance",
+            "compare_classifiers_multiclass_multimetric",
+            "frequency_vs_f1",
+            "confidence_thresholding",
+            "confidence_thresholding_data_vs_acc",
+            "confidence_thresholding_data_vs_acc_subset",
+            "confidence_thresholding_data_vs_acc_subset_per_class",
+            # Binary-only visualizations will still be attempted; multi-class replacements handled elsewhere
+            "binary_threshold_vs_metric",
+            "roc_curves",
+            "precision_recall_curves",
+            "calibration_1_vs_all",
+            "calibration_multiclass",
         }
 
         output_dir = Path(output_dir)
@@ -677,7 +717,6 @@ class LudwigDirectBackend:
 
         training_stats = _check(exp_dir / "training_statistics.json")
         test_stats = _check(exp_dir / TEST_STATISTICS_FILE_NAME)
-        probs_path = _check(exp_dir / PREDICTIONS_PARQUET_FILE_NAME)
         gt_metadata = _check(exp_dir / "model" / TRAIN_SET_METADATA_FILE_NAME)
 
         dataset_path = None
@@ -700,6 +739,19 @@ class LudwigDirectBackend:
                 stats = json.load(f)
             output_feature = next(iter(stats.keys()), "")
 
+        probs_path = None
+        prob_candidates = [
+            exp_dir / f"{LABEL_COLUMN_NAME}_probabilities.csv",
+            exp_dir / f"{output_feature}_probabilities.csv" if output_feature else None,
+            exp_dir / "probabilities.csv",
+            exp_dir / "predictions.csv",
+            exp_dir / PREDICTIONS_PARQUET_FILE_NAME,
+        ]
+        for cand in prob_candidates:
+            if cand and Path(cand).exists():
+                probs_path = str(cand)
+                break
+
         viz_registry = get_visualizations_registry()
         for viz_name, viz_func in viz_registry.items():
             if viz_name in train_plots:
@@ -716,8 +768,10 @@ class LudwigDirectBackend:
                     probabilities=[probs_path] if probs_path else [],
                     output_feature_name=output_feature,
                     ground_truth_split=2,
-                    top_n_classes=[0],
+                    top_n_classes=[20],
                     top_k=3,
+                    metrics=["f1", "precision", "recall", "accuracy"],
+                    positive_label=0,
                     ground_truth_metadata=gt_metadata,
                     ground_truth=dataset_path,
                     split_file=split_file,
@@ -783,10 +837,20 @@ class LudwigDirectBackend:
 
                 arch_type = encoder_cfg.get("type")
                 arch_variant = encoder_cfg.get("model_variant")
+                arch_custom = encoder_cfg.get("custom_model")
                 arch_name = None
+                if arch_custom:
+                    arch_name = str(arch_custom)
                 if arch_type:
                     arch_base = str(arch_type).replace("_", " ").title()
-                    arch_name = f"{arch_base} {arch_variant}" if arch_variant is not None else arch_base
+                    arch_type_name = (
+                        f"{arch_base} {arch_variant}" if arch_variant is not None else arch_base
+                    )
+                    # Prefer explicit custom model names (e.g., MetaFormer) but fall back to encoder type
+                    arch_name = arch_name or arch_type_name
+                if not arch_name and config.get("model_name"):
+                    # As a last resort, show the user-selected model name (handles custom/MetaFormer cases)
+                    arch_name = str(config.get("model_name"))
 
                 summary_fields = {
                     "architecture": arch_name,
@@ -883,6 +947,41 @@ class LudwigDirectBackend:
 </script>
 """
         html += f"<h1>{title}</h1>"
+
+        dataset_overview_html = format_dataset_overview_table([])
+        try:
+            if label_metadata_path and label_metadata_path.exists():
+                df_labels = pd.read_csv(label_metadata_path)
+                if LABEL_COLUMN_NAME in df_labels.columns and SPLIT_COLUMN_NAME in df_labels.columns:
+                    df_counts = df_labels[[LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME]].dropna(subset=[LABEL_COLUMN_NAME])
+                    df_counts[SPLIT_COLUMN_NAME] = pd.to_numeric(df_counts[SPLIT_COLUMN_NAME], errors="coerce")
+                    df_counts = df_counts.dropna(subset=[SPLIT_COLUMN_NAME])
+                    if not df_counts.empty:
+                        df_counts[SPLIT_COLUMN_NAME] = df_counts[SPLIT_COLUMN_NAME].astype(int)
+                        counts = (
+                            df_counts.groupby([LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME])
+                            .size()
+                            .unstack(fill_value=0)
+                            .sort_index()
+                        )
+                        rows = []
+                        for lbl, row in counts.iterrows():
+                            rows.append({
+                                "label": str(lbl),
+                                "train": int(row.get(0, 0)),
+                                "validation": int(row.get(1, 0)),
+                                "test": int(row.get(2, 0)),
+                            })
+                        dataset_overview_html = format_dataset_overview_table(rows)
+                else:
+                    logger.warning(
+                        "Dataset overview skipped: required columns (%s, %s) not found in %s",
+                        LABEL_COLUMN_NAME,
+                        SPLIT_COLUMN_NAME,
+                        label_metadata_path,
+                    )
+        except Exception as exc:
+            logger.warning("Failed to build dataset overview: %s", exc)
 
         metrics_html = ""
         train_val_metrics_html = ""
@@ -1006,20 +1105,10 @@ class LudwigDirectBackend:
                 )
             return html_section
 
-        # Show performance first, then config
-        tab1_content = metrics_html + config_html
+        # Show dataset overview, performance first, then config
+        tab1_content = dataset_overview_html + metrics_html + config_html
 
-        tab2_content = train_val_metrics_html + render_img_section(
-            "Training and Validation Visualizations",
-            train_viz_dir,
-            output_type,
-            exclude_names={
-                "compare_classifiers_performance_from_prob.png",
-                "roc_curves_from_prediction_statistics.png",
-                "precision_recall_curves_from_prediction_statistics.png",
-                "precision_recall_curve.png",
-            },
-        )
+        tab2_content = train_val_metrics_html
         if train_stats_path.exists():
             try:
                 if output_type == "regression":
@@ -1035,6 +1124,39 @@ class LudwigDirectBackend:
                     logger.info(f"Generated {len(tv_plots)} train/val diagnostic plots")
             except Exception as e:
                 logger.warning(f"Could not generate train/val plots: {e}")
+
+        # Always include Ludwig PNGs (excluding overlapping ROC/PR-style images)
+        tab2_content += render_img_section(
+            "Training and Validation Visualizations",
+            train_viz_dir,
+            output_type,
+            exclude_names={
+                "compare_classifiers_performance_from_prob.png",
+                "roc_curves_from_prediction_statistics.png",
+                "precision_recall_curves_from_prediction_statistics.png",
+                "precision_recall_curve.png",
+            },
+        )
+
+        # Validation diagnostics (calibration/threshold) from predictions.csv, using split=1
+        predictions_csv_path = exp_dir / "predictions.csv"
+        if output_type in ("binary", "category") and predictions_csv_path.exists():
+            try:
+                val_diag_plots = build_prediction_diagnostics(
+                    str(predictions_csv_path),
+                    label_data_path=str(config.get("label_column_data_path"))
+                    if config.get("label_column_data_path")
+                    else None,
+                    split_value=1,
+                    threshold=config.get("threshold"),
+                )
+                for plot in val_diag_plots:
+                    tab2_content += (
+                        f"<h2 style='text-align: center;'>{plot['title']} (Validation)</h2>"
+                        f"<div class='plotly-center'>{plot['html']}</div>"
+                    )
+            except Exception as e:
+                logger.warning(f"Could not generate validation diagnostics: {e}")
 
         # --- Predictions vs Ground Truth table (REGRESSION ONLY) ---
         preds_section = ""
@@ -1116,34 +1238,27 @@ class LudwigDirectBackend:
             except Exception as e:
                 logger.warning(f"Could not generate Plotly plots: {e}")
 
-            # Add prediction diagnostics from predictions.csv
-            predictions_csv_path = exp_dir / "predictions.csv"
-            try:
-                diag_plots = build_prediction_diagnostics(
-                    str(predictions_csv_path),
-                    label_data_path=str(config.get("label_column_data_path"))
-                    if config.get("label_column_data_path")
-                    else None,
-                    threshold=config.get("threshold"),
-                )
-                for plot in diag_plots:
-                    tab3_content += (
-                        f"<h2 style='text-align: center;'>{plot['title']}</h2>"
-                        f"<div class='plotly-center'>{plot['html']}</div>"
-                    )
-                if diag_plots:
-                    test_plotly_added = True
-                    logger.info(f"Generated {len(diag_plots)} prediction diagnostic plots")
-            except Exception as e:
-                logger.warning(f"Could not generate prediction diagnostics: {e}")
+            # Multi-class transparency plots from test stats (replace ROC/PR for multi-class)
+            if output_type == "category" and test_stats_path.exists():
+                try:
+                    multi_curves = build_multiclass_metric_plots(str(test_stats_path))
+                    for plot in multi_curves:
+                        tab3_content += (
+                            f"<h2 style='text-align: center;'>{plot['title']}</h2>"
+                            f"<div class='plotly-center'>{plot['html']}</div>"
+                        )
+                    if multi_curves:
+                        test_plotly_added = True
+                        logger.info("Added multi-class per-class metric plots to test tab")
+                except Exception as e:
+                    logger.warning(f"Could not generate multi-class metric plots: {e}")
 
-        # Fallback: include static PNGs if no interactive plots were added
-        if not test_plotly_added:
-            tab3_content += render_img_section(
-                "Test Visualizations (PNG fallback)",
-                test_viz_dir,
-                output_type,
-            )
+        # Also include Ludwig PNGs; rely on exclusions inside render_img_section to avoid overlap
+        tab3_content += render_img_section(
+            "Test Visualizations (PNG fallback)",
+            test_viz_dir,
+            output_type,
+        )
 
         # Add static TEST PNGs (with default dedupe/exclusions)
         tabbed_html = build_tabbed_html(tab1_content, tab2_content, tab3_content)

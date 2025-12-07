@@ -1,6 +1,6 @@
 import base64
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 from constants import METRIC_DISPLAY_NAMES
 from utils import detect_output_type, extract_metrics_from_json
@@ -23,6 +23,7 @@ def format_config_table_html(
 ) -> str:
     display_keys = [
         "architecture",
+        "image_size",
         "pretrained",
         "trainable",
         "target_column",
@@ -58,6 +59,15 @@ def format_config_table_html(
         else:
             if key == "task_type":
                 val_str = val.title() if isinstance(val, str) else "N/A"
+            elif key == "image_size":
+                if val is None:
+                    val_str = "N/A"
+                elif isinstance(val, (list, tuple)) and len(val) == 2:
+                    val_str = f"{val[0]}x{val[1]}"
+                elif isinstance(val, str) and val.lower() == "original":
+                    val_str = "Original (no resize)"
+                else:
+                    val_str = str(val)
             elif key == "batch_size":
                 if isinstance(val, (int, float)):
                     val_str = int(val)
@@ -115,6 +125,11 @@ def format_config_table_html(
                             "Ludwig Trainer Parameters</a> for details."
                             "</span>"
                         )
+            elif key == "validation_metric":
+                if val is not None:
+                    val_str = METRIC_DISPLAY_NAMES.get(str(val), str(val))
+                else:
+                    val_str = "N/A"
             elif key == "epochs":
                 if val is None:
                     val_str = "N/A"
@@ -728,6 +743,38 @@ def get_metrics_help_modal() -> str:
         "</script>"
     )
     return modal_html + modal_js
+
+
+def format_dataset_overview_table(rows: List[Dict[str, Any]]) -> str:
+    """Render a label distribution table across train/validation/test splits."""
+    heading = "<h2 style='text-align: center;'>Dataset Overview</h2>"
+    if not rows:
+        return heading + "<p style='text-align: center; color: #666;'>Dataset overview unavailable.</p><br>"
+
+    html = (
+        heading
+        + "<div style='display: flex; justify-content: center;'>"
+        + "<table class='performance-summary' style='border-collapse: collapse; table-layout: fixed;'>"
+        + "<thead><tr>"
+        + "<th style='padding: 10px; border: 1px solid #ccc; text-align: left; white-space: nowrap;'>Label</th>"
+        + "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Train</th>"
+        + "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Validation</th>"
+        + "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Test</th>"
+        + "</tr></thead><tbody>"
+    )
+
+    for row in rows:
+        html += generate_table_row(
+            [
+                row.get("label", "N/A"),
+                row.get("train", 0),
+                row.get("validation", 0),
+                row.get("test", 0),
+            ],
+            "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;",
+        )
+    html += "</tbody></table></div><br>"
+    return html
 
 # -----------------------------------------
 # MODEL PERFORMANCE (Train/Val/Test) TABLE
