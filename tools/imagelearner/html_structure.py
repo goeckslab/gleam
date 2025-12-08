@@ -745,35 +745,61 @@ def get_metrics_help_modal() -> str:
     return modal_html + modal_js
 
 
-def format_dataset_overview_table(rows: List[Dict[str, Any]]) -> str:
-    """Render a label distribution table across train/validation/test splits."""
+def format_dataset_overview_table(rows: List[Dict[str, Any]], regression_mode: bool = False) -> str:
+    """Render a dataset overview table.
+
+    - Classification: per-label distribution across train/val/test.
+    - Regression: split counts (train/val/test).
+    """
     heading = "<h2 style='text-align: center;'>Dataset Overview</h2>"
     if not rows:
         return heading + "<p style='text-align: center; color: #666;'>Dataset overview unavailable.</p><br>"
 
-    html = (
-        heading
-        + "<div style='display: flex; justify-content: center;'>"
-        + "<table class='performance-summary' style='border-collapse: collapse; table-layout: fixed;'>"
-        + "<thead><tr>"
-        + "<th style='padding: 10px; border: 1px solid #ccc; text-align: left; white-space: nowrap;'>Label</th>"
-        + "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Train</th>"
-        + "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Validation</th>"
-        + "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Test</th>"
-        + "</tr></thead><tbody>"
-    )
-
-    for row in rows:
-        html += generate_table_row(
-            [
-                row.get("label", "N/A"),
-                row.get("train", 0),
-                row.get("validation", 0),
-                row.get("test", 0),
-            ],
-            "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;",
+    if regression_mode:
+        headers = ["Split", "Count"]
+        html = (
+            heading
+            + "<div style='display: flex; justify-content: center;'>"
+            + "<table class='performance-summary' style='border-collapse: collapse; table-layout: fixed;'>"
+            + "<thead><tr>"
+            + "".join(
+                f"<th style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>{h}</th>"
+                for h in headers
+            )
+            + "</tr></thead><tbody>"
         )
-    html += "</tbody></table></div><br>"
+        for row in rows:
+            html += generate_table_row(
+                [
+                    row.get("split", "N/A"),
+                    row.get("count", 0),
+                ],
+                "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;",
+            )
+        html += "</tbody></table></div><br>"
+    else:
+        html = (
+            heading
+            + "<div style='display: flex; justify-content: center;'>"
+            + "<table class='performance-summary' style='border-collapse: collapse; table-layout: fixed;'>"
+            + "<thead><tr>"
+            + "<th style='padding: 10px; border: 1px solid #ccc; text-align: left; white-space: nowrap;'>Label</th>"
+            + "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Train</th>"
+            + "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Validation</th>"
+            + "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Test</th>"
+            + "</tr></thead><tbody>"
+        )
+        for row in rows:
+            html += generate_table_row(
+                [
+                    row.get("label", "N/A"),
+                    row.get("train", 0),
+                    row.get("validation", 0),
+                    row.get("test", 0),
+                ],
+                "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;",
+            )
+        html += "</tbody></table></div><br>"
     return html
 
 # -----------------------------------------

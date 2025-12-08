@@ -130,13 +130,9 @@
             </when>
             <when value="regression">
                 <param name="validation_metric_regression" type="select" optional="true" label="Validation metric (regression)" help="Metrics accepted by Ludwig for regression outputs.">
-                    <option value="pearson_r" selected="true">Pearson r</option>
-                    <option value="mae">MAE</option>
+                    <option value="mae" selected="true">MAE</option>
                     <option value="mse">MSE</option>
                     <option value="rmse">RMSE</option>
-                    <option value="mape">MAPE</option>
-                    <option value="r2">R²</option>
-                    <option value="explained_variance">Explained Variance</option>
                     <option value="loss">Loss</option>
                 </param>
             </when>

@@ -1,8 +1,9 @@
 import json
+import inspect
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, Optional, Protocol, Tuple
+from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 import pandas as pd
 import pandas.api.types as ptypes
@@ -37,6 +38,7 @@ from plotly_plots import (
     build_classification_plots,
     build_multiclass_metric_plots,
     build_prediction_diagnostics,
+    build_binary_threshold_plot,
     build_regression_test_plots,
     build_regression_train_val_plots,
     build_train_validation_plots,
@@ -668,6 +670,37 @@ class LudwigDirectBackend:
         except Exception as e:
             logger.error(f"Error converting Parquet to CSV: {e}")
 
+    @staticmethod
+    def _extract_metric_series(stats: Dict[str, Any], split: str, prefer: Optional[str] = None) -> Tuple[Optional[str], Optional[List[float]]]:
+        """Pull the first numeric metric list we can find for the requested split."""
+        if not isinstance(stats, dict):
+            return None, None
+
+        split_stats = stats.get(split, {})
+        ordered_metrics: List[Tuple[str, List[float]]] = []
+
+        def _append_metrics(metric_map: Dict[str, Any]) -> None:
+            for metric_name, values in metric_map.items():
+                if isinstance(values, list) and any(isinstance(v, (int, float)) for v in values):
+                    ordered_metrics.append((metric_name, values))
+
+        if isinstance(split_stats, dict):
+            combined = split_stats.get("combined")
+            if isinstance(combined, dict):
+                _append_metrics(combined)
+
+            for feature_name, feature_metrics in split_stats.items():
+                if feature_name == "combined" or not isinstance(feature_metrics, dict):
+                    continue
+                _append_metrics(feature_metrics)
+
+        if prefer:
+            for metric_name, values in ordered_metrics:
+                if metric_name == prefer:
+                    return metric_name, values
+
+        return ordered_metrics[0] if ordered_metrics else (None, None)
+
     def generate_plots(self, output_dir: Path) -> None:
         """Generate Ludwig visualizations (train/val + test) for the latest experiment run."""
         logger.info("Generating Ludwig visualizations (train/val + test)…")
@@ -727,6 +760,9 @@ class LudwigDirectBackend:
                 cfg = json.load(f)
             dataset_path = _check(Path(cfg.get("dataset", "")))
             split_file = _check(Path(get_split_path(cfg.get("dataset", ""))))
+            model_name = cfg.get("model_name", "model")
+        else:
+            model_name = "model"
 
         output_feature = ""
         if desc.exists():
@@ -753,6 +789,30 @@ class LudwigDirectBackend:
                 break
 
         viz_registry = get_visualizations_registry()
+        if not viz_registry:
+            logger.warning(
+                "Ludwig visualizations registry not available; train/test PNGs will be skipped."
+            )
+            return
+
+        base_kwargs = {
+            "training_statistics": [training_stats] if training_stats else [],
+            "test_statistics": [test_stats] if test_stats else [],
+            "probabilities": [probs_path] if probs_path else [],
+            "output_feature_name": output_feature,
+            "ground_truth_split": 2,
+            "top_n_classes": [20],
+            "top_k": 3,
+            "metrics": ["f1", "precision", "recall", "accuracy"],
+            "positive_label": 0,
+            "ground_truth_metadata": gt_metadata,
+            "ground_truth": dataset_path,
+            "split_file": split_file,
+            "output_directory": None,  # set per plot below
+            "normalize": False,
+            "file_format": "png",
+            "model_names": [model_name],
+        }
         for viz_name, viz_func in viz_registry.items():
             if viz_name in train_plots:
                 viz_dir_plot = train_viz
@@ -762,27 +822,22 @@ class LudwigDirectBackend:
                 continue
 
             try:
+                # Build per-viz kwargs based on the function signature to avoid unexpected args
+                sig_params = set(inspect.signature(viz_func).parameters.keys())
+                call_kwargs = {
+                    k: v
+                    for k, v in base_kwargs.items()
+                    if k in sig_params and v is not None
+                }
+                if "output_directory" in sig_params:
+                    call_kwargs["output_directory"] = str(viz_dir_plot)
+
                 viz_func(
-                    training_statistics=[training_stats] if training_stats else [],
-                    test_statistics=[test_stats] if test_stats else [],
-                    probabilities=[probs_path] if probs_path else [],
-                    output_feature_name=output_feature,
-                    ground_truth_split=2,
-                    top_n_classes=[20],
-                    top_k=3,
-                    metrics=["f1", "precision", "recall", "accuracy"],
-                    positive_label=0,
-                    ground_truth_metadata=gt_metadata,
-                    ground_truth=dataset_path,
-                    split_file=split_file,
-                    output_directory=str(viz_dir_plot),
-                    normalize=False,
-                    file_format="png",
+                    **call_kwargs,
                 )
                 logger.info(f"✔ Generated {viz_name}")
             except Exception as e:
                 logger.warning(f"✘ Skipped {viz_name}: {e}")
-
         logger.info(f"All visualizations written to {viz_dir}")
 
     def generate_html_report(
@@ -883,7 +938,6 @@ class LudwigDirectBackend:
 
         base_viz_dir = exp_dir / "visualizations"
         train_viz_dir = base_viz_dir / "train"
-        test_viz_dir = base_viz_dir / "test"
 
         html = get_html_template()
 
@@ -944,44 +998,92 @@ class LudwigDirectBackend:
       });
     }
   });
-</script>
+        </script>
 """
         html += f"<h1>{title}</h1>"
 
-        dataset_overview_html = format_dataset_overview_table([])
-        try:
-            if label_metadata_path and label_metadata_path.exists():
-                df_labels = pd.read_csv(label_metadata_path)
-                if LABEL_COLUMN_NAME in df_labels.columns and SPLIT_COLUMN_NAME in df_labels.columns:
-                    df_counts = df_labels[[LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME]].dropna(subset=[LABEL_COLUMN_NAME])
-                    df_counts[SPLIT_COLUMN_NAME] = pd.to_numeric(df_counts[SPLIT_COLUMN_NAME], errors="coerce")
-                    df_counts = df_counts.dropna(subset=[SPLIT_COLUMN_NAME])
-                    if not df_counts.empty:
-                        df_counts[SPLIT_COLUMN_NAME] = df_counts[SPLIT_COLUMN_NAME].astype(int)
-                        counts = (
-                            df_counts.groupby([LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME])
-                            .size()
-                            .unstack(fill_value=0)
-                            .sort_index()
-                        )
-                        rows = []
-                        for lbl, row in counts.iterrows():
-                            rows.append({
-                                "label": str(lbl),
-                                "train": int(row.get(0, 0)),
-                                "validation": int(row.get(1, 0)),
-                                "test": int(row.get(2, 0)),
-                            })
-                        dataset_overview_html = format_dataset_overview_table(rows)
-                else:
+        def append_plot_blocks(tab_html: str, plots: List[Dict[str, str]], title_suffix: str = "") -> str:
+            """Append Plotly blocks to a tab with consistent markup."""
+            if not plots:
+                return tab_html
+            suffix = title_suffix or ""
+            for plot in plots:
+                tab_html += (
+                    f"<h2 style='text-align: center;'>{plot['title']}{suffix}</h2>"
+                    f"<div class='plotly-center'>{plot['html']}</div>"
+                )
+            return tab_html
+
+        def build_dataset_overview(label_metadata: Optional[Path], output_type: Optional[str]) -> str:
+            """Summarize dataset distribution across splits."""
+            if not label_metadata or not label_metadata.exists():
+                return format_dataset_overview_table([])
+
+            try:
+                df_labels = pd.read_csv(label_metadata)
+                # Regression: only split counts (no label grouping)
+                if output_type == "regression" or LABEL_COLUMN_NAME not in df_labels.columns:
+                    if SPLIT_COLUMN_NAME in df_labels.columns:
+                        df_split = df_labels[[SPLIT_COLUMN_NAME]].copy()
+                        df_split[SPLIT_COLUMN_NAME] = pd.to_numeric(df_split[SPLIT_COLUMN_NAME], errors="coerce")
+                        df_split = df_split.dropna(subset=[SPLIT_COLUMN_NAME])
+                        df_split[SPLIT_COLUMN_NAME] = df_split[SPLIT_COLUMN_NAME].astype(int)
+                        split_counts = df_split.groupby(SPLIT_COLUMN_NAME).size().to_dict()
+                    else:
+                        # Fallback: approximate counts using default split probabilities
+                        total = len(df_labels)
+                        probs = DEFAULT_SPLIT_PROBABILITIES or [0.7, 0.1, 0.2]
+                        train_n = int(total * probs[0])
+                        val_n = int(total * probs[1])
+                        if train_n + val_n > total:
+                            val_n = max(0, total - train_n)
+                        test_n = max(0, total - train_n - val_n)
+                        split_counts = {0: train_n, 1: val_n, 2: test_n}
+                    rows = [
+                        {"split": "train", "count": int(split_counts.get(0, 0))},
+                        {"split": "validation", "count": int(split_counts.get(1, 0))},
+                        {"split": "test", "count": int(split_counts.get(2, 0))},
+                    ]
+                    return format_dataset_overview_table(rows, regression_mode=True)
+
+                # Classification: require label + split
+                if LABEL_COLUMN_NAME not in df_labels.columns or SPLIT_COLUMN_NAME not in df_labels.columns:
                     logger.warning(
                         "Dataset overview skipped: required columns (%s, %s) not found in %s",
                         LABEL_COLUMN_NAME,
                         SPLIT_COLUMN_NAME,
-                        label_metadata_path,
+                        label_metadata,
                     )
-        except Exception as exc:
-            logger.warning("Failed to build dataset overview: %s", exc)
+                    return format_dataset_overview_table([])
+
+                df_counts = df_labels[[LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME]].copy()
+                df_counts[SPLIT_COLUMN_NAME] = pd.to_numeric(df_counts[SPLIT_COLUMN_NAME], errors="coerce")
+                df_counts = df_counts.dropna(subset=[SPLIT_COLUMN_NAME])
+                if df_counts.empty:
+                    return format_dataset_overview_table([])
+
+                df_counts[SPLIT_COLUMN_NAME] = df_counts[SPLIT_COLUMN_NAME].astype(int)
+                df_counts = df_counts.dropna(subset=[LABEL_COLUMN_NAME])
+                counts = (
+                    df_counts.groupby([LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME])
+                    .size()
+                    .unstack(fill_value=0)
+                    .sort_index()
+                )
+                rows = []
+                for lbl, row in counts.iterrows():
+                    rows.append(
+                        {
+                            "label": str(lbl),
+                            "train": int(row.get(0, 0)),
+                            "validation": int(row.get(1, 0)),
+                            "test": int(row.get(2, 0)),
+                        }
+                    )
+                return format_dataset_overview_table(rows)
+            except Exception as exc:
+                logger.warning("Failed to build dataset overview: %s", exc)
+                return format_dataset_overview_table([])
 
         metrics_html = ""
         train_val_metrics_html = ""
@@ -1010,6 +1112,16 @@ class LudwigDirectBackend:
                 f"Could not load stats for HTML report: {type(e).__name__}: {e}"
             )
 
+        if not output_type:
+            # Fallback to configured task type when stats are unavailable (e.g., failed run).
+            output_type = (
+                str(config_for_summary.get("task_type")).lower()
+                if config_for_summary.get("task_type")
+                else None
+            )
+
+        dataset_overview_html = build_dataset_overview(label_metadata_path, output_type)
+
         config_html = ""
         training_progress = self.get_training_process(output_dir)
         try:
@@ -1036,11 +1148,12 @@ class LudwigDirectBackend:
             exclude_names: Optional[set] = None,
         ) -> str:
             if not dir_path.exists():
-                return f"<h2>{title}</h2><p><em>Directory not found.</em></p>"
+                return ""
 
             exclude_names = exclude_names or set()
 
-            imgs = list(dir_path.glob("*.png"))
+            # Search recursively because Ludwig can nest figures under per-feature folders
+            imgs = list(dir_path.rglob("*.png"))
 
             # Exclude ROC curves and standard confusion matrices (keep only entropy version)
             default_exclude = {
@@ -1082,7 +1195,7 @@ class LudwigDirectBackend:
             ]
 
             if not imgs:
-                return f"<h2>{title}</h2><p><em>No plots found.</em></p>"
+                return ""
 
             # Sort images by name for consistent ordering (works with string and numeric labels)
             imgs = sorted(imgs, key=lambda x: x.name)
@@ -1106,40 +1219,67 @@ class LudwigDirectBackend:
             return html_section
 
         # Show dataset overview, performance first, then config
+        predictions_csv_path = exp_dir / "predictions.csv"
+
         tab1_content = dataset_overview_html + metrics_html + config_html
 
         tab2_content = train_val_metrics_html
+        # Preload binary threshold plot so it appears first in Train/Val tab
+        threshold_plot = None
+        threshold_value = (
+            config_for_summary.get("threshold")
+            if config_for_summary.get("threshold") is not None
+            else config.get("threshold")
+        )
+        if threshold_value is None and output_type == "binary":
+            threshold_value = 0.5
+        if output_type == "binary" and predictions_csv_path.exists():
+            try:
+                threshold_plot = build_binary_threshold_plot(
+                    str(predictions_csv_path),
+                    label_data_path=str(config.get("label_column_data_path"))
+                    if config.get("label_column_data_path")
+                    else None,
+                    split_value=1,
+                )
+            except Exception as e:
+                logger.warning(f"Could not generate validation threshold plot: {e}")
+
         if train_stats_path.exists():
             try:
                 if output_type == "regression":
                     tv_plots = build_regression_train_val_plots(str(train_stats_path))
+                    tab2_content = append_plot_blocks(tab2_content, tv_plots)
                 else:
                     tv_plots = build_train_validation_plots(str(train_stats_path))
-                for plot in tv_plots:
-                    tab2_content += (
-                        f"<h2 style='text-align: center;'>{plot['title']}</h2>"
-                        f"<div class='plotly-center'>{plot['html']}</div>"
-                    )
-                if tv_plots:
-                    logger.info(f"Generated {len(tv_plots)} train/val diagnostic plots")
+                    # Add threshold plot first, then other train/val plots
+                    if threshold_plot:
+                        tab2_content = append_plot_blocks(tab2_content, [threshold_plot])
+                        # Only append once; avoid duplicates if added elsewhere
+                        threshold_plot = None
+                    tab2_content = append_plot_blocks(tab2_content, tv_plots)
+                    if threshold_plot or tv_plots:
+                        logger.info(
+                            f"Added {len(tv_plots) + (1 if threshold_plot else 0)} train/val diagnostic plots"
+                        )
             except Exception as e:
                 logger.warning(f"Could not generate train/val plots: {e}")
 
-        # Always include Ludwig PNGs (excluding overlapping ROC/PR-style images)
-        tab2_content += render_img_section(
-            "Training and Validation Visualizations",
-            train_viz_dir,
-            output_type,
-            exclude_names={
-                "compare_classifiers_performance_from_prob.png",
-                "roc_curves_from_prediction_statistics.png",
-                "precision_recall_curves_from_prediction_statistics.png",
-                "precision_recall_curve.png",
-            },
-        )
+        # Only include training PNGs for regression; classification is handled by filtered Plotly plots
+        if output_type == "regression":
+            tab2_content += render_img_section(
+                "Training and Validation Visualizations",
+                train_viz_dir,
+                output_type,
+                exclude_names={
+                    "compare_classifiers_performance_from_prob.png",
+                    "roc_curves_from_prediction_statistics.png",
+                    "precision_recall_curves_from_prediction_statistics.png",
+                    "precision_recall_curve.png",
+                },
+            )
 
         # Validation diagnostics (calibration/threshold) from predictions.csv, using split=1
-        predictions_csv_path = exp_dir / "predictions.csv"
         if output_type in ("binary", "category") and predictions_csv_path.exists():
             try:
                 val_diag_plots = build_prediction_diagnostics(
@@ -1148,13 +1288,13 @@ class LudwigDirectBackend:
                     if config.get("label_column_data_path")
                     else None,
                     split_value=1,
-                    threshold=config.get("threshold"),
                 )
-                for plot in val_diag_plots:
-                    tab2_content += (
-                        f"<h2 style='text-align: center;'>{plot['title']} (Validation)</h2>"
-                        f"<div class='plotly-center'>{plot['html']}</div>"
-                    )
+                val_conf_plots = [
+                    p for p in val_diag_plots if "Prediction Confidence Distribution" in p.get("title", "")
+                ]
+                tab2_content = append_plot_blocks(
+                    tab2_content, val_conf_plots, " (Validation)"
+                )
             except Exception as e:
                 logger.warning(f"Could not generate validation diagnostics: {e}")
 
@@ -1199,18 +1339,12 @@ class LudwigDirectBackend:
                 logger.warning(f"Could not build Predictions vs GT table: {e}")
 
         tab3_content = test_metrics_html + preds_section
-        test_plotly_added = False
 
         if output_type == "regression" and train_stats_path.exists():
             try:
                 test_plots = build_regression_test_plots(str(train_stats_path))
-                for plot in test_plots:
-                    tab3_content += (
-                        f"<h2 style='text-align: center;'>{plot['title']}</h2>"
-                        f"<div class='plotly-center'>{plot['html']}</div>"
-                    )
+                tab3_content = append_plot_blocks(tab3_content, test_plots)
                 if test_plots:
-                    test_plotly_added = True
                     logger.info(f"Generated {len(test_plots)} regression test plots")
             except Exception as e:
                 logger.warning(f"Could not generate regression test plots: {e}")
@@ -1226,15 +1360,11 @@ class LudwigDirectBackend:
                     train_set_metadata_path=str(train_set_metadata_path)
                     if train_set_metadata_path.exists()
                     else None,
+                    threshold=threshold_value,
                 )
-                for plot in interactive_plots:
-                    tab3_content += (
-                        f"<h2 style='text-align: center;'>{plot['title']}</h2>"
-                        f"<div class='plotly-center'>{plot['html']}</div>"
-                    )
+                tab3_content = append_plot_blocks(tab3_content, interactive_plots)
                 if interactive_plots:
-                    test_plotly_added = True
-                logger.info(f"Generated {len(interactive_plots)} interactive Plotly plots")
+                    logger.info(f"Generated {len(interactive_plots)} interactive Plotly plots")
             except Exception as e:
                 logger.warning(f"Could not generate Plotly plots: {e}")
 
@@ -1242,23 +1372,30 @@ class LudwigDirectBackend:
             if output_type == "category" and test_stats_path.exists():
                 try:
                     multi_curves = build_multiclass_metric_plots(str(test_stats_path))
-                    for plot in multi_curves:
-                        tab3_content += (
-                            f"<h2 style='text-align: center;'>{plot['title']}</h2>"
-                            f"<div class='plotly-center'>{plot['html']}</div>"
-                        )
+                    tab3_content = append_plot_blocks(tab3_content, multi_curves)
                     if multi_curves:
-                        test_plotly_added = True
                         logger.info("Added multi-class per-class metric plots to test tab")
                 except Exception as e:
                     logger.warning(f"Could not generate multi-class metric plots: {e}")
 
-        # Also include Ludwig PNGs; rely on exclusions inside render_img_section to avoid overlap
-        tab3_content += render_img_section(
-            "Test Visualizations (PNG fallback)",
-            test_viz_dir,
-            output_type,
-        )
+            # Test diagnostics (confidence histogram) from predictions.csv, using split=2
+            if predictions_csv_path.exists():
+                try:
+                    test_diag_plots = build_prediction_diagnostics(
+                        str(predictions_csv_path),
+                        label_data_path=str(config.get("label_column_data_path"))
+                        if config.get("label_column_data_path")
+                        else None,
+                        split_value=2,
+                    )
+                    test_conf_plots = [
+                        p for p in test_diag_plots if "Prediction Confidence Distribution" in p.get("title", "")
+                    ]
+                    if test_conf_plots:
+                        tab3_content = append_plot_blocks(tab3_content, test_conf_plots)
+                        logger.info("Added test prediction confidence plot")
+                except Exception as e:
+                    logger.warning(f"Could not generate test diagnostics: {e}")
 
         # Add static TEST PNGs (with default dedupe/exclusions)
         tabbed_html = build_tabbed_html(tab1_content, tab2_content, tab3_content)
