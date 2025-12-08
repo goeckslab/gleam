@@ -1,6 +1,6 @@
 import base64
 import json
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, List, Optional
 
 from constants import METRIC_DISPLAY_NAMES
 from utils import detect_output_type, extract_metrics_from_json

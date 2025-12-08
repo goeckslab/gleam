@@ -1,5 +1,5 @@
-import json
 import inspect
+import json
 import logging
 import os
 from pathlib import Path
@@ -1014,31 +1014,61 @@ class LudwigDirectBackend:
                 )
             return tab_html
 
-        def build_dataset_overview(label_metadata: Optional[Path], output_type: Optional[str]) -> str:
-            """Summarize dataset distribution across splits."""
+        def build_dataset_overview(
+            label_metadata: Optional[Path],
+            output_type: Optional[str],
+            split_probabilities: Optional[List[float]],
+        ) -> str:
+            """Summarize dataset distribution across splits using the actual split config."""
             if not label_metadata or not label_metadata.exists():
                 return format_dataset_overview_table([])
 
+            def _normalize_split_probabilities(
+                probs: Optional[List[float]],
+            ) -> Optional[List[float]]:
+                if not probs or len(probs) != 3:
+                    return None
+                try:
+                    probs = [float(p) for p in probs]
+                except (TypeError, ValueError):
+                    return None
+                total = sum(probs)
+                if total <= 0:
+                    return None
+                return [p / total for p in probs]
+
+            def _split_counts_from_column(df: pd.DataFrame) -> Dict[int, int]:
+                if SPLIT_COLUMN_NAME not in df.columns:
+                    return {}
+                split_series = pd.to_numeric(
+                    df[SPLIT_COLUMN_NAME], errors="coerce"
+                ).dropna()
+                if split_series.empty:
+                    return {}
+                split_series = split_series.astype(int)
+                return split_series.value_counts().to_dict()
+
+            def _split_counts_from_probs(total: int, probs: List[float]) -> Dict[int, int]:
+                train_n = int(total * probs[0])
+                val_n = int(total * probs[1])
+                test_n = max(0, total - train_n - val_n)
+                return {0: train_n, 1: val_n, 2: test_n}
+
             try:
                 df_labels = pd.read_csv(label_metadata)
-                # Regression: only split counts (no label grouping)
+                probs = _normalize_split_probabilities(split_probabilities)
+
+                # Regression (or missing label column): only need split counts
                 if output_type == "regression" or LABEL_COLUMN_NAME not in df_labels.columns:
-                    if SPLIT_COLUMN_NAME in df_labels.columns:
-                        df_split = df_labels[[SPLIT_COLUMN_NAME]].copy()
-                        df_split[SPLIT_COLUMN_NAME] = pd.to_numeric(df_split[SPLIT_COLUMN_NAME], errors="coerce")
-                        df_split = df_split.dropna(subset=[SPLIT_COLUMN_NAME])
-                        df_split[SPLIT_COLUMN_NAME] = df_split[SPLIT_COLUMN_NAME].astype(int)
-                        split_counts = df_split.groupby(SPLIT_COLUMN_NAME).size().to_dict()
-                    else:
-                        # Fallback: approximate counts using default split probabilities
-                        total = len(df_labels)
-                        probs = DEFAULT_SPLIT_PROBABILITIES or [0.7, 0.1, 0.2]
-                        train_n = int(total * probs[0])
-                        val_n = int(total * probs[1])
-                        if train_n + val_n > total:
-                            val_n = max(0, total - train_n)
-                        test_n = max(0, total - train_n - val_n)
-                        split_counts = {0: train_n, 1: val_n, 2: test_n}
+                    split_counts = _split_counts_from_column(df_labels)
+                    if not split_counts and probs:
+                        split_counts = _split_counts_from_probs(len(df_labels), probs)
+                    if not split_counts:
+                        logger.warning(
+                            "Dataset overview skipped: split information unavailable for %s",
+                            label_metadata,
+                        )
+                        return format_dataset_overview_table([])
                     rows = [
                         {"split": "train", "count": int(split_counts.get(0, 0))},
                         {"split": "validation", "count": int(split_counts.get(1, 0))},
@@ -1046,38 +1076,59 @@ class LudwigDirectBackend:
                     ]
                     return format_dataset_overview_table(rows, regression_mode=True)
 
-                # Classification: require label + split
-                if LABEL_COLUMN_NAME not in df_labels.columns or SPLIT_COLUMN_NAME not in df_labels.columns:
+                # Classification: prefer actual split assignments; fall back to configured probabilities
+                if SPLIT_COLUMN_NAME in df_labels.columns:
+                    df_counts = df_labels[[LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME]].copy()
+                    df_counts[SPLIT_COLUMN_NAME] = pd.to_numeric(
+                        df_counts[SPLIT_COLUMN_NAME], errors="coerce"
+                    )
+                    df_counts = df_counts.dropna(subset=[SPLIT_COLUMN_NAME])
+                    if df_counts.empty:
+                        return format_dataset_overview_table([])
+
+                    df_counts[SPLIT_COLUMN_NAME] = df_counts[SPLIT_COLUMN_NAME].astype(int)
+                    df_counts = df_counts.dropna(subset=[LABEL_COLUMN_NAME])
+                    counts = (
+                        df_counts.groupby([LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME])
+                        .size()
+                        .unstack(fill_value=0)
+                        .sort_index()
+                    )
+                    rows = []
+                    for lbl, row in counts.iterrows():
+                        rows.append(
+                            {
+                                "label": str(lbl),
+                                "train": int(row.get(0, 0)),
+                                "validation": int(row.get(1, 0)),
+                                "test": int(row.get(2, 0)),
+                            }
+                        )
+                    return format_dataset_overview_table(rows)
+
+                if not probs:
                     logger.warning(
-                        "Dataset overview skipped: required columns (%s, %s) not found in %s",
-                        LABEL_COLUMN_NAME,
-                        SPLIT_COLUMN_NAME,
+                        "Dataset overview skipped: no split column and no split probabilities found for %s",
                         label_metadata,
                     )
                     return format_dataset_overview_table([])
 
-                df_counts = df_labels[[LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME]].copy()
-                df_counts[SPLIT_COLUMN_NAME] = pd.to_numeric(df_counts[SPLIT_COLUMN_NAME], errors="coerce")
-                df_counts = df_counts.dropna(subset=[SPLIT_COLUMN_NAME])
-                if df_counts.empty:
+                label_series = df_labels[LABEL_COLUMN_NAME].dropna()
+                label_counts = label_series.value_counts().sort_index()
+                if label_counts.empty:
                     return format_dataset_overview_table([])
 
-                df_counts[SPLIT_COLUMN_NAME] = df_counts[SPLIT_COLUMN_NAME].astype(int)
-                df_counts = df_counts.dropna(subset=[LABEL_COLUMN_NAME])
-                counts = (
-                    df_counts.groupby([LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME])
-                    .size()
-                    .unstack(fill_value=0)
-                    .sort_index()
-                )
                 rows = []
-                for lbl, row in counts.iterrows():
+                for lbl, count in label_counts.items():
+                    train_n = int(count * probs[0])
+                    val_n = int(count * probs[1])
+                    test_n = max(0, count - train_n - val_n)
                     rows.append(
                         {
                             "label": str(lbl),
-                            "train": int(row.get(0, 0)),
-                            "validation": int(row.get(1, 0)),
-                            "test": int(row.get(2, 0)),
+                            "train": train_n,
+                            "validation": val_n,
+                            "test": test_n,
                         }
                     )
                 return format_dataset_overview_table(rows)
@@ -1120,7 +1171,9 @@ class LudwigDirectBackend:
                 else None
             )
 
-        dataset_overview_html = build_dataset_overview(label_metadata_path, output_type)
+        dataset_overview_html = build_dataset_overview(
+            label_metadata_path, output_type, config.get("split_probabilities")
+        )
 
         config_html = ""
         training_progress = self.get_training_process(output_dir)

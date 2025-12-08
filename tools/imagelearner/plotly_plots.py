@@ -8,13 +8,13 @@ import plotly.graph_objects as go
 import plotly.io as pio
 from constants import DEFAULT_SPLIT_PROBABILITIES, LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME
 from sklearn.metrics import (
+    accuracy_score,
     auc,
     average_precision_score,
-    accuracy_score,
     f1_score,
+    precision_recall_curve,
     precision_score,
     recall_score,
-    precision_recall_curve,
     roc_curve,
 )
 from sklearn.preprocessing import label_binarize
