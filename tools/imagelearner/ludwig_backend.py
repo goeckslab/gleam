@@ -35,10 +35,10 @@ from ludwig.globals import (
 from ludwig.utils.data_utils import get_split_path
 from metaformer_setup import get_visualizations_registry, META_DEFAULT_CFGS
 from plotly_plots import (
+    build_binary_threshold_plot,
     build_classification_plots,
     build_multiclass_metric_plots,
     build_prediction_diagnostics,
-    build_binary_threshold_plot,
     build_regression_test_plots,
     build_regression_train_val_plots,
     build_train_validation_plots,
