@@ -1,4 +1,4 @@
-<tool id="multimodal_learner" name="Multimodal Learner" version="0.1.0" profile="23.0">
+<tool id="multimodal_learner" name="Multimodal Learner" version="0.1.0" profile="22.01">
   <description>Train and evaluate an AutoGluon Multimodal model (tabular + image + text)</description>
 
   <requirements>
@@ -197,14 +197,14 @@ python '$__tool_directory__/multimodal_learner.py'
       <option value="r2">R2</option>
     </param>
 
-  <param name="random_seed" type="integer" value="42" label="Random seed"/>
+    <param name="random_seed" type="integer" value="42" label="Random seed"/>
 
-  <param name="time_limit" type="integer" optional="true" min="60" label="Time limit (seconds)" help="Total training time budget. Recommended: 3600+ for real runs"/>
-  <param name="deterministic" type="boolean" truevalue="true" falsevalue="false" checked="false"
-         label="Enable deterministic mode" help="Use deterministic algorithms and CuDNN settings to reduce run-to-run variance (may slow training)"/>
+    <param name="time_limit" type="integer" optional="true" min="60" label="Time limit (seconds)" help="Total training time budget. Recommended: 3600+ for real runs"/>
+    <param name="deterministic" type="boolean" truevalue="true" falsevalue="false" checked="false"
+           label="Enable deterministic mode" help="Use deterministic algorithms and CuDNN settings to reduce run-to-run variance (may slow training)"/>
 
-  <conditional name="customize_defaults_conditional">
-    <param name="customize_defaults" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Advanced: customize training settings?"/>
+    <conditional name="customize_defaults_conditional">
+      <param name="customize_defaults" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Advanced: customize training settings?"/>
       <when value="yes">
         <param name="validation_size" type="float" value="0.2" label="Validation fraction (when test set provided)"/>
         <param name="split_probabilities" type="text" value="0.7 0.1 0.2" label="Train / Val / Test split (space-separated) when no test set"/>
@@ -235,7 +235,7 @@ python '$__tool_directory__/multimodal_learner.py'
       <param name="test_dataset_conditional|input_test" value="test.csv"/>
       <param name="use_images_conditional|use_images" value="yes"/>
       <param name="use_images_conditional|images_zip_repeat_0|images_zip" value="images.zip"/>
-      <param name="backbone_image" value="resnet50"/>
+      <param name="use_images_conditional|backbone_image" value="resnet50"/>
       <param name="backbone_text" value="google/electra-base-discriminator"/>
       <output name="output_html">
         <assert_contents>
@@ -252,7 +252,8 @@ python '$__tool_directory__/multimodal_learner.py'
       <param name="test_dataset_conditional|input_test" value="test.csv"/>
       <param name="use_images_conditional|use_images" value="yes"/>
       <param name="use_images_conditional|images_zip_repeat_0|images_zip" value="images.zip"/>
-      <param name="threshold" value="0.4"/>
+      <param name="customize_defaults_conditional|customize_defaults" value="yes"/>
+      <param name="customize_defaults_conditional|threshold" value="0.4"/>
       <output name="output_json">
         <assert_contents>
           <has_text text="&quot;threshold&quot;: 0.4"/>
