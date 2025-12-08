@@ -1229,19 +1229,15 @@ def build_train_html_and_plots(
     pieces: list[str] = []
     if perf_card:
         pieces.append(perf_card)
-    if acc_plot:
-        pieces.append(acc_plot)
-    if loss_plot:
-        pieces.append(loss_plot)
-    if threshold_val_plot:
-        pieces.append(threshold_val_plot)
-    if roc_combined:
-        pieces.append(roc_combined)
-    if pr_combined:
-        pieces.append(pr_combined)
-
-    # Remaining plots
+    for block in (threshold_val_plot, roc_combined, pr_combined):
+        if block:
+            pieces.append(block)
+    # Remaining plots (keep existing order)
     for block in (cal_combined, cm_train, pc_train, cm_val, pc_val, mc_roc_val, conf_train, conf_val, bar_train, bar_val):
+        if block:
+            pieces.append(block)
+    # Learning curves should appear last in the tab
+    for block in (acc_plot, loss_plot):
         if block:
             pieces.append(block)
 
@@ -1405,6 +1401,17 @@ def build_summary_html(
 ) -> str:
     sections = []
 
+    # Dataset Overview (first section in the tab)
+    if class_balance_html:
+        sections.append(f"""
+<section class="section">
+  <h2 class="section-title">Dataset Overview</h2>
+  <div class="card">
+    {class_balance_html}
+  </div>
+</section>
+""".strip())
+
     # Performance Summary
     if perf_table_html:
         sections.append(f"""
@@ -1444,17 +1451,6 @@ def build_summary_html(
         {rows_html}
       </tbody>
     </table>
-  </div>
-</section>
-""".strip())
-
-    # Dataset Overview
-    if class_balance_html:
-        sections.append(f"""
-<section class="section">
-  <h2 class="section-title">Dataset Overview</h2>
-  <div class="card">
-    {class_balance_html}
   </div>
 </section>
 """.strip())
@@ -1558,8 +1554,12 @@ def build_test_html_and_plots(
 
     # Confusion matrix / per-class now reflect thresholded labels
     if problem_type in ("binary", "multiclass") and pred_labels is not None:
-        fig_cm = generate_confusion_matrix_plot(y_true, pred_labels, title="Confusion Matrix")
-        plots.append(plot_with_table_style_title(fig_cm, "Confusion Matrix"))
+        cm_title = "Confusion Matrix"
+        if threshold is not None and problem_type == "binary":
+            thr_str = f"{float(threshold):.3f}".rstrip("0").rstrip(".")
+            cm_title = f"Confusion Matrix (Threshold = {thr_str})"
+        fig_cm = generate_confusion_matrix_plot(y_true, pred_labels, title=cm_title)
+        plots.append(plot_with_table_style_title(fig_cm, cm_title))
 
         fig_pc = generate_per_class_metrics_plot(y_true, pred_labels, title="Per-Class Metrics")
         plots.append(plot_with_table_style_title(fig_pc, "Per-Class Metrics"))
