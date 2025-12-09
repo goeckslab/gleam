@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
-from constants import DEFAULT_SPLIT_PROBABILITIES, LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME
+from constants import LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME
 from sklearn.metrics import (
     accuracy_score,
     auc,
@@ -880,30 +880,10 @@ def build_prediction_diagnostics(
         except Exception as exc:
             print(f"Warning: Unable to filter predictions by split from label data: {exc}")
 
-    # Fallback: no split info available. Approximate splits by DEFAULT_SPLIT_PROBABILITIES.
+    # Fallback: no split info available. Assume the predictions file is already filtered
+    # (common for test-only exports) and avoid heuristic slicing that could discard rows.
     if not filtered_by_split:
-        total = len(df_pred)
-        if total == 0:
-            return []
-        probs = DEFAULT_SPLIT_PROBABILITIES or [0.7, 0.1, 0.2]
-        train_n = int(total * probs[0])
-        val_n = int(total * probs[1])
-        # Ensure indices are within bounds and sum to total
-        if train_n + val_n > total:
-            val_n = max(0, total - train_n)
-        test_n = max(0, total - train_n - val_n)
-        start = 0
-        end = total
-        if split_value == 0:
-            start, end = 0, train_n
-        elif split_value == 1:
-            start, end = train_n, train_n + val_n
-        elif split_value == 2:
-            start, end = train_n + val_n, train_n + val_n + test_n
-        df_pred = df_pred.iloc[start:end].reset_index(drop=True)
-        if labels_from_dataset is not None and len(labels_from_dataset) == total:
-            labels_from_dataset = labels_from_dataset.iloc[start:end].reset_index(drop=True)
-        if df_pred.empty:
+        if split_value != 2:
             return []
 
     def _strip_prob_prefix(col: str) -> str:
