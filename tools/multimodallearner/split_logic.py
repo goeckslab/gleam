@@ -23,8 +23,6 @@ def split_dataset(
     if target_column not in train_dataset.columns:
         raise ValueError(f"Target column '{target_column}' not found")
 
-    y = train_dataset[target_column]
-
     # Drop NaN labels early
     before = len(train_dataset)
     train_dataset.dropna(subset=[target_column], inplace=True)
@@ -32,6 +30,7 @@ def split_dataset(
         raise ValueError("No rows remain after dropping NaN targets")
     if before != len(train_dataset):
         logger.warning(f"Dropped {before - len(train_dataset)} rows with NaN target")
+    y = train_dataset[target_column]
 
     # Respect existing valid split column
     if SPLIT_COL in train_dataset.columns:
