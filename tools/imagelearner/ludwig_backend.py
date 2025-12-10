@@ -440,6 +440,8 @@ class LudwigDirectBackend:
                     "specificity",
                     "log_loss",
                     "loss",
+                    "roc_auc_macro",
+                    "roc_auc_micro",
                 },
             }
             alias_map = {
@@ -448,6 +450,15 @@ class LudwigDirectBackend:
                     "mse": "mean_squared_error",
                     "rmse": "root_mean_squared_error",
                     "mape": "mean_absolute_percentage_error",
+                },
+                # Map user-friendly ROC AUC requests to Ludwig's multi-class variants
+                "category": {
+                    "roc_auc": "roc_auc_macro",
+                    "roc_auc_macro": "roc_auc_macro",
+                    "roc_auc_micro": "roc_auc_micro",
+                },
+                "binary": {
+                    "roc_auc": "roc_auc",
                 },
             }
 
