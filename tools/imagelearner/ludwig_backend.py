@@ -403,7 +403,9 @@ class LudwigDirectBackend:
             # No explicit resize provided; keep for reporting purposes
             config_params.setdefault("image_size", "original")
 
-        def _resolve_validation_metric(task: str, requested: Optional[str]) -> Optional[str]:
+        def _resolve_validation_metric(
+            task: str, requested: Optional[str]
+        ) -> Optional[str]:
             """Pick a validation metric that Ludwig will accept for the resolved task."""
             default_map = {
                 "regression": "pearson_r",
@@ -463,7 +465,6 @@ class LudwigDirectBackend:
             }
 
             default_metric = default_map.get(task)
-            allowed = allowed_map.get(task, set())
             metric = requested or default_metric
 
             if metric is None:
@@ -471,12 +472,14 @@ class LudwigDirectBackend:
 
             metric = alias_map.get(task, {}).get(metric, metric)
 
-            if metric not in allowed:
-                if requested:
+            allowed = allowed_map.get(task, set())
+            if allowed and metric not in allowed:
+                fallback = default_metric if default_metric in allowed else next(iter(allowed), None)
+                if requested and fallback:
                     logger.warning(
-                        f"Validation metric '{requested}' is not supported for {task} outputs; using '{default_metric}' instead."
+                        f"Validation metric '{requested}' is not supported for {task} outputs; using '{fallback}' instead."
                     )
-                metric = default_metric
+                metric = fallback
             return metric
 
         if task_type == "regression":
@@ -486,7 +489,10 @@ class LudwigDirectBackend:
                 "decoder": {"type": "regressor"},
                 "loss": {"type": "mean_squared_error"},
             }
-            val_metric = _resolve_validation_metric("regression", config_params.get("validation_metric"))
+            val_metric = _resolve_validation_metric(
+                "regression",
+                config_params.get("validation_metric"),
+            )
 
         else:
             if num_unique_labels == 2:
@@ -619,9 +625,11 @@ class LudwigDirectBackend:
                 exc_info=True,
             )
             raise RuntimeError("Ludwig argument error.") from e
-        except Exception:
+        except Exception as exc:
             logger.error(
-                "LudwigDirectBackend: Experiment execution error.",
+                "LudwigDirectBackend: Experiment execution error. "
+                "If this relates to validation_metric, confirm the XML task selection "
+                "passes a metric that matches the inferred task type.",
                 exc_info=True,
             )
             raise
