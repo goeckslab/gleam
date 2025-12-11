@@ -406,21 +406,21 @@ class LudwigDirectBackend:
         def _resolve_validation_metric(
             task: str, requested: Optional[str], output_feature: Dict[str, Any]
         ) -> Optional[str]:
-            """Pick a validation metric that Ludwig will accept for the resolved task/output."""
+            """
+            Pick a validation metric that Ludwig will accept for the resolved task/output.
+            If the requested metric is invalid, fall back to a safe option or omit it entirely.
+            """
             default_map = {
-                "regression": "pearson_r",
+                "regression": "mean_squared_error",
                 "binary": "roc_auc",
                 "category": "accuracy",
             }
             allowed_map = {
                 "regression": {
-                    "pearson_r",
                     "mean_absolute_error",
                     "mean_squared_error",
                     "root_mean_squared_error",
-                    "mean_absolute_percentage_error",
-                    "r2",
-                    "explained_variance",
+                    "root_mean_squared_percentage_error",
                     "loss",
                 },
                 "binary": {
@@ -429,20 +429,12 @@ class LudwigDirectBackend:
                     "precision",
                     "recall",
                     "specificity",
-                    "log_loss",
                     "loss",
                 },
                 "category": {
                     "accuracy",
-                    "balanced_accuracy",
-                    "precision",
-                    "recall",
-                    "f1",
-                    "specificity",
-                    "log_loss",
+                    "hits_at_k",
                     "loss",
-                    "roc_auc_macro",
-                    "roc_auc_micro",
                 },
             }
             alias_map = {
@@ -450,13 +442,9 @@ class LudwigDirectBackend:
                     "mae": "mean_absolute_error",
                     "mse": "mean_squared_error",
                     "rmse": "root_mean_squared_error",
-                    "mape": "mean_absolute_percentage_error",
+                    "rmspe": "root_mean_squared_percentage_error",
                 },
-                "category": {
-                    "roc_auc": "roc_auc_macro",
-                    "roc_auc_macro": "roc_auc_macro",
-                    "roc_auc_micro": "roc_auc_micro",
-                },
+                "category": {},
                 "binary": {
                     "roc_auc": "roc_auc",
                 },
@@ -469,8 +457,8 @@ class LudwigDirectBackend:
 
             metric = alias_map.get(task, {}).get(metric, metric)
 
-            # Prefer Ludwig's own metric registry when available; fall back to known-safe sets.
-            allowed = None
+            # Prefer Ludwig's own metric registry when available; intersect with known-safe sets.
+            registry_metrics = None
             try:
                 from ludwig.features.feature_registries import output_type_registry
 
@@ -481,7 +469,7 @@ class LudwigDirectBackend:
                         feature_obj, "metrics", None
                     )
                     if isinstance(metrics_attr, dict):
-                        allowed = set(metrics_attr.keys())
+                        registry_metrics = set(metrics_attr.keys())
             except Exception as exc:
                 logger.debug(
                     "Could not inspect Ludwig metrics for output type %s: %s",
@@ -489,22 +477,26 @@ class LudwigDirectBackend:
                     exc,
                 )
 
-            if not allowed:
-                allowed = allowed_map.get(task, set())
+            allowed = set(allowed_map.get(task, set()))
+            if registry_metrics:
+                # Only keep metrics that Ludwig actually exposes for this output type;
+                # if the intersection is empty, fall back to the registry set.
+                intersected = allowed.intersection(registry_metrics)
+                allowed = intersected or registry_metrics
 
             if allowed and metric not in allowed:
                 fallback_candidates = [
-                    default_metric,
+                    default_metric if default_metric in allowed else None,
                     "loss" if "loss" in allowed else None,
                     next(iter(allowed), None),
                 ]
                 fallback = next((m for m in fallback_candidates if m in allowed), None)
-                if requested and fallback:
+                if requested:
                     logger.warning(
-                        "Validation metric '%s' is not supported for %s outputs; using '%s' instead.",
+                        "Validation metric '%s' is not supported for %s outputs; %s",
                         requested,
                         task,
-                        fallback,
+                        (f"using '{fallback}' instead." if fallback else "omitting validation_metric."),
                     )
                 metric = fallback
 
