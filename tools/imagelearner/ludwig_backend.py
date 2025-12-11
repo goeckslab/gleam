@@ -404,9 +404,9 @@ class LudwigDirectBackend:
             config_params.setdefault("image_size", "original")
 
         def _resolve_validation_metric(
-            task: str, requested: Optional[str]
+            task: str, requested: Optional[str], output_feature: Dict[str, Any]
         ) -> Optional[str]:
-            """Pick a validation metric that Ludwig will accept for the resolved task."""
+            """Pick a validation metric that Ludwig will accept for the resolved task/output."""
             default_map = {
                 "regression": "pearson_r",
                 "binary": "roc_auc",
@@ -423,7 +423,6 @@ class LudwigDirectBackend:
                     "explained_variance",
                     "loss",
                 },
-                # Ludwig rejects f1 and balanced_accuracy for binary outputs; keep to known-safe set.
                 "binary": {
                     "roc_auc",
                     "accuracy",
@@ -453,7 +452,6 @@ class LudwigDirectBackend:
                     "rmse": "root_mean_squared_error",
                     "mape": "mean_absolute_percentage_error",
                 },
-                # Map user-friendly ROC AUC requests to Ludwig's multi-class variants
                 "category": {
                     "roc_auc": "roc_auc_macro",
                     "roc_auc_macro": "roc_auc_macro",
@@ -466,20 +464,50 @@ class LudwigDirectBackend:
 
             default_metric = default_map.get(task)
             metric = requested or default_metric
-
             if metric is None:
                 return None
 
             metric = alias_map.get(task, {}).get(metric, metric)
 
-            allowed = allowed_map.get(task, set())
+            # Prefer Ludwig's own metric registry when available; fall back to known-safe sets.
+            allowed = None
+            try:
+                from ludwig.features.feature_registries import output_type_registry
+
+                feature_cls = output_type_registry.get(output_feature.get("type"))
+                if feature_cls:
+                    feature_obj = feature_cls(feature=output_feature)
+                    metrics_attr = getattr(feature_obj, "metric_functions", None) or getattr(
+                        feature_obj, "metrics", None
+                    )
+                    if isinstance(metrics_attr, dict):
+                        allowed = set(metrics_attr.keys())
+            except Exception as exc:
+                logger.debug(
+                    "Could not inspect Ludwig metrics for output type %s: %s",
+                    output_feature.get("type"),
+                    exc,
+                )
+
+            if not allowed:
+                allowed = allowed_map.get(task, set())
+
             if allowed and metric not in allowed:
-                fallback = default_metric if default_metric in allowed else next(iter(allowed), None)
+                fallback_candidates = [
+                    default_metric,
+                    "loss" if "loss" in allowed else None,
+                    next(iter(allowed), None),
+                ]
+                fallback = next((m for m in fallback_candidates if m in allowed), None)
                 if requested and fallback:
                     logger.warning(
-                        f"Validation metric '{requested}' is not supported for {task} outputs; using '{fallback}' instead."
+                        "Validation metric '%s' is not supported for %s outputs; using '%s' instead.",
+                        requested,
+                        task,
+                        fallback,
                     )
                 metric = fallback
+
             return metric
 
         if task_type == "regression":
@@ -492,6 +520,7 @@ class LudwigDirectBackend:
             val_metric = _resolve_validation_metric(
                 "regression",
                 config_params.get("validation_metric"),
+                output_feat,
             )
 
         else:
@@ -512,6 +541,7 @@ class LudwigDirectBackend:
             val_metric = _resolve_validation_metric(
                 "binary" if num_unique_labels == 2 else "category",
                 config_params.get("validation_metric"),
+                output_feat,
             )
 
         # Propagate the resolved validation metric (including any task-based fallback or alias normalization)
