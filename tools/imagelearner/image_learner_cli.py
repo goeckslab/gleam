@@ -145,8 +145,11 @@ def main():
     parser.add_argument(
         "--validation-metric",
         type=str,
-        default="loss",
-        help="Metric Ludwig uses to select the best model during training/validation.",
+        default=None,
+        help=(
+            "Metric Ludwig uses to select the best model during training/validation. "
+            "Leave unset to let the tool pick a default for the inferred task."
+        ),
     )
     parser.add_argument(
         "--target-column",

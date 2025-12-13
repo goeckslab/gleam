@@ -433,6 +433,7 @@ class LudwigDirectBackend:
                 },
                 "category": {
                     "accuracy",
+                    "balanced_accuracy",
                     "hits_at_k",
                     "loss",
                 },
@@ -647,7 +648,7 @@ class LudwigDirectBackend:
                 exc_info=True,
             )
             raise RuntimeError("Ludwig argument error.") from e
-        except Exception as exc:
+        except Exception:
             logger.error(
                 "LudwigDirectBackend: Experiment execution error. "
                 "If this relates to validation_metric, confirm the XML task selection "

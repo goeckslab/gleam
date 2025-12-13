@@ -174,6 +174,7 @@ MODEL_ENCODER_TEMPLATES: Dict[str, Any] = {
 }
 METRIC_DISPLAY_NAMES = {
     "accuracy": "Accuracy",
+    "balanced_accuracy": "Balanced Accuracy",
     "accuracy_micro": "Micro Accuracy",
     "loss": "Loss",
     "roc_auc": "ROC-AUC",

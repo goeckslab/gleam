@@ -115,6 +115,7 @@
             <when value="classification">
                 <param name="validation_metric_multiclass" type="select" optional="true" label="Validation metric (multi-class)" help="Metrics accepted by Ludwig for multi-class outputs.">
                     <option value="accuracy" selected="true">Accuracy</option>
+                    <option value="balanced_accuracy">Balanced Accuracy</option>
                     <option value="hits_at_k">Hits at K (top-k)</option>
                     <option value="loss">Loss</option>
                 </param>
