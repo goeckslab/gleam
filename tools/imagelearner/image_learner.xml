@@ -399,6 +399,7 @@
         </collection>
         <collection type="list" name="output_gradcam_images" label="${tool.name} Grad-CAM heatmaps on ${on_string}">
             <discover_datasets pattern="feature_importance_examples/(?P&lt;name&gt;.+)\.png" format="png" directory="." recurse="true" />
+            <discover_datasets pattern="feature_importance_examples\.zip" format="zip" directory="." recurse="true" />
         </collection>
     </outputs>
     <tests>
