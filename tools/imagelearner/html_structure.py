@@ -231,7 +231,7 @@ def get_html_template():
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Galaxy-Ludwig Report</title>
+  <title>Image Learner Report</title>
   <style>
     body {
       font-family: Arial, sans-serif;
