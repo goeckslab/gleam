@@ -396,8 +396,8 @@
             <discover_datasets pattern="(?P&lt;designation&gt;.+)\.json" format="json" directory="experiment_run" />
             <discover_datasets pattern="(?P&lt;designation&gt;.+)\.png" format="png" directory="experiment_run/visualizations/train" />
             <discover_datasets pattern="(?P&lt;designation&gt;.+)\.png" format="png" directory="experiment_run/visualizations/test" />
-            <discover_datasets pattern="feature_importance_examples/(?P&lt;designation&gt;.+)\.png" format="png" directory="experiment_run" recurse="true" />
-            <discover_datasets pattern="feature_importance_examples\.zip" format="zip" directory="experiment_run" recurse="true" />
+            <discover_datasets pattern="feature_importance_examples/(?P&lt;designation&gt;.+)\.png" format="png" directory="experiment_run" />
+            <discover_datasets pattern="feature_importance_examples\.zip" format="zip" directory="experiment_run" />
         </collection>
     </outputs>
     <tests>
