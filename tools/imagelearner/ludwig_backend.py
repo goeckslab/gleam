@@ -1859,7 +1859,8 @@ class LudwigDirectBackend:
         if gradcam_info.get("status") == "generated":
             tab3_content += "<h2 style='text-align: center;'>Grad-CAM Heatmaps</h2>"
             tab3_content += (
-                "<p style='text-align:center;'>Grad-CAM (Selvaraju, Cogswell, Das, Vedantam, Parikh, Batra; ICCV 2017)"
+                "<p style='text-align:center;'>Grad-CAM (\"Grad-CAM: Visual Explanations from Deep Networks via Gradient-based Localization\";"
+                " Selvaraju, Cogswell, Das, Vedantam, Parikh, Batra; ICCV 2017)"
                 " highlights regions driving the model's prediction on a subset of evaluation samples (prefer test split)."
                 " We use the encoder's own preprocessing (resize + normalization), grab the last Conv2d activations, weight them by"
                 " global-average pooled gradients of the target logits, apply ReLU, bilinearly upsample to the input size, and overlay"
