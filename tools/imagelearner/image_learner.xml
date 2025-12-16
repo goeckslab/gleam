@@ -396,14 +396,12 @@
             <discover_datasets pattern="(?P&lt;designation&gt;.+)\.json" format="json" directory="experiment_run" />
             <discover_datasets pattern="(?P&lt;designation&gt;.+)\.png" format="png" directory="experiment_run/visualizations/train" />
             <discover_datasets pattern="(?P&lt;designation&gt;.+)\.png" format="png" directory="experiment_run/visualizations/test" />
-        </collection>
-        <collection type="list" name="output_gradcam_images" label="${tool.name} Grad-CAM heatmaps on ${on_string}">
-            <discover_datasets pattern="feature_importance_examples/(?P&lt;name&gt;.+)\.png" format="png" directory="." recurse="true" />
-            <discover_datasets pattern="feature_importance_examples\.zip" format="zip" directory="." recurse="true" />
+            <discover_datasets pattern="feature_importance_examples/(?P&lt;designation&gt;.+)\.png" format="png" directory="experiment_run" recurse="true" />
+            <discover_datasets pattern="feature_importance_examples\.zip" format="zip" directory="experiment_run" recurse="true" />
         </collection>
     </outputs>
     <tests>
-        <test expect_num_outputs="4">
+        <test expect_num_outputs="3">
             <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="resnet18" />
@@ -426,7 +424,7 @@
                 </element>
             </output_collection>
         </test>
-        <test expect_num_outputs="4">
+        <test expect_num_outputs="3">
             <param name="input_csv" value="utkface_labels.csv" ftype="csv" />
             <param name="image_zip" value="age_regression.zip" ftype="zip" />
             <param name="model_name" value="resnet18" />
@@ -445,7 +443,7 @@
                 </element>
             </output_collection>
         </test>
-        <test expect_num_outputs="4">
+        <test expect_num_outputs="3">
             <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="caformer_s18" />
@@ -465,7 +463,7 @@
                 </element>
             </output_collection>
         </test>
-        <test expect_num_outputs="4">
+        <test expect_num_outputs="3">
             <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="randformer_s12" />
@@ -488,7 +486,7 @@
             </output_collection>
         </test>
         <!-- Test 7: MetaFormer with 384x384 input - verifies model correctly handles non-224x224 dimensions -->
-        <!-- <test expect_num_outputs="4">
+        <!-- <test expect_num_outputs="3">
             <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="caformer_s18_384" />
@@ -514,7 +512,7 @@
             </output_collection>
         </test> -->
         <!-- Test 8: Binary classification with custom threshold - verifies ROC curve generation for binary tasks; need to find a test dataset -->
-        <!-- <test expect_num_outputs="4">
+        <!-- <test expect_num_outputs="3">
             <param name="input_csv" value="binary_classification.csv" ftype="csv" />
             <param name="image_zip" value="binary_images.zip" ftype="zip" />
             <param name="model_name" value="resnet18" />
@@ -543,7 +541,7 @@
         </test> -->
         <!-- Test 9: PoolFormerV2 model configuration - verifies custom_model parameter persists in config -->
         <!-- Test 10: Multi-class classification with ROC curves - verifies robust ROC-AUC plot generation -->
-        <!-- <test expect_num_outputs="4">
+        <!-- <test expect_num_outputs="3">
             <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="resnet18" />
@@ -566,7 +564,7 @@
                 </element>
             </output_collection>
         </test> -->
-        <test expect_num_outputs="4">
+        <test expect_num_outputs="3">
             <param name="input_csv" value="mnist_subset_binary.csv" ftype="csv" />
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="resnet18" />
