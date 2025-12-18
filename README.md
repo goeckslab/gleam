@@ -33,7 +33,16 @@ Deep learning-based image classification using [Ludwig](https://ludwig.ai/).
 - Models available: ResNet, EfficientNet, VGG, Shufflenet, Vit, AlexNet and More...
 - Output: Ludwig_model file, a report in the form of an HTML file (with learning curves, confusion matrices, and etc...), and a collection of CSV/json/png files containing the predictions, experiment stats and visualizations.
 
-### 3. Galaxy-Ludwig
+### 3. Multimodal Learner
+
+AutoGluon-based training for datasets that mix tabular, text, and image columns.
+
+- Ingests CSV/TSV labels with optional text fields and image paths (images supplied as ZIP archives)
+- Supports classification and regression with quality presets, time limits, and deterministic mode
+- Choose modern text and vision backbones while handling missing images and class balancing
+- Produces metrics (JSON), training config (YAML), and an interactive HTML report for validation/test splits
+
+### 4. Galaxy-Ludwig
 
 General-purpose interface to Ludwig's full machine learning capabilities.
 
@@ -41,7 +50,7 @@ General-purpose interface to Ludwig's full machine learning capabilities.
 - Expose Ludwig’s flexible configuration system
 - Ideal for users needing advanced model customization
 
-### 4. Galaxy-Digital Pathology Processing
+### 5. Galaxy-Digital Pathology Processing
 
 Set of three specialized tools designed to transforms raw, large pathology images into a structured format, enabling the application of best practices for model development and ensuring data readiness for robust and efficient training.
 
@@ -96,5 +105,4 @@ We welcome contributions. To propose new tools, report bugs, or suggest improvem
 3. Commit and test your changes
 
 4. Submit a pull request
-
 
