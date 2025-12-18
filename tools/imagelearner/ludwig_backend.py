@@ -1858,22 +1858,16 @@ class LudwigDirectBackend:
 
         if gradcam_info.get("status") == "generated":
             tab3_content += "<h2 style='text-align: center;'>Grad-CAM Heatmaps</h2>"
-            tab3_content += (
-                "<p style='text-align:center;'>Grad-CAM (\"Grad-CAM: Visual Explanations from Deep Networks via Gradient-based Localization\";"
-                " Selvaraju, Cogswell, Das, Vedantam, Parikh, Batra; ICCV 2017)"
-                " highlights regions driving the model's prediction on a subset of evaluation samples (prefer test split)."
-                " We use the encoder's own preprocessing (resize + normalization), grab the last Conv2d activations, weight them by"
-                " global-average pooled gradients of the target logits, apply ReLU, bilinearly upsample to the input size, and overlay"
-                " on the original image. Only convolutional encoders are supported; other encoders will report heatmaps as unavailable."
-                " Full results are bundled in the ZIP.</p>"
-            )
             for orig_path, heat_path in gradcam_info.get("pairs", [])[:4]:
                 try:
+                    display_name = Path(str(orig_path)).name
+                    if display_name.endswith("_original.png"):
+                        display_name = display_name[: -len("_original.png")]
                     b64_orig = encode_image_to_base64(str(orig_path))
                     b64_heat = encode_image_to_base64(str(heat_path))
                     tab3_content += (
                         "<div class='plot' style='margin-bottom:15px;text-align:center;display:flex;gap:12px;justify-content:center;flex-wrap:wrap;'>"
-                        f"<div><div style='font-weight:600;margin-bottom:4px;'>Original</div>"
+                        f"<div><div style='font-weight:600;margin-bottom:4px;'>{display_name}</div>"
                         f"<img src='data:image/png;base64,{b64_orig}' style='max-width:320px;max-height:320px;border:1px solid #ddd;' /></div>"
                         f"<div><div style='font-weight:600;margin-bottom:4px;'>Grad-CAM</div>"
                         f"<img src='data:image/png;base64,{b64_heat}' style='max-width:320px;max-height:320px;border:1px solid #ddd;' /></div>"
@@ -1881,10 +1875,6 @@ class LudwigDirectBackend:
                     )
                 except Exception as exc:
                     logger.debug("Could not embed Grad-CAM pair %s / %s: %s", orig_path, heat_path, exc)
-            if gradcam_info.get("zip_path"):
-                tab3_content += (
-                    f"<p style='text-align:center;'>Heatmaps archive: {Path(str(gradcam_info['zip_path'])).name}</p>"
-                )
 
         # Add static TEST PNGs (with default dedupe/exclusions)
         tabbed_html = build_tabbed_html(tab1_content, tab2_content, tab3_content)
