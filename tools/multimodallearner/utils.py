@@ -13,6 +13,18 @@ import pandas as pd
 import torch
 
 LOG = logging.getLogger(__name__)
+_IMAGE_EXTENSIONS = {
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".bmp",
+    ".gif",
+    ".tif",
+    ".tiff",
+    ".webp",
+    ".svs",
+}
+_MAX_PATH_COMPONENT = 240
 
 
 def str2bool(val) -> bool:
@@ -89,6 +101,38 @@ def load_file(path: str) -> pd.DataFrame:
     return pd.read_csv(path, sep=None, engine="python")
 
 
+def _normalize_path_value(val: object) -> Optional[str]:
+    if val is None:
+        return None
+    s = str(val).strip().strip('"').strip("'")
+    return s if s else None
+
+
+def _has_long_component(path_str: str) -> bool:
+    for part in path_str.replace("\\", "/").split("/"):
+        if len(part) > _MAX_PATH_COMPONENT:
+            return True
+    return False
+
+
+def _build_extracted_index(extracted_root: Optional[Path]) -> set:
+    if extracted_root is None:
+        return set()
+    index = set()
+    for root, _dirs, files in os.walk(extracted_root):
+        rel_root = os.path.relpath(root, extracted_root)
+        for fname in files:
+            if _has_long_component(fname):
+                continue
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in _IMAGE_EXTENSIONS:
+                continue
+            rel_path = fname if rel_root == "." else os.path.join(rel_root, fname)
+            index.add(rel_path.replace("\\", "/"))
+            index.add(fname)
+    return index
+
+
 def prepare_image_search_dirs(args) -> Optional[Path]:
     if not args.images_zip:
         return None
@@ -117,20 +161,36 @@ def absolute_path_expander(df: pd.DataFrame, extracted_root: Optional[Path], ima
         return []
 
     image_columns = [c for c in (image_columns or []) if c in df.columns]
+    extracted_index = _build_extracted_index(extracted_root)
 
     def resolve(p):
         if pd.isna(p):
             return None
-        orig = Path(str(p).strip())
+        raw = _normalize_path_value(p)
+        if not raw or _has_long_component(raw):
+            return None
+        orig = Path(raw)
         candidates = []
         if orig.is_absolute():
             candidates.append(orig)
         if extracted_root is not None:
             candidates.extend([extracted_root / orig, extracted_root / orig.name])
         for cand in candidates:
-            if cand.exists():
-                return str(cand.resolve())
+            try:
+                if cand.exists():
+                    return str(cand.resolve())
+            except OSError:
+                continue
         return None
+
+    def matches_extracted(p) -> bool:
+        if not extracted_index or pd.isna(p):
+            return False
+        raw = _normalize_path_value(p)
+        if not raw or _has_long_component(raw):
+            return False
+        norm = raw.replace("\\", "/").lstrip("./")
+        return norm in extracted_index
 
     # Infer image columns if none were provided
     if not image_columns:
@@ -140,6 +200,11 @@ def absolute_path_expander(df: pd.DataFrame, extracted_root: Optional[Path], ima
             sample = df[col].dropna().head(50)
             if sample.empty:
                 continue
+            if extracted_index:
+                matched = sample.apply(matches_extracted)
+                if matched.any():
+                    inferred.append(col)
+                    continue
             resolved_sample = sample.apply(resolve)
             if resolved_sample.notna().any():
                 inferred.append(col)
