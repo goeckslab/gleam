@@ -563,7 +563,7 @@
             <param name="advanced_settings|customize_defaults" value="true" />
             <param name="advanced_settings|threshold" value="0.6" />
             <param name="task_selection|task" value="classification" />
-            <param name="task_selection|validation_metric_multiclass" value="balanced_accuracy" />
+            <param name="task_selection|validation_metric_multiclass" value="accuracy" />
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Config and Overall Performance Summary" />
