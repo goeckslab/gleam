@@ -416,7 +416,8 @@ class LudwigDirectBackend:
                 "binary": "roc_auc",
                 "category": "accuracy",
             }
-            allowed_map = {
+            # Safe defaults when Ludwig's registry isn't available.
+            safe_allowed_map = {
                 "regression": {
                     "mean_absolute_error",
                     "mean_squared_error",
@@ -429,13 +430,10 @@ class LudwigDirectBackend:
                     "accuracy",
                     "precision",
                     "recall",
-                    "specificity",
                     "loss",
                 },
                 "category": {
                     "accuracy",
-                    "balanced_accuracy",
-                    "hits_at_k",
                     "loss",
                 },
             }
@@ -472,6 +470,16 @@ class LudwigDirectBackend:
                     )
                     if isinstance(metrics_attr, dict):
                         registry_metrics = set(metrics_attr.keys())
+                    elif isinstance(metrics_attr, (list, tuple, set)):
+                        extracted = set()
+                        for item in metrics_attr:
+                            if isinstance(item, str):
+                                extracted.add(item)
+                            elif hasattr(item, "name"):
+                                extracted.add(str(item.name))
+                            elif hasattr(item, "__name__"):
+                                extracted.add(str(item.__name__))
+                        registry_metrics = extracted or None
             except Exception as exc:
                 logger.debug(
                     "Could not inspect Ludwig metrics for output type %s: %s",
@@ -479,12 +487,10 @@ class LudwigDirectBackend:
                     exc,
                 )
 
-            allowed = set(allowed_map.get(task, set()))
-            if registry_metrics:
-                # Only keep metrics that Ludwig actually exposes for this output type;
-                # if the intersection is empty, fall back to the registry set.
-                intersected = allowed.intersection(registry_metrics)
-                allowed = intersected or registry_metrics
+            allowed = set(safe_allowed_map.get(task, set()))
+            if registry_metrics is not None:
+                # Use Ludwig's registry when available; fall back to safe defaults if it's empty.
+                allowed = registry_metrics or allowed
 
             if allowed and metric not in allowed:
                 fallback_candidates = [
