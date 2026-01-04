@@ -168,6 +168,7 @@ class ImageLearnerCLI:
                 split_probabilities=self.args.split_probabilities,
                 random_state=self.args.random_seed,
                 label_column=LABEL_COLUMN_NAME,
+                group_column=self.args.sample_id_column,
             )
             split_config = {
                 "type": "fixed",
@@ -178,6 +179,11 @@ class ImageLearnerCLI:
                 f"{[int(p * 100) for p in self.args.split_probabilities]}% "
                 f"for train/val/test with balanced label distribution."
             )
+            if self.args.sample_id_column:
+                split_info += (
+                    f" Grouped by sample ID column '{self.args.sample_id_column}' "
+                    "to prevent data leakage."
+                )
 
         final_csv = self.temp_dir / TEMP_CSV_FILENAME
 

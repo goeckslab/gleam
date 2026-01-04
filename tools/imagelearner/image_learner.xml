@@ -81,6 +81,9 @@
                         --image-column "$column_override.image_column"
                     #end if
                 #end if
+                #if $sample_id_column
+                    --sample-id-column "$sample_id_column"
+                #end if
                 --image-resize "$image_resize"
                 --random-seed "$random_seed"
                 --output-dir "." &&
@@ -138,13 +141,14 @@
                 <option value="true">Yes</option>
             </param>
             <when value="true">
-                <param name="target_column" type="text" optional="true" label="Target/label column name" help="Overrides the default 'label' column name in the metadata CSV." />
-                <param name="image_column" type="text" optional="true" label="Image column name" help="Overrides the default 'image_path' column name in the metadata CSV." />
+                <param name="target_column" type="data_column" data_ref="input_csv" use_header_names="true" optional="true" label="Target/label column name" help="Overrides the default 'label' column name in the metadata CSV." />
+                <param name="image_column" type="data_column" data_ref="input_csv" use_header_names="true" optional="true" label="Image column name" help="Overrides the default 'image_path' column name in the metadata CSV." />
             </when>
             <when value="false">
                 <!-- No additional parameters -->
             </when>
         </conditional>
+        <param name="sample_id_column" type="data_column" data_ref="input_csv" use_header_names="true" optional="true" label="Sample ID column (optional)" help="Optional column used to group samples during splitting to prevent data leakage (e.g., patient_id or slide_id). Only used when no split column is provided." />
         <param name="model_name" type="select" optional="false" label="Select a model for your experiment" >
 
             <option value="resnet18">Resnet18</option>
@@ -590,6 +594,7 @@ It uses the metadata csv to find the image paths and labels.
 The metadata csv should contain a column with the name 'image_path' and a column with the name 'label'.
 Optionally, you can also add a column with the name 'split' to specify which split each row belongs to (train, val, test). 
 If you do not provide a split column, the tool will automatically split the data into train, val, and test sets based on the proportions you specify or [0.7, 0.1, 0.2] by default.
+You can optionally specify a sample ID column to keep related samples in the same split and prevent data leakage.
 
 **Models Available**
 This tool supports a wide range of state-of-the-art image classification models including:
