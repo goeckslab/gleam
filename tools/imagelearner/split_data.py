@@ -112,9 +112,10 @@ def create_stratified_random_split(
     min_samples_per_class = label_counts.min()
 
     # ensure we have enough samples for stratification:
-    # Each class must have at least as many samples as the number of splits,
+    # Each class must have at least as many samples as the number of nonzero splits,
     # so that each split can receive at least one sample per class.
-    min_samples_required = len(split_probabilities)
+    active_splits = [p for p in split_probabilities if p > 0]
+    min_samples_required = len(active_splits)
     if min_samples_per_class < min_samples_required:
         logger.warning(
             f"Insufficient samples per class for stratification (min: {min_samples_per_class}, required: {min_samples_required}); using random split"
@@ -134,26 +135,51 @@ def create_stratified_random_split(
 
         return out.astype({split_column: int})
 
-    logger.info("Using stratified random split for train/validation/test sets")
+    def _allocate_split_counts(n_total: int, probs: list) -> list:
+        """Allocate exact per-class split counts using largest remainder rounding."""
+        if n_total <= 0:
+            return [0 for _ in probs]
 
-    # first split: separate test set
-    train_val_idx, test_idx = train_test_split(
-        out.index.tolist(),
-        test_size=split_probabilities[2],
-        random_state=random_state,
-        stratify=out[label_column],
-    )
+        counts = [0 for _ in probs]
+        active = [i for i, p in enumerate(probs) if p > 0]
+        remainder = n_total
 
-    # second split: separate training and validation from remaining data
-    val_size_adjusted = split_probabilities[1] / (
-        split_probabilities[0] + split_probabilities[1]
-    )
-    train_idx, val_idx = train_test_split(
-        train_val_idx,
-        test_size=val_size_adjusted,
-        random_state=random_state,
-        stratify=out.loc[train_val_idx, label_column] if label_column and label_column in out.columns else None,
-    )
+        if active and n_total >= len(active):
+            for i in active:
+                counts[i] = 1
+            remainder -= len(active)
+
+        if remainder > 0:
+            probs_arr = np.array(probs, dtype=float)
+            probs_arr = probs_arr / probs_arr.sum()
+            raw = remainder * probs_arr
+            floors = np.floor(raw).astype(int)
+            for i, value in enumerate(floors.tolist()):
+                counts[i] += value
+            leftover = remainder - int(floors.sum())
+            if leftover > 0 and active:
+                frac = raw - floors
+                order = sorted(active, key=lambda i: (-frac[i], i))
+                for i in range(leftover):
+                    counts[order[i % len(order)]] += 1
+
+        return counts
+
+    logger.info("Using stratified random split for train/validation/test sets (per-class allocation)")
+
+    rng = np.random.RandomState(random_state)
+    label_values = sorted(label_counts.index.tolist(), key=lambda x: str(x))
+    train_idx = []
+    val_idx = []
+    test_idx = []
+
+    for label_value in label_values:
+        label_indices = out.index[out[label_column] == label_value].tolist()
+        rng.shuffle(label_indices)
+        n_train, n_val, n_test = _allocate_split_counts(len(label_indices), split_probabilities)
+        train_idx.extend(label_indices[:n_train])
+        val_idx.extend(label_indices[n_train:n_train + n_val])
+        test_idx.extend(label_indices[n_train + n_val:n_train + n_val + n_test])
 
     # assign split values
     out.loc[train_idx, split_column] = 0
