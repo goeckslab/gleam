@@ -7,6 +7,9 @@
     <command>
         <![CDATA[
         python $__tool_directory__/pycaret_train.py --input_file '$input_file' --target_col '$target_feature' --output_dir '.' --random_seed '$random_seed' --n-jobs \${GALAXY_SLOTS:-1}
+        #if $sample_id_selector.use_sample_id == "yes"
+            --sample-id-column '$sample_id_selector.sample_id_column'
+        #end if
         #if $model_selection.model_type == "classification"
             #if $model_selection.classification_models
                 --models '$model_selection.classification_models'
@@ -81,6 +84,18 @@
             </when>
         </conditional>
         <param name="target_feature" multiple="false" type="data_column" use_header_names="true" data_ref="input_file" label="Select the target column:" />
+        <conditional name="sample_id_selector">
+            <param name="use_sample_id" type="select" label="Use a sample ID column for leakage-aware splitting?" help="Select yes to choose a column that groups related records (e.g., patient_id or slide_id).">
+                <option value="no" selected="true">No column selected</option>
+                <option value="yes">Yes</option>
+            </param>
+            <when value="yes">
+                <param name="sample_id_column" type="data_column" data_ref="input_file" use_header_names="true" label="Sample ID column" help="All rows with the same ID stay in the same split to reduce leakage. Only used when the tool creates the split internally." />
+            </when>
+            <when value="no">
+                <!-- No sample ID column -->
+            </when>
+        </conditional>
         <conditional name="model_selection">
             <param name="model_type" type="select" label="Task">
                 <option value="classification">classification</option>
@@ -311,6 +326,7 @@
     <help>
         This tool uses PyCaret to train and evaluate machine learning models.
         It compares different models on a dataset and provides the best model based on the performance metrics.
+        You can optionally select a sample ID column to keep related records in the same split and reduce data leakage when the tool creates splits internally.
 
         **Outputs**
 

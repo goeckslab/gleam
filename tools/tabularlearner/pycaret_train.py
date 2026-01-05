@@ -134,6 +134,15 @@ def main():
         default=None,
         help="Metric used to select the best model (e.g. AUC, Accuracy, R2, RMSE).",
     )
+    parser.add_argument(
+        "--sample-id-column",
+        type=str,
+        default=None,
+        help=(
+            "Optional column name used to group samples during splitting "
+            "to prevent data leakage (e.g., patient_id or slide_id)."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -170,6 +179,7 @@ def main():
         "n_jobs": n_jobs,
         "probability_threshold": args.probability_threshold,
         "best_model_metric": args.best_model_metric,
+        "sample_id_column": args.sample_id_column,
     }
     LOG.info(f"Model kwargs: {model_kwargs}")
 
