@@ -29,6 +29,7 @@
             ln -sf '$input_csv' "./${sanitized_input_csv}";
             #end if
 
+            #set $selected_validation_metric = ""
             #if $task_selection.task == "binary"
                 #set $selected_validation_metric = $task_selection.validation_metric_binary
             #elif $task_selection.task == "classification"
@@ -36,7 +37,9 @@
             #elif $task_selection.task == "regression"
                 #set $selected_validation_metric = $task_selection.validation_metric_regression
             #else
-                #set $selected_validation_metric = $task_selection.validation_metric_auto
+                #if $task_selection.validation_metric_auto
+                    #set $selected_validation_metric = $task_selection.validation_metric_auto
+                #end if
             #end if
 
             python '$__tool_directory__/image_learner_cli.py'
@@ -107,7 +110,8 @@
             </param>
             <when value="binary">
                 <param name="validation_metric_binary" type="select" optional="true" label="Validation metric (binary)" help="Metrics accepted by Ludwig 0.10.1 for binary outputs.">
-                    <option value="roc_auc" selected="true">ROC-AUC</option>
+                    <option value="" selected="true">Auto (use task default)</option>
+                    <option value="roc_auc">ROC-AUC</option>
                     <option value="accuracy">Accuracy</option>
                     <option value="precision">Precision</option>
                     <option value="recall">Recall</option>
@@ -116,13 +120,15 @@
             </when>
             <when value="classification">
                 <param name="validation_metric_multiclass" type="select" optional="true" label="Validation metric (multi-class)" help="Metrics accepted by Ludwig 0.10.1 for multi-class outputs.">
-                    <option value="accuracy" selected="true">Accuracy</option>
+                    <option value="" selected="true">Auto (use task default)</option>
+                    <option value="accuracy">Accuracy</option>
                     <option value="loss">Loss</option>
                 </param>
             </when>
             <when value="regression">
                 <param name="validation_metric_regression" type="select" optional="true" label="Validation metric (regression)" help="Metrics accepted by Ludwig 0.10.1 for regression outputs.">
-                    <option value="mean_squared_error" selected="true">Mean Squared Error</option>
+                    <option value="" selected="true">Auto (use task default)</option>
+                    <option value="mean_squared_error">Mean Squared Error</option>
                     <option value="mean_absolute_error">Mean Absolute Error</option>
                     <option value="root_mean_squared_error">Root Mean Squared Error</option>
                     <option value="root_mean_squared_percentage_error">Root Mean Squared Percentage Error</option>
@@ -130,8 +136,8 @@
                 </param>
             </when>
             <when value="auto">
-                <param name="validation_metric_auto" type="select" optional="true" label="Validation metric (auto)" help="Metrics compatible with binary, multi-class, and regression tasks in Ludwig 0.10.1.">
-                    <option value="loss" selected="true">Loss</option>
+                <param name="validation_metric_auto" type="select" optional="true" label="Validation metric (auto)" help="Auto defers to the inferred task and picks the best default metric; use this only to override the choice.">
+                    <option value="" selected="true"></option>
                 </param>
             </when>
         </conditional>
