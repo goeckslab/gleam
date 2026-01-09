@@ -1,3 +1,4 @@
+import errno
 import json
 import logging
 import os
@@ -5,6 +6,7 @@ import random
 import sys
 import tempfile
 import zipfile
+from collections import OrderedDict
 from pathlib import Path
 from typing import List, Optional
 
@@ -24,7 +26,10 @@ _IMAGE_EXTENSIONS = {
     ".webp",
     ".svs",
 }
-_MAX_PATH_COMPONENT = 240
+_MAX_PATH_COMPONENT = 255
+_MAX_EXTRACTED_INDEX_CACHE_SIZE = 2
+_MAX_EXTRACTED_INDEX_FILES = 100000
+_EXTRACTED_INDEX_CACHE = OrderedDict()
 
 
 def str2bool(val) -> bool:
@@ -108,11 +113,15 @@ def _normalize_path_value(val: object) -> Optional[str]:
     return s if s else None
 
 
-def _has_long_component(path_str: str) -> bool:
+def _warn_if_long_component(path_str: str) -> None:
     for part in path_str.replace("\\", "/").split("/"):
         if len(part) > _MAX_PATH_COMPONENT:
-            return True
-    return False
+            LOG.warning(
+                "Path component exceeds %d chars; resolution may fail: %s",
+                _MAX_PATH_COMPONENT,
+                path_str,
+            )
+            return
 
 
 def _build_extracted_index(extracted_root: Optional[Path]) -> set:
@@ -122,14 +131,47 @@ def _build_extracted_index(extracted_root: Optional[Path]) -> set:
     for root, _dirs, files in os.walk(extracted_root):
         rel_root = os.path.relpath(root, extracted_root)
         for fname in files:
-            if _has_long_component(fname):
-                continue
             ext = os.path.splitext(fname)[1].lower()
             if ext not in _IMAGE_EXTENSIONS:
                 continue
             rel_path = fname if rel_root == "." else os.path.join(rel_root, fname)
             index.add(rel_path.replace("\\", "/"))
             index.add(fname)
+    return index
+
+
+def _get_cached_extracted_index(extracted_root: Optional[Path]) -> set:
+    if extracted_root is None:
+        return set()
+    try:
+        root = extracted_root.resolve()
+    except Exception:
+        root = extracted_root
+    cache_key = str(root)
+    try:
+        mtime_ns = root.stat().st_mtime_ns
+    except OSError:
+        _EXTRACTED_INDEX_CACHE.pop(cache_key, None)
+        return _build_extracted_index(root)
+    cached = _EXTRACTED_INDEX_CACHE.get(cache_key)
+    if cached:
+        cached_mtime, cached_index = cached
+        if cached_mtime == mtime_ns:
+            _EXTRACTED_INDEX_CACHE.move_to_end(cache_key)
+            LOG.debug("Using cached extracted index for %s (%d entries)", root, len(cached_index))
+            return cached_index
+        _EXTRACTED_INDEX_CACHE.pop(cache_key, None)
+        LOG.debug("Invalidated extracted index cache for %s (mtime changed)", root)
+    else:
+        LOG.debug("No extracted index cache for %s; building", root)
+    index = _build_extracted_index(root)
+    if len(index) <= _MAX_EXTRACTED_INDEX_FILES:
+        _EXTRACTED_INDEX_CACHE[cache_key] = (mtime_ns, index)
+        _EXTRACTED_INDEX_CACHE.move_to_end(cache_key)
+        while len(_EXTRACTED_INDEX_CACHE) > _MAX_EXTRACTED_INDEX_CACHE_SIZE:
+            _EXTRACTED_INDEX_CACHE.popitem(last=False)
+    else:
+        LOG.debug("Extracted index has %d entries; skipping cache for %s", len(index), root)
     return index
 
 
@@ -161,14 +203,21 @@ def absolute_path_expander(df: pd.DataFrame, extracted_root: Optional[Path], ima
         return []
 
     image_columns = [c for c in (image_columns or []) if c in df.columns]
-    extracted_index = _build_extracted_index(extracted_root)
+    extracted_index = None
+
+    def get_extracted_index() -> set:
+        nonlocal extracted_index
+        if extracted_index is None:
+            extracted_index = _get_cached_extracted_index(extracted_root)
+        return extracted_index
 
     def resolve(p):
         if pd.isna(p):
             return None
         raw = _normalize_path_value(p)
-        if not raw or _has_long_component(raw):
+        if not raw:
             return None
+        _warn_if_long_component(raw)
         orig = Path(raw)
         candidates = []
         if orig.is_absolute():
@@ -179,18 +228,24 @@ def absolute_path_expander(df: pd.DataFrame, extracted_root: Optional[Path], ima
             try:
                 if cand.exists():
                     return str(cand.resolve())
-            except OSError:
+            except OSError as e:
+                if e.errno == errno.ENAMETOOLONG:
+                    LOG.warning("Path too long for filesystem: %s", cand)
                 continue
         return None
 
     def matches_extracted(p) -> bool:
-        if not extracted_index or pd.isna(p):
+        if pd.isna(p):
             return False
         raw = _normalize_path_value(p)
-        if not raw or _has_long_component(raw):
+        if not raw:
+            return False
+        _warn_if_long_component(raw)
+        index = get_extracted_index()
+        if not index:
             return False
         norm = raw.replace("\\", "/").lstrip("./")
-        return norm in extracted_index
+        return norm in index
 
     # Infer image columns if none were provided
     if not image_columns:
@@ -200,7 +255,11 @@ def absolute_path_expander(df: pd.DataFrame, extracted_root: Optional[Path], ima
             sample = df[col].dropna().head(50)
             if sample.empty:
                 continue
-            if extracted_index:
+            if extracted_root is not None:
+                index = get_extracted_index()
+            else:
+                index = set()
+            if index:
                 matched = sample.apply(matches_extracted)
                 if matched.any():
                     inferred.append(col)
