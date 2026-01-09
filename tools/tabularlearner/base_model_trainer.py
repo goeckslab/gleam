@@ -282,7 +282,6 @@ class BaseModelTrainer:
         self.features_name = [n for n in names if n != self.target]
         self.plot_feature_names = self._select_plot_features(self.features_name)
 
-
     def _select_plot_features(self, all_features):
         limit = getattr(self, "plot_feature_limit", 30)
         if not isinstance(limit, int) or limit <= 0:
