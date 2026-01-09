@@ -90,7 +90,7 @@
                 <option value="yes">Yes</option>
             </param>
             <when value="yes">
-                <param name="sample_id_column" type="data_column" data_ref="input_file" use_header_names="true" label="Sample ID column" help="All rows with the same ID stay in the same split to reduce leakage. Only used when the tool creates the split internally." />
+                <param name="sample_id_column" type="data_column" data_ref="input_file" use_header_names="true" label="Sample ID column" help="All rows with the same ID stay in the same split to reduce leakage. Used for group-aware splitting when no separate test file is provided, and for group-aware cross-validation when enabled." />
             </when>
             <when value="no">
                 <!-- No sample ID column -->
