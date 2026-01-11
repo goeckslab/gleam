@@ -29,6 +29,7 @@
             ln -sf '$input_csv' "./${sanitized_input_csv}";
             #end if
 
+            #set $selected_validation_metric = ""
             #if $task_selection.task == "binary"
                 #set $selected_validation_metric = $task_selection.validation_metric_binary
             #elif $task_selection.task == "classification"
@@ -36,7 +37,9 @@
             #elif $task_selection.task == "regression"
                 #set $selected_validation_metric = $task_selection.validation_metric_regression
             #else
-                #set $selected_validation_metric = None
+                #if $task_selection.validation_metric_auto
+                    #set $selected_validation_metric = $task_selection.validation_metric_auto
+                #end if
             #end if
 
             python '$__tool_directory__/image_learner_cli.py'
@@ -81,6 +84,9 @@
                         --image-column "$column_override.image_column"
                     #end if
                 #end if
+                #if $sample_id_column
+                    --sample-id-column "$sample_id_column"
+                #end if
                 --image-resize "$image_resize"
                 --random-seed "$random_seed"
                 --output-dir "." &&
@@ -103,26 +109,26 @@
                 <option value="regression">Regression</option>
             </param>
             <when value="binary">
-                <param name="validation_metric_binary" type="select" optional="true" label="Validation metric (binary)" help="Metrics accepted by Ludwig for binary outputs.">
-                    <option value="roc_auc" selected="true">ROC-AUC</option>
+                <param name="validation_metric_binary" type="select" optional="true" label="Validation metric (binary)" help="Metrics accepted by Ludwig 0.10.1 for binary outputs.">
+                    <option value="" selected="true">Auto (use task default)</option>
+                    <option value="roc_auc">ROC-AUC</option>
                     <option value="accuracy">Accuracy</option>
                     <option value="precision">Precision</option>
                     <option value="recall">Recall</option>
-                    <option value="specificity">Specificity</option>
                     <option value="loss">Loss</option>
                 </param>
             </when>
             <when value="classification">
-                <param name="validation_metric_multiclass" type="select" optional="true" label="Validation metric (multi-class)" help="Metrics accepted by Ludwig for multi-class outputs.">
-                    <option value="accuracy" selected="true">Accuracy</option>
-                    <option value="balanced_accuracy">Balanced Accuracy</option>
-                    <option value="hits_at_k">Hits at K (top-k)</option>
+                <param name="validation_metric_multiclass" type="select" optional="true" label="Validation metric (multi-class)" help="Metrics accepted by Ludwig 0.10.1 for multi-class outputs.">
+                    <option value="" selected="true">Auto (use task default)</option>
+                    <option value="accuracy">Accuracy</option>
                     <option value="loss">Loss</option>
                 </param>
             </when>
             <when value="regression">
-                <param name="validation_metric_regression" type="select" optional="true" label="Validation metric (regression)" help="Metrics accepted by Ludwig for regression outputs.">
-                    <option value="mean_squared_error" selected="true">Mean Squared Error</option>
+                <param name="validation_metric_regression" type="select" optional="true" label="Validation metric (regression)" help="Metrics accepted by Ludwig 0.10.1 for regression outputs.">
+                    <option value="" selected="true">Auto (use task default)</option>
+                    <option value="mean_squared_error">Mean Squared Error</option>
                     <option value="mean_absolute_error">Mean Absolute Error</option>
                     <option value="root_mean_squared_error">Root Mean Squared Error</option>
                     <option value="root_mean_squared_percentage_error">Root Mean Squared Percentage Error</option>
@@ -130,7 +136,9 @@
                 </param>
             </when>
             <when value="auto">
-                <!-- No validation metric selection; tool will infer task and metric. -->
+                <param name="validation_metric_auto" type="select" optional="true" label="Validation metric (auto)" help="Auto defers to the inferred task and picks the best default metric; use this only to override the choice.">
+                    <option value="" selected="true"></option>
+                </param>
             </when>
         </conditional>
         <conditional name="column_override">
@@ -139,13 +147,14 @@
                 <option value="true">Yes</option>
             </param>
             <when value="true">
-                <param name="target_column" type="text" optional="true" label="Target/label column name" help="Overrides the default 'label' column name in the metadata CSV." />
-                <param name="image_column" type="text" optional="true" label="Image column name" help="Overrides the default 'image_path' column name in the metadata CSV." />
+                <param name="target_column" type="data_column" data_ref="input_csv" use_header_names="true" optional="true" label="Target/label column name" help="Overrides the default 'label' column name in the metadata CSV." />
+                <param name="image_column" type="data_column" data_ref="input_csv" use_header_names="true" optional="true" label="Image column name" help="Overrides the default 'image_path' column name in the metadata CSV." />
             </when>
             <when value="false">
                 <!-- No additional parameters -->
             </when>
         </conditional>
+        <param name="sample_id_column" type="data_column" data_ref="input_csv" use_header_names="true" optional="true" label="Sample ID column (optional)" help="Optional column used to group samples during splitting to prevent data leakage (e.g., patient_id or slide_id). Only used when no split column is provided." />
         <param name="model_name" type="select" optional="false" label="Select a model for your experiment" >
 
             <option value="resnet18">Resnet18</option>
@@ -564,7 +573,7 @@
             <param name="advanced_settings|customize_defaults" value="true" />
             <param name="advanced_settings|threshold" value="0.6" />
             <param name="task_selection|task" value="classification" />
-            <param name="task_selection|validation_metric_multiclass" value="balanced_accuracy" />
+            <param name="task_selection|validation_metric_multiclass" value="accuracy" />
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Config and Overall Performance Summary" />
@@ -591,6 +600,7 @@ It uses the metadata csv to find the image paths and labels.
 The metadata csv should contain a column with the name 'image_path' and a column with the name 'label'.
 Optionally, you can also add a column with the name 'split' to specify which split each row belongs to (train, val, test). 
 If you do not provide a split column, the tool will automatically split the data into train, val, and test sets based on the proportions you specify or [0.7, 0.1, 0.2] by default.
+You can optionally specify a sample ID column to keep related samples in the same split and prevent data leakage.
 
 **Models Available**
 This tool supports a wide range of state-of-the-art image classification models including:

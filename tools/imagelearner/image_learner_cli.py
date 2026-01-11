@@ -163,6 +163,15 @@ def main():
         default=None,
         help="Name of the image column in the metadata file (defaults to 'image_path').",
     )
+    parser.add_argument(
+        "--sample-id-column",
+        type=str,
+        default=None,
+        help=(
+            "Optional column name used to group samples during splitting "
+            "to prevent data leakage (e.g., patient_id or slide_id)."
+        ),
+    )
 
     args = parser.parse_args()
 
