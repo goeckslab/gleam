@@ -1,4 +1,4 @@
-<tool id="multimodal_learner" name="Multimodal Learner" version="0.1.1" profile="22.01">
+<tool id="multimodal_learner" name="Multimodal Learner" version="0.1.2" profile="22.01">
   <description>Train and evaluate an AutoGluon Multimodal model (tabular + image + text)</description>
 
   <requirements>
@@ -43,12 +43,15 @@ ln -sf '$input_csv' 'train_input.csv';
 ln -sf '$test_dataset_conditional.input_test' 'test_input.csv';
 #end if
 
-python '$__tool_directory__/multimodal_learner.py'
+  python '$__tool_directory__/multimodal_learner.py'
   --input_csv_train 'train_input.csv'
   #if $test_dataset_conditional.has_test_dataset == "yes"
   --input_csv_test 'test_input.csv'
   #end if
   --target_column '$target_column'
+  #if $sample_id_selector.use_sample_id == "yes"
+  --sample_id_column '$sample_id_selector.sample_id_column'
+  #end if
 
   #if $use_images_conditional.use_images == "yes"
     #if $images_zip_cli
@@ -111,6 +114,16 @@ python '$__tool_directory__/multimodal_learner.py'
   <inputs>
     <param name="input_csv" type="data" format="csv,tsv" label="Training dataset (CSV/TSV)" help="Must contain the target column and optional image paths"/>
     <param name="target_column" type="data_column" data_ref="input_csv" numerical="false" use_header_names="true" label="Target / Label column"/>
+    <conditional name="sample_id_selector">
+      <param name="use_sample_id" type="select" label="Use a sample ID column for leakage-aware splitting?" help="Select yes to choose a column that groups related records (e.g., patient_id or slide_id).">
+        <option value="no" selected="true">No column selected</option>
+        <option value="yes">Yes</option>
+      </param>
+      <when value="yes">
+        <param name="sample_id_column" type="data_column" data_ref="input_csv" use_header_names="true" label="Sample ID column" help="All rows with the same ID stay in the same split or fold to reduce leakage. Used for internal train/val/test splits and group-aware CV folds." />
+      </when>
+      <when value="no"/>
+    </conditional>
 
     <conditional name="test_dataset_conditional">
       <param name="has_test_dataset" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Provide separate test dataset?"/>

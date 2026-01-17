@@ -12,6 +12,7 @@ Train and evaluate AutoGluon’s multimodal models inside Galaxy, combining tabu
 ## Inputs
 - `Training dataset (CSV/TSV)`: includes the label column and any feature columns; image columns should contain file paths that exist in the provided ZIP archives (or absolute paths).
 - Optional `Test dataset (CSV/TSV)`: if omitted, the tool performs train/validation/test splitting or k-fold CV.
+- Optional `Sample ID column`: when provided, related rows are grouped into the same split and cross-validation fold to reduce leakage.
 - Optional `Image archive(s) (ZIP)`: one or more archives containing the image files referenced in the table.
 - Optional overrides: text and image backbones, evaluation metric, quality preset, threshold for binary tasks, and extra hyperparameters (JSON/YAML string or file path).
 
