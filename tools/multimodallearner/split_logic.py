@@ -54,9 +54,16 @@ def split_dataset(
         if unique.issubset(valid):
             train_dataset[SPLIT_COL] = train_dataset[SPLIT_COL].replace("validation", "val")
             normalized = set(train_dataset[SPLIT_COL].dropna().unique())
-            missing = {"train", "test"} - normalized
+            required = {"train"} if test_dataset is not None else {"train", "test"}
+            missing = required - normalized
             if missing:
                 missing_list = ", ".join(sorted(missing))
+                if test_dataset is not None:
+                    raise ValueError(
+                        "Pre-existing 'split' column is missing required split(s): "
+                        f"{missing_list}. Expected at least train when an external test set is provided, "
+                        "or remove the 'split' column to let the tool create splits."
+                    )
                 raise ValueError(
                     "Pre-existing 'split' column is missing required split(s): "
                     f"{missing_list}. Expected at least train and test, "
