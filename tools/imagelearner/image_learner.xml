@@ -28,7 +28,7 @@
             #set $sanitized_input_csv = re.sub('[^\w\-_\.]', '_', $input_csv.element_identifier.strip())
             ln -sf '$input_csv' "./${sanitized_input_csv}";
             #end if
-            export TORCH_HOME="./torch_cache";
+            #set $TORCH_HOME = "./torch_cache";
             mkdir -p "$TORCH_HOME";
 
             #set $selected_validation_metric = ""
