@@ -261,14 +261,27 @@ class BaseModelTrainer:
                     else:
                         test_idx.extend(group_to_indices[group_id])
 
-                self.test_data = self.data.loc[test_idx].reset_index(drop=True)
-                self.data = self.data.loc[train_idx].reset_index(drop=True)
-                LOG.info(
-                    "Applied group-aware split using '%s' (train=%s, test=%s).",
-                    sample_id_column,
-                    len(train_idx),
-                    len(test_idx),
-                )
+                missing_splits = []
+                if not train_idx:
+                    missing_splits.append("train")
+                if not test_idx:
+                    missing_splits.append("test")
+                if missing_splits:
+                    LOG.warning(
+                        "Group-aware split using '%s' produced empty %s set; "
+                        "falling back to default split.",
+                        sample_id_column,
+                        " and ".join(missing_splits),
+                    )
+                else:
+                    self.test_data = self.data.loc[test_idx].reset_index(drop=True)
+                    self.data = self.data.loc[train_idx].reset_index(drop=True)
+                    LOG.info(
+                        "Applied group-aware split using '%s' (train=%s, test=%s).",
+                        sample_id_column,
+                        len(train_idx),
+                        len(test_idx),
+                    )
 
         if sample_id_valid:
             self.sample_id_series = self.data[sample_id_column].copy()
