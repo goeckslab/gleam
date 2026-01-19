@@ -367,6 +367,17 @@ class ImageLearnerCLI:
         self.args.output_dir.mkdir(parents=True, exist_ok=True)
 
         try:
+            if getattr(self.args, "torch_home", None):
+                torch_home = Path(self.args.torch_home).expanduser().resolve()
+                torch_home.mkdir(parents=True, exist_ok=True)
+                os.environ["TORCH_HOME"] = str(torch_home)
+                try:
+                    import torch
+
+                    torch.hub.set_dir(str(torch_home))
+                except Exception as exc:
+                    logger.warning("Unable to set Torch Hub cache dir: %s", exc)
+
             self._create_temp_dirs()
             self._extract_images()
             csv_path, split_cfg, split_info = self._prepare_data()
