@@ -172,6 +172,15 @@ def main():
             "to prevent data leakage (e.g., patient_id or slide_id)."
         ),
     )
+    parser.add_argument(
+        "--torch-home",
+        type=Path,
+        default=None,
+        help=(
+            "Directory for Torch Hub cache (pretrained weights). "
+            "Overrides TORCH_HOME for this run."
+        ),
+    )
 
     args = parser.parse_args()
 

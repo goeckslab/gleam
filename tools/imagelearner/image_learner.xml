@@ -28,6 +28,8 @@
             #set $sanitized_input_csv = re.sub('[^\w\-_\.]', '_', $input_csv.element_identifier.strip())
             ln -sf '$input_csv' "./${sanitized_input_csv}";
             #end if
+            #set $TORCH_HOME = "./torch_cache";
+            mkdir -p "$TORCH_HOME";
 
             #set $selected_validation_metric = ""
             #if $task_selection.task == "binary"
@@ -89,6 +91,7 @@
                 #end if
                 --image-resize "$image_resize"
                 --random-seed "$random_seed"
+                --torch-home "$TORCH_HOME"
                 --output-dir "." &&
 
             mkdir -p '$output_model.extra_files_path' &&
