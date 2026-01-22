@@ -42,10 +42,14 @@ ln -sf '$input_csv' 'train_input.csv';
 #if $test_dataset_conditional.has_test_dataset == "yes"
 ln -sf '$test_dataset_conditional.input_test' 'test_input.csv';
 #end if
-export TORCH_HOME="./torch_cache";
-export HF_HOME="./hf_cache";
-export HUGGINGFACE_HUB_CACHE="$HF_HOME/hub";
-mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE";
+
+#set $TORCH_HOME = "./torch_cache"
+#set $HF_HOME = "./hf_cache"
+#set $HUGGINGFACE_HUB_CACHE = "./hf_cache/hub"
+export TORCH_HOME="$TORCH_HOME" &&
+export HF_HOME="$HF_HOME" &&
+export HUGGINGFACE_HUB_CACHE="$HUGGINGFACE_HUB_CACHE" &&
+mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
 
   python '$__tool_directory__/multimodal_learner.py'
   --input_csv_train 'train_input.csv'
