@@ -217,6 +217,10 @@ def main():
     logger.info(f"Working directory: {os.getcwd()}")
     logger.info(f"Command line: {' '.join(sys.argv)}")
     logger.info(f"Parsed args: {vars(args)}")
+    logger.info("Cache dirs: TORCH_HOME=%s HF_HOME=%s HUGGINGFACE_HUB_CACHE=%s",
+                os.environ.get("TORCH_HOME"),
+                os.environ.get("HF_HOME"),
+                os.environ.get("HUGGINGFACE_HUB_CACHE"))
 
     # ------------------------------------------------------------------
     # Reproducibility & performance
