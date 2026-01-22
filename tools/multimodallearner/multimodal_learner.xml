@@ -42,6 +42,8 @@ ln -sf '$input_csv' 'train_input.csv';
 #if $test_dataset_conditional.has_test_dataset == "yes"
 ln -sf '$test_dataset_conditional.input_test' 'test_input.csv';
 #end if
+#set $TORCH_HOME = "./torch_cache"
+#set $HF_HOME = "./hf_cache"
 
   python '$__tool_directory__/multimodal_learner.py'
   --input_csv_train 'train_input.csv'
@@ -106,9 +108,11 @@ ln -sf '$test_dataset_conditional.input_test' 'test_input.csv';
     #end if
   #end if
 
+  --torch-home "$TORCH_HOME"
   --output_json '$output_json'
   --output_html '$output_html'
   --output_config '$output_config'
+  --hf-home "$HF_HOME"
 ]]></command>
 
   <inputs>

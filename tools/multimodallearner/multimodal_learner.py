@@ -73,6 +73,16 @@ def parse_args(argv=None):
                         default="medium_quality")
     parser.add_argument("--eval_metric", default="roc_auc")
     parser.add_argument("--hyperparameters", default=None)
+    parser.add_argument(
+        "--torch-home",
+        default=None,
+        help="Directory for Torch Hub cache (pretrained weights). Overrides TORCH_HOME for this run.",
+    )
+    parser.add_argument(
+        "--hf-home",
+        default=None,
+        help="Directory for Hugging Face cache (models, hub downloads). Overrides HF_HOME for this run.",
+    )
 
     args, unknown = parser.parse_known_args(argv)
     if unknown:
@@ -221,6 +231,24 @@ def main():
     # ------------------------------------------------------------------
     # Reproducibility & performance
     # ------------------------------------------------------------------
+    if args.torch_home:
+        torch_home = os.path.abspath(os.path.expanduser(args.torch_home))
+        os.makedirs(torch_home, exist_ok=True)
+        os.environ["TORCH_HOME"] = torch_home
+        try:
+            import torch
+
+            torch.hub.set_dir(torch_home)
+        except Exception as exc:
+            logger.warning("Unable to set Torch Hub cache dir: %s", exc)
+
+    if args.hf_home:
+        hf_home = os.path.abspath(os.path.expanduser(args.hf_home))
+        hub_cache = os.path.join(hf_home, "hub")
+        os.makedirs(hub_cache, exist_ok=True)
+        os.environ["HF_HOME"] = hf_home
+        os.environ["HUGGINGFACE_HUB_CACHE"] = hub_cache
+
     set_seeds(args.random_seed)
     if args.deterministic:
         enable_deterministic_mode(args.random_seed)
