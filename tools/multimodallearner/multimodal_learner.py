@@ -243,19 +243,47 @@ def main():
         logger.info(f"Test dataset loaded: {len(test_dataset)} rows")
 
     # ------------------------------------------------------------------
-    # Resolve target column by name; if Galaxy passed a numeric index,
+    # Resolve columns by name; if Galaxy passed a numeric index,
     # translate it to the corresponding header so downstream checks pass.
     # Galaxy's data_column widget is 1-based.
     # ------------------------------------------------------------------
-    if args.target_column not in train_dataset.columns and str(args.target_column).isdigit():
-        idx = int(args.target_column) - 1
-        if 0 <= idx < len(train_dataset.columns):
-            resolved = train_dataset.columns[idx]
-            logger.info(f"Target column '{args.target_column}' not found; using column #{idx + 1} header '{resolved}' instead.")
-            args.target_column = resolved
-        else:
-            logger.error(f"Numeric target index '{args.target_column}' is out of range for dataset with {len(train_dataset.columns)} columns.")
+    def resolve_column_name(value, columns, label):
+        if value is None:
+            return None
+        if str(value).isdigit():
+            idx = int(value) - 1
+            if 0 <= idx < len(columns):
+                resolved = columns[idx]
+                if value in columns:
+                    logger.warning(
+                        "%s column value '%s' matches a header, but Galaxy data_column "
+                        "inputs are interpreted as 1-based indices; using column #%s header '%s'.",
+                        label,
+                        value,
+                        idx + 1,
+                        resolved,
+                    )
+                logger.info(
+                    "%s column '%s' not found; using column #%s header '%s' instead.",
+                    label,
+                    value,
+                    idx + 1,
+                    resolved,
+                )
+                return resolved
+            logger.error(
+                "Numeric %s index '%s' is out of range for dataset with %s columns.",
+                label.lower(),
+                value,
+                len(columns),
+            )
             sys.exit(1)
+        return value
+
+    args.target_column = resolve_column_name(args.target_column, train_dataset.columns, "Target")
+    args.sample_id_column = resolve_column_name(
+        args.sample_id_column, train_dataset.columns, "Sample ID"
+    )
 
     # ------------------------------------------------------------------
     # Image handling (ZIP extraction + absolute path expansion)
