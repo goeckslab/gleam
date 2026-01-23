@@ -133,12 +133,19 @@ class ImageLearnerCLI:
             """Resolve Galaxy data_column index (1-based) to header if needed."""
             if value is None:
                 return None
-            if value in columns:
-                return value
             if str(value).isdigit():
                 idx = int(value) - 1
                 if 0 <= idx < len(columns):
                     resolved = columns[idx]
+                    if value in columns:
+                        logger.warning(
+                            "%s column value '%s' matches a header, but Galaxy data_column "
+                            "inputs are interpreted as 1-based indices; using column #%s header '%s'.",
+                            label,
+                            value,
+                            idx + 1,
+                            resolved,
+                        )
                     logger.info(
                         "%s column '%s' not found; using column #%s header '%s' instead.",
                         label,
@@ -151,6 +158,8 @@ class ImageLearnerCLI:
                     f"{label} column index '{value}' is out of range for dataset with "
                     f"{len(columns)} columns. Update the XML selections or rename your columns."
                 )
+            if value in columns:
+                return value
             return value
 
         label_col = resolve_column_name(self.args.target_column, df.columns, "Target") or LABEL_COLUMN_NAME
