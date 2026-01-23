@@ -129,10 +129,37 @@ class ImageLearnerCLI:
             logger.error("Error loading metadata file", exc_info=True)
             raise
 
-        label_col = self.args.target_column or LABEL_COLUMN_NAME
-        image_col = self.args.image_column or IMAGE_PATH_COLUMN_NAME
+        def resolve_column_name(value: Optional[str], columns, label: str) -> Optional[str]:
+            """Resolve Galaxy data_column index (1-based) to header if needed."""
+            if value is None:
+                return None
+            if value in columns:
+                return value
+            if str(value).isdigit():
+                idx = int(value) - 1
+                if 0 <= idx < len(columns):
+                    resolved = columns[idx]
+                    logger.info(
+                        "%s column '%s' not found; using column #%s header '%s' instead.",
+                        label,
+                        value,
+                        idx + 1,
+                        resolved,
+                    )
+                    return resolved
+                raise ValueError(
+                    f"{label} column index '{value}' is out of range for dataset with "
+                    f"{len(columns)} columns. Update the XML selections or rename your columns."
+                )
+            return value
 
-        # Remember the user-specified columns for reporting
+        label_col = resolve_column_name(self.args.target_column, df.columns, "Target") or LABEL_COLUMN_NAME
+        image_col = resolve_column_name(self.args.image_column, df.columns, "Image") or IMAGE_PATH_COLUMN_NAME
+        self.args.sample_id_column = resolve_column_name(
+            self.args.sample_id_column, df.columns, "Sample ID"
+        )
+
+        # Remember the resolved columns for reporting
         self.args.report_target_column = label_col
         self.args.report_image_column = image_col
 
