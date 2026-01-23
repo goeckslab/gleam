@@ -121,6 +121,30 @@ class BaseModelTrainer:
         self.target = names[target_index]
         sample_id_column = getattr(self, "sample_id_column", None)
         if sample_id_column:
+            if str(sample_id_column).isdigit():
+                idx = int(sample_id_column) - 1
+                if 0 <= idx < len(names):
+                    resolved = names[idx]
+                    if sample_id_column in names:
+                        LOG.warning(
+                            "Sample ID column value '%s' matches a header, but Galaxy data_column "
+                            "inputs are interpreted as 1-based indices; using column #%s header '%s'.",
+                            sample_id_column,
+                            idx + 1,
+                            resolved,
+                        )
+                    LOG.info(
+                        "Sample ID column '%s' not found; using column #%s header '%s' instead.",
+                        sample_id_column,
+                        idx + 1,
+                        resolved,
+                    )
+                    sample_id_column = resolved
+                else:
+                    raise ValueError(
+                        f"Sample ID column index {sample_id_column} is invalid. "
+                        f"Please select a number between 1 and {len(names)}."
+                    )
             sample_id_column = sample_id_column.replace(".", "_")
             self.sample_id_column = sample_id_column
         else:
