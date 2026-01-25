@@ -153,14 +153,17 @@ def create_stratified_random_split(
                 i for i in missing if i not in priority_order
             ]
             for idx in missing_ordered:
-                donors = [
-                    i for i in active if counts[i] > 1 and i != idx
-                ]
+                donors = [i for i in active if counts[i] > 1 and i != idx]
                 if not donors:
                     break
+                # Prefer taking from lower-priority splits first (val -> test -> train)
+                donor_priority = [1, 2, 0]
                 donors_sorted = sorted(
                     donors,
-                    key=lambda i: (-counts[i], priority_order.index(i) if i in priority_order else 999),
+                    key=lambda i: (
+                        -counts[i],
+                        donor_priority.index(i) if i in donor_priority else 999,
+                    ),
                 )
                 donor = donors_sorted[0]
                 counts[donor] -= 1
