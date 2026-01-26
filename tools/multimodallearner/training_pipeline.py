@@ -20,6 +20,53 @@ from packaging.version import Version
 
 logger = logging.getLogger(__name__)
 
+_LOW_SHM_BYTES = 1 << 30  # 1 GiB
+
+
+def _get_env_int(keys: List[str]) -> Optional[int]:
+    for key in keys:
+        if key not in os.environ:
+            continue
+        raw = os.environ.get(key)
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            logger.warning("Ignoring non-integer %s=%s", key, raw)
+    return None
+
+
+def _get_shm_bytes() -> Optional[int]:
+    try:
+        stat = os.statvfs("/dev/shm")
+    except Exception:
+        return None
+    return int(stat.f_frsize * stat.f_blocks)
+
+
+def _resolve_num_workers(
+    explicit_value: Optional[int],
+    env_keys: List[str],
+    label: str,
+    shm_bytes: Optional[int],
+    default_value: Optional[int] = None,
+) -> Optional[int]:
+    if explicit_value is not None:
+        return int(explicit_value)
+    env_val = _get_env_int(env_keys)
+    if env_val is not None:
+        return env_val
+    if shm_bytes is not None and shm_bytes < _LOW_SHM_BYTES:
+        logger.warning(
+            "Detected small /dev/shm (%.1f MB); setting %s num_workers=0 to avoid DataLoader shm errors.",
+            shm_bytes / (1024 * 1024),
+            label,
+        )
+        return 0
+    if default_value is not None:
+        logger.info("Using default %s num_workers=%d (heuristic).", label, int(default_value))
+        return int(default_value)
+    return None
+
 # ---------------------- small utilities ----------------------
 
 
@@ -390,6 +437,8 @@ def autogluon_hyperparameters(
     epochs,
     learning_rate,
     batch_size,
+    num_workers,
+    num_workers_evaluation,
     backbone_image,
     backbone_text,
     preset,
@@ -421,6 +470,37 @@ def autogluon_hyperparameters(
         env_cfg["seed"] = int(random_seed)
     if batch_size is not None:
         env_cfg["per_gpu_batch_size"] = int(batch_size)
+    shm_bytes = _get_shm_bytes()
+    default_workers = None
+    if shm_bytes is None or shm_bytes >= _LOW_SHM_BYTES:
+        cpu_count = os.cpu_count() or 1
+        default_workers = max(1, min(8, cpu_count // 2))
+    resolved_num_workers = _resolve_num_workers(
+        num_workers,
+        ["AG_MM_NUM_WORKERS", "AG_NUM_WORKERS", "AUTOMM_NUM_WORKERS"],
+        "training",
+        shm_bytes,
+        default_value=default_workers,
+    )
+    resolved_num_workers_inference = _resolve_num_workers(
+        num_workers_evaluation,
+        [
+            "AG_MM_NUM_WORKERS_INFERENCE",
+            "AG_MM_NUM_WORKERS_EVAL",
+            "AG_MM_NUM_WORKERS_EVALUATION",
+            "AUTOMM_NUM_WORKERS_EVAL",
+        ],
+        "inference",
+        shm_bytes,
+        default_value=default_workers,
+    )
+    if resolved_num_workers_inference is None and resolved_num_workers is not None:
+        resolved_num_workers_inference = resolved_num_workers
+    if resolved_num_workers is not None:
+        env_cfg["num_workers"] = int(resolved_num_workers)
+    if resolved_num_workers_inference is not None:
+        key = "num_workers_inference"
+        env_cfg[key] = int(resolved_num_workers_inference)
 
     optim_cfg = {}
     if epochs is not None:
@@ -463,6 +543,10 @@ def autogluon_hyperparameters(
         hp["optim.per_device_train_batch_size"] = bs_val
         hp["optim.batch_size"] = bs_val
         hp["env.per_gpu_batch_size"] = bs_val
+    if resolved_num_workers is not None:
+        hp["env.num_workers"] = int(resolved_num_workers)
+    if resolved_num_workers_inference is not None:
+        hp[f"env.{key}"] = int(resolved_num_workers_inference)
     if backbone_image:
         hp["model.timm_image.checkpoint_name"] = str(backbone_image)
     if backbone_text:

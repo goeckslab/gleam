@@ -63,6 +63,10 @@ def parse_args(argv=None):
     parser.add_argument("--epochs", type=int, default=None)
     parser.add_argument("--learning_rate", type=float, default=None)
     parser.add_argument("--batch_size", type=int, default=None)
+    parser.add_argument("--num_workers", type=int, default=None,
+                        help="DataLoader worker count (0 disables multiprocessing).")
+    parser.add_argument("--num_workers_eval", type=int, default=None,
+                        help="DataLoader workers for evaluation; defaults to --num_workers.")
     parser.add_argument("--backbone_image", type=str, default="swin_base_patch4_window7_224")
     parser.add_argument("--backbone_text", type=str, default="microsoft/deberta-v3-base")
     parser.add_argument("--validation_size", type=float, default=0.2)
@@ -369,6 +373,8 @@ def main():
         epochs=args.epochs,
         learning_rate=args.learning_rate,
         batch_size=args.batch_size,
+        num_workers=args.num_workers,
+        num_workers_evaluation=args.num_workers_eval,
         backbone_image=args.backbone_image,
         backbone_text=args.backbone_text,
         preset=args.preset,
