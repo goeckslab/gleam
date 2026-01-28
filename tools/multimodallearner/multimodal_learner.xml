@@ -327,7 +327,7 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
       <param name="test_dataset_conditional|input_test" value="test.csv"/>
       <param name="use_images_conditional|use_images" value="yes"/>
       <param name="use_images_conditional|images_zip_repeat_0|images_zip" value="images.zip"/>
-      <param name="use_images_conditional|backbone_image" value="resnet50"/>
+      <param name="use_images_conditional|backbone_image" value="resnet50.tv_in1k"/>
       <param name="backbone_text" value="google/electra-base-discriminator"/>
       <output name="output_html">
         <assert_contents>
