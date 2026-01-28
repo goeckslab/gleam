@@ -1,4 +1,4 @@
-<tool id="multimodal_learner" name="Multimodal Learner" version="0.1.3" profile="22.01">
+<tool id="multimodal_learner" name="Multimodal Learner" version="0.1.4" profile="22.01">
   <description>Train and evaluate an AutoGluon Multimodal model (tabular + image + text)</description>
 
   <requirements>
@@ -159,22 +159,93 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
           <param name="images_zip" type="data" format="zip" label="ZIP file containing images"/>
         </repeat>
         <param name="backbone_image" type="select" label="Image backbone" optional="true">
-          <option value='swin_base_patch4_window7_224' selected='true'>swin_base_patch4_window7_224</option>
-          <option value='swin_large_patch4_window12_384.in22k_ft_in1k'>swin_large_patch4_window12_384.in22k_ft_in1k</option>
-          <option value='swin_small_patch4_window7_224'>swin_small_patch4_window7_224</option>
-          <option value='swin_tiny_patch4_window7_224'>swin_tiny_patch4_window7_224</option>
-          <option value='caformer_b36.in21k_ft_in1k'>caformer_b36.in21k_ft_in1k</option>
-          <option value='caformer_m36.in21k_ft_in1k'>caformer_m36.in21k_ft_in1k</option>
-          <option value='caformer_s36.in21k_ft_in1k'>caformer_s36.in21k_ft_in1k</option>
-          <option value='caformer_s18.in1k'>caformer_s18.in1k</option>
+          <option value='swin_base_patch4_window7_224.ms_in22k_ft_in1k' selected='true'>swin_base_patch4_window7_224.ms_in22k_ft_in1k</option>
+          <option value='swin_base_patch4_window7_224.ms_in1k'>swin_base_patch4_window7_224.ms_in1k</option>
+          <option value='swin_base_patch4_window7_224.ms_in22k'>swin_base_patch4_window7_224.ms_in22k</option>
+
+          <option value='swin_large_patch4_window12_384.ms_in22k_ft_in1k'>swin_large_patch4_window12_384.ms_in22k_ft_in1k</option>
+          <option value='swin_large_patch4_window12_384.ms_in22k'>swin_large_patch4_window12_384.ms_in22k</option>
+
+          <option value='swin_small_patch4_window7_224.ms_in22k_ft_in1k'>swin_small_patch4_window7_224.ms_in22k_ft_in1k</option>
+          <option value='swin_small_patch4_window7_224.ms_in1k'>swin_small_patch4_window7_224.ms_in1k</option>
+          <option value='swin_small_patch4_window7_224.ms_in22k'>swin_small_patch4_window7_224.ms_in22k</option>
+
+          <option value='swin_tiny_patch4_window7_224.ms_in22k_ft_in1k'>swin_tiny_patch4_window7_224.ms_in22k_ft_in1k</option>
+          <option value='swin_tiny_patch4_window7_224.ms_in1k'>swin_tiny_patch4_window7_224.ms_in1k</option>
+          <option value='swin_tiny_patch4_window7_224.ms_in22k'>swin_tiny_patch4_window7_224.ms_in22k</option>
+
           <option value='caformer_b36.sail_in22k_ft_in1k'>caformer_b36.sail_in22k_ft_in1k</option>
+          <option value='caformer_b36.sail_in1k'>caformer_b36.sail_in1k</option>
+          <option value='caformer_b36.sail_in22k'>caformer_b36.sail_in22k</option>
+          <option value='caformer_b36.sail_in1k_384'>caformer_b36.sail_in1k_384</option>
+          <option value='caformer_b36.sail_in22k_ft_in1k_384'>caformer_b36.sail_in22k_ft_in1k_384</option>
+
           <option value='caformer_m36.sail_in22k_ft_in1k'>caformer_m36.sail_in22k_ft_in1k</option>
+          <option value='caformer_m36.sail_in1k'>caformer_m36.sail_in1k</option>
+          <option value='caformer_m36.sail_in22k'>caformer_m36.sail_in22k</option>
+          <option value='caformer_m36.sail_in1k_384'>caformer_m36.sail_in1k_384</option>
+          <option value='caformer_m36.sail_in22k_ft_in1k_384'>caformer_m36.sail_in22k_ft_in1k_384</option>
+
           <option value='caformer_s36.sail_in22k_ft_in1k'>caformer_s36.sail_in22k_ft_in1k</option>
-          <option value='vit_base_patch16_224'>vit_base_patch16_224</option>
-          <option value='vit_large_patch14_224'>vit_large_patch14_224</option>
-          <option value='convnext_base'>convnext_base</option>
+          <option value='caformer_s36.sail_in1k'>caformer_s36.sail_in1k</option>
+          <option value='caformer_s36.sail_in22k'>caformer_s36.sail_in22k</option>
+          <option value='caformer_s36.sail_in1k_384'>caformer_s36.sail_in1k_384</option>
+          <option value='caformer_s36.sail_in22k_ft_in1k_384'>caformer_s36.sail_in22k_ft_in1k_384</option>
+
+          <option value='caformer_s18.sail_in1k'>caformer_s18.sail_in1k</option>
+          <option value='caformer_s18.sail_in22k_ft_in1k'>caformer_s18.sail_in22k_ft_in1k</option>
+          <option value='caformer_s18.sail_in22k'>caformer_s18.sail_in22k</option>
+          <option value='caformer_s18.sail_in1k_384'>caformer_s18.sail_in1k_384</option>
+          <option value='caformer_s18.sail_in22k_ft_in1k_384'>caformer_s18.sail_in22k_ft_in1k_384</option>
+
+          <option value='vit_base_patch16_224.augreg2_in21k_ft_in1k'>vit_base_patch16_224.augreg2_in21k_ft_in1k</option>
+          <option value='vit_base_patch16_224.augreg_in1k'>vit_base_patch16_224.augreg_in1k</option>
+          <option value='vit_base_patch16_224.augreg_in21k'>vit_base_patch16_224.augreg_in21k</option>
+          <option value='vit_base_patch16_224.augreg_in21k_ft_in1k'>vit_base_patch16_224.augreg_in21k_ft_in1k</option>
+          <option value='vit_base_patch16_224.dino'>vit_base_patch16_224.dino</option>
+          <option value='vit_base_patch16_224.mae'>vit_base_patch16_224.mae</option>
+          <option value='vit_base_patch16_224.orig_in21k'>vit_base_patch16_224.orig_in21k</option>
+          <option value='vit_base_patch16_224.orig_in21k_ft_in1k'>vit_base_patch16_224.orig_in21k_ft_in1k</option>
+          <option value='vit_base_patch16_224.sam_in1k'>vit_base_patch16_224.sam_in1k</option>
+
+          <option value='convnext_base.fb_in1k'>convnext_base.fb_in1k</option>
+          <option value='convnext_base.fb_in22k_ft_in1k'>convnext_base.fb_in22k_ft_in1k</option>
+          <option value='convnext_base.fb_in22k_ft_in1k_384'>convnext_base.fb_in22k_ft_in1k_384</option>
+          <option value='convnext_base.fb_in22k'>convnext_base.fb_in22k</option>
+          <option value='convnext_base.dinov3_lvd1689m'>convnext_base.dinov3_lvd1689m</option>
+          <option value='convnext_base.clip_laion2b'>convnext_base.clip_laion2b</option>
+          <option value='convnext_base.clip_laion2b_augreg'>convnext_base.clip_laion2b_augreg</option>
+          <option value='convnext_base.clip_laion2b_augreg_ft_in1k'>convnext_base.clip_laion2b_augreg_ft_in1k</option>
+          <option value='convnext_base.clip_laion2b_augreg_ft_in12k'>convnext_base.clip_laion2b_augreg_ft_in12k</option>
+          <option value='convnext_base.clip_laion2b_augreg_ft_in12k_in1k'>convnext_base.clip_laion2b_augreg_ft_in12k_in1k</option>
+          <option value='convnext_base.clip_laion2b_augreg_ft_in12k_in1k_384'>convnext_base.clip_laion2b_augreg_ft_in12k_in1k_384</option>
+          <option value='convnext_base.clip_laiona'>convnext_base.clip_laiona</option>
+          <option value='convnext_base.clip_laiona_320'>convnext_base.clip_laiona_320</option>
+          <option value='convnext_base.clip_laiona_augreg_320'>convnext_base.clip_laiona_augreg_320</option>
+          <option value='convnext_base.clip_laiona_augreg_ft_in1k_384'>convnext_base.clip_laiona_augreg_ft_in1k_384</option>
+
           <option value='eva02_base_patch14_448.mim_in22k_ft_in22k_in1k'>eva02_base_patch14_448.mim_in22k_ft_in22k_in1k</option>
-          <option value='resnet50'>resnet50</option>
+          <option value='eva02_base_patch14_448.mim_in22k_ft_in1k'>eva02_base_patch14_448.mim_in22k_ft_in1k</option>
+          <option value='eva02_base_patch14_448.mim_in22k_ft_in22k'>eva02_base_patch14_448.mim_in22k_ft_in22k</option>
+
+          <option value='resnet50.a1_in1k'>resnet50.a1_in1k</option>
+          <option value='resnet50.a1h_in1k'>resnet50.a1h_in1k</option>
+          <option value='resnet50.a2_in1k'>resnet50.a2_in1k</option>
+          <option value='resnet50.a3_in1k'>resnet50.a3_in1k</option>
+          <option value='resnet50.am_in1k'>resnet50.am_in1k</option>
+          <option value='resnet50.b1k_in1k'>resnet50.b1k_in1k</option>
+          <option value='resnet50.b2k_in1k'>resnet50.b2k_in1k</option>
+          <option value='resnet50.bt_in1k'>resnet50.bt_in1k</option>
+          <option value='resnet50.c1_in1k'>resnet50.c1_in1k</option>
+          <option value='resnet50.c2_in1k'>resnet50.c2_in1k</option>
+          <option value='resnet50.d_in1k'>resnet50.d_in1k</option>
+          <option value='resnet50.fb_ssl_yfcc100m_ft_in1k'>resnet50.fb_ssl_yfcc100m_ft_in1k</option>
+          <option value='resnet50.fb_swsl_ig1b_ft_in1k'>resnet50.fb_swsl_ig1b_ft_in1k</option>
+          <option value='resnet50.gluon_in1k'>resnet50.gluon_in1k</option>
+          <option value='resnet50.ra_in1k'>resnet50.ra_in1k</option>
+          <option value='resnet50.ram_in1k'>resnet50.ram_in1k</option>
+          <option value='resnet50.tv2_in1k'>resnet50.tv2_in1k</option>
+          <option value='resnet50.tv_in1k'>resnet50.tv_in1k</option>
         </param>
         <param name="missing_image_strategy" type="boolean" truevalue="true" falsevalue="false" checked="false"
                label="Drop rows with missing images?" help="True = drop, False = replace with placeholder (default)"/>

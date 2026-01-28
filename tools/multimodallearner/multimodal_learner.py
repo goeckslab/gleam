@@ -67,7 +67,7 @@ def parse_args(argv=None):
                         help="DataLoader worker count (0 disables multiprocessing).")
     parser.add_argument("--num_workers_eval", type=int, default=None,
                         help="DataLoader workers for evaluation; defaults to --num_workers.")
-    parser.add_argument("--backbone_image", type=str, default="swin_base_patch4_window7_224")
+    parser.add_argument("--backbone_image", type=str, default="swin_base_patch4_window7_224.ms_in22k_ft_in1k")
     parser.add_argument("--backbone_text", type=str, default="microsoft/deberta-v3-base")
     parser.add_argument("--validation_size", type=float, default=0.2)
     parser.add_argument("--split_probabilities", type=float, nargs=3,
