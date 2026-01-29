@@ -264,6 +264,7 @@ def write_outputs(
     raw_metrics = eval_results.get("raw_metrics", {})
     ag_by_split = eval_results.get("ag_eval", {})
     fit_summary_obj = eval_results.get("fit_summary")
+    roc_curves = eval_results.get("roc_curves")
 
     cfg_yaml = _load_config_yaml(args, predictor)
     backbone_replacements = _build_backbone_replacements(cfg_yaml, ag_config, args)
@@ -307,6 +308,7 @@ def write_outputs(
                 "ag_eval": ag_by_split,
                 "ag_eval_std": ag_by_split_std,
                 "fit_summary": fit_summary_obj,
+                "roc_curves": roc_curves,
                 "problem_type": problem_type,
                 "predictor_path": getattr(predictor, "path", None),
                 "threshold": args.threshold,

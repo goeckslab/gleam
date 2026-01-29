@@ -316,7 +316,7 @@ def evaluate_predictor_all_splits(
     eval_metric: Optional[str],
     threshold_test: Optional[float],
     df_test_external: Optional[pd.DataFrame] = None,
-) -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict[str, float]]]:
+) -> Tuple[Dict[str, Dict[str, float]], Dict[str, Dict[str, float]], Dict[str, dict]]:
     """
     Returns (raw_metrics, ag_scores_by_split)
       - raw_metrics: our transparent suite (threshold applied to Test/External Test only inside metrics_logic)
@@ -335,7 +335,7 @@ def evaluate_predictor_all_splits(
         ag_by_split["Test"] = ag_evaluate_safely(predictor, df_test_effective, metrics=metrics_req)
 
     # Transparent suite (threshold on Test handled inside metrics_logic)
-    _, raw_metrics = evaluate_all_transparency(
+    _, raw_metrics, roc_curves = evaluate_all_transparency(
         predictor=predictor,
         train_df=df_train,
         val_df=df_val,
@@ -346,12 +346,20 @@ def evaluate_predictor_all_splits(
     )
 
     if df_test_external is not None and df_test_external is not df_test and len(df_test_external):
-        raw_metrics["Test (external)"] = compute_metrics_for_split(
-            predictor, df_test_external, label_col, problem_type, threshold=threshold_test
+        ext_metrics, ext_curve = compute_metrics_for_split(
+            predictor,
+            df_test_external,
+            label_col,
+            problem_type,
+            threshold=threshold_test,
+            return_curve=True,
         )
+        raw_metrics["Test (external)"] = ext_metrics
+        if ext_curve:
+            roc_curves["Test (external)"] = ext_curve
         ag_by_split["Test (external)"] = ag_evaluate_safely(predictor, df_test_external, metrics=metrics_req)
 
-    return raw_metrics, ag_by_split
+    return raw_metrics, ag_by_split, roc_curves
 
 
 def fit_summary_safely(predictor) -> Optional[dict]:
