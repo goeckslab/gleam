@@ -50,7 +50,7 @@ def run_autogluon_test_experiment(
         problem_type = infer_problem_type(predictor, base_df, target_column)
 
     df_test_final = df_test_external if df_test_external is not None else df_test_internal
-    raw_metrics, ag_by_split = evaluate_predictor_all_splits(
+    raw_metrics, ag_by_split, roc_curves = evaluate_predictor_all_splits(
         predictor=predictor,
         df_train=df_train,
         df_val=df_val,
@@ -69,6 +69,7 @@ def run_autogluon_test_experiment(
         "raw_metrics": raw_metrics,
         "ag_eval": ag_by_split,
         "fit_summary": summary,
+        "roc_curves": roc_curves,
     }
     logger.info("Evaluation complete; splits: %s", list(raw_metrics.keys()))
     return result

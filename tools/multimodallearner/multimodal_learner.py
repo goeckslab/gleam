@@ -457,6 +457,7 @@ def main():
         ag_folds=ag_folds,
         raw_metrics_std=raw_metrics_std,
         ag_by_split_std=ag_by_split_std,
+        ag_config=ag_config,
     )
 
 
