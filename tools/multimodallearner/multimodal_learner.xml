@@ -1,4 +1,4 @@
-<tool id="multimodal_learner" name="Multimodal Learner" version="0.1.5" profile="22.01">
+<tool id="multimodal_learner" name="Multimodal Learner" version="0.1.6" profile="22.01">
   <description>Train and evaluate an AutoGluon Multimodal model (tabular + image + text)</description>
 
   <requirements>
