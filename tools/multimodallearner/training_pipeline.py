@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import contextlib
+import copy
 import importlib
 import io
 import json
@@ -66,6 +67,84 @@ def _resolve_num_workers(
         logger.info("Using default %s num_workers=%d (heuristic).", label, int(default_value))
         return int(default_value)
     return None
+
+
+def _resolve_num_gpus(env_keys: List[str]) -> int:
+    env_val = _get_env_int(env_keys)
+    if env_val is not None:
+        resolved = max(0, int(env_val))
+        logger.info("Using env-configured num_gpus=%d.", resolved)
+        return resolved
+    if not torch.cuda.is_available():
+        logger.info("CUDA not available; setting num_gpus=0.")
+        return 0
+    detected = max(0, int(torch.cuda.device_count()))
+    logger.info("Auto-detected GPU count=%d; setting num_gpus=%d.", detected, detected)
+    return detected
+
+
+def _requested_num_gpus(hyperparameters: Dict) -> Optional[int]:
+    if not isinstance(hyperparameters, dict):
+        return None
+
+    env_cfg = hyperparameters.get("env")
+    nested_val = env_cfg.get("num_gpus") if isinstance(env_cfg, dict) else None
+    dotted_val = hyperparameters.get("env.num_gpus")
+    for val in (nested_val, dotted_val):
+        if val is None:
+            continue
+        try:
+            return int(val)
+        except (TypeError, ValueError):
+            logger.warning("Ignoring non-integer num_gpus value: %s", val)
+    return None
+
+
+def _with_single_gpu(hyperparameters: Dict) -> Dict:
+    hp = copy.deepcopy(hyperparameters or {})
+    env_cfg = hp.get("env")
+    if not isinstance(env_cfg, dict):
+        env_cfg = {}
+    env_cfg["num_gpus"] = 1
+    hp["env"] = env_cfg
+    hp["env.num_gpus"] = 1
+    return hp
+
+
+def _enforce_cpu_gpu_safety(hyperparameters: Dict) -> Dict:
+    """
+    Ensure GPU settings are valid for the current runtime.
+    In CPU-only environments, always force num_gpus=0 even if overridden.
+    """
+    hp = copy.deepcopy(hyperparameters or {})
+    env_cfg = hp.get("env")
+    if not isinstance(env_cfg, dict):
+        env_cfg = {}
+
+    if not torch.cuda.is_available():
+        env_cfg["num_gpus"] = 0
+        hp["env"] = env_cfg
+        hp["env.num_gpus"] = 0
+        logger.warning("CUDA is unavailable; forcing num_gpus=0 despite overrides.")
+        return hp
+
+    hp["env"] = env_cfg
+    return hp
+
+
+def _looks_like_nccl_dist_init_error(exc: Exception) -> bool:
+    text = f"{type(exc).__name__}: {exc}".lower()
+    if "nccl" not in text:
+        return False
+    markers = (
+        "distbackenderror",
+        "processraisedexception",
+        "init_process_group",
+        "operation not supported",
+        "unhandled cuda error",
+        "cuda failure",
+    )
+    return any(marker in text for marker in markers)
 
 # ---------------------- small utilities ----------------------
 
@@ -504,11 +583,15 @@ def autogluon_hyperparameters(
     )
     if resolved_num_workers_inference is None and resolved_num_workers is not None:
         resolved_num_workers_inference = resolved_num_workers
+    resolved_num_gpus = _resolve_num_gpus(
+        ["AG_MM_NUM_GPUS", "AG_NUM_GPUS", "AUTOMM_NUM_GPUS", "NUM_GPUS"],
+    )
     if resolved_num_workers is not None:
         env_cfg["num_workers"] = int(resolved_num_workers)
     if resolved_num_workers_inference is not None:
         key = "num_workers_inference"
         env_cfg[key] = int(resolved_num_workers_inference)
+    env_cfg["num_gpus"] = int(resolved_num_gpus)
 
     optim_cfg = {}
     if epochs is not None:
@@ -555,6 +638,7 @@ def autogluon_hyperparameters(
         hp["env.num_workers"] = int(resolved_num_workers)
     if resolved_num_workers_inference is not None:
         hp[f"env.{key}"] = int(resolved_num_workers_inference)
+    hp["env.num_gpus"] = int(resolved_num_gpus)
     if backbone_image:
         hp["model.timm_image.checkpoint_name"] = str(backbone_image)
     if backbone_text:
@@ -566,6 +650,7 @@ def autogluon_hyperparameters(
     else:
         user_hp = load_user_hparams(hyperparameters)
     hp = deep_update(hp, user_hp)
+    hp = _enforce_cpu_gpu_safety(hp)
     hp = _prune_empty(hp)
 
     fit_cfg = {}
@@ -632,7 +717,26 @@ def run_autogluon_experiment(
         len(df_test_internal),
         (test_dataset is not None and not test_dataset.empty),
     )
-    predictor.fit(**fit_kwargs)
+    requested_num_gpus = _requested_num_gpus(hyperparameters)
+    try:
+        predictor.fit(**fit_kwargs)
+    except Exception as exc:
+        if not _looks_like_nccl_dist_init_error(exc):
+            raise
+        if requested_num_gpus == 1:
+            raise
+        if torch.cuda.device_count() < 2:
+            raise
+
+        logger.warning(
+            "Detected NCCL distributed initialization failure; retrying with single GPU (env.num_gpus=1). Error: %s",
+            type(exc).__name__,
+        )
+        retry_hyperparameters = _with_single_gpu(hyperparameters)
+        fit_kwargs["hyperparameters"] = retry_hyperparameters
+        ag_config["hyperparameters"] = retry_hyperparameters
+        predictor = MultiModalPredictor(label=target_column, path=None)
+        predictor.fit(**fit_kwargs)
 
     return predictor, {
         "train": df_train,
