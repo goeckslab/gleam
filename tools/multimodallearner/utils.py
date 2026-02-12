@@ -39,15 +39,42 @@ def str2bool(val) -> bool:
 
 
 def load_user_hparams(hp_arg: Optional[str]) -> dict:
-    """Parse --hyperparameters (inline JSON or path to .json)."""
+    """Parse --hyperparameters (inline JSON/YAML or JSON/YAML file path)."""
     if not hp_arg:
         return {}
     try:
-        s = hp_arg.strip()
-        if s.startswith("{"):
-            return json.loads(s)
-        with open(s, "r") as f:
-            return json.load(f)
+        if isinstance(hp_arg, dict):
+            return dict(hp_arg)
+
+        raw = str(hp_arg).strip()
+        if not raw:
+            return {}
+
+        def _parse_payload(payload: str):
+            parsed = None
+            try:
+                parsed = json.loads(payload)
+            except Exception:
+                pass
+            if parsed is None:
+                try:
+                    import yaml
+                    parsed = yaml.safe_load(payload)
+                except Exception:
+                    pass
+            return parsed if isinstance(parsed, dict) else None
+
+        parsed = _parse_payload(raw)
+        if parsed is not None:
+            return parsed
+
+        if os.path.exists(raw):
+            with open(raw, "r", encoding="utf-8") as f:
+                parsed = _parse_payload(f.read())
+                if parsed is not None:
+                    return parsed
+        LOG.warning("Could not parse --hyperparameters as JSON/YAML mapping. Ignoring.")
+        return {}
     except Exception as e:
         LOG.warning(f"Could not parse --hyperparameters: {e}. Ignoring.")
         return {}
