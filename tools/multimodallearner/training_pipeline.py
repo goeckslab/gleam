@@ -22,6 +22,29 @@ from packaging.version import Version
 logger = logging.getLogger(__name__)
 
 _LOW_SHM_BYTES = 1 << 30  # 1 GiB
+_MISSING = object()
+_HP_ALIAS_KEYS = [
+    "env.num_gpus",
+    "env.num_workers",
+    "env.num_workers_inference",
+    "env.per_gpu_batch_size",
+    "optimization.max_epochs",
+    "optimization.epochs",
+    "optimization.learning_rate",
+    "optimization.lr",
+    "optimization.batch_size",
+    "optimization.per_device_train_batch_size",
+    "optimization.train_batch_size",
+    "optim.max_epochs",
+    "optim.epochs",
+    "optim.learning_rate",
+    "optim.lr",
+    "optim.batch_size",
+    "optim.per_device_train_batch_size",
+    "model.names",
+    "model.hf_text.checkpoint_name",
+    "model.timm_image.checkpoint_name",
+]
 
 
 def _get_env_int(keys: List[str]) -> Optional[int]:
@@ -150,15 +173,74 @@ def _looks_like_nccl_dist_init_error(exc: Exception) -> bool:
 
 
 def load_user_hparams(hp_arg: Optional[str]) -> dict:
-    """Parse --hyperparameters (inline JSON or path to .json)."""
+    """Parse --hyperparameters (inline JSON/YAML or a JSON/YAML file path)."""
     if not hp_arg:
         return {}
     try:
-        s = hp_arg.strip()
-        if s.startswith("{"):
-            return json.loads(s)
-        with open(s, "r") as f:
-            return json.load(f)
+        if isinstance(hp_arg, dict):
+            return copy.deepcopy(hp_arg)
+
+        raw = str(hp_arg).strip()
+        if not raw:
+            return {}
+
+        def _parse_payload(payload: str):
+            parsed = None
+            json_err = None
+            yaml_err = None
+            type_err = None
+
+            try:
+                parsed = json.loads(payload)
+            except Exception as exc:
+                json_err = exc
+
+            if parsed is None:
+                try:
+                    import yaml  # Lazy import; YAML is optional at runtime.
+                    parsed = yaml.safe_load(payload)
+                except Exception as exc:
+                    yaml_err = exc
+
+            if parsed is None:
+                return None, json_err, yaml_err, type_err
+            if not isinstance(parsed, dict):
+                type_err = TypeError(f"expected dict, got {type(parsed).__name__}")
+                return None, json_err, yaml_err, type_err
+            return parsed, json_err, yaml_err, type_err
+
+        parsed, json_err, yaml_err, type_err = _parse_payload(raw)
+        if parsed is not None:
+            return parsed
+
+        file_json_err = None
+        file_yaml_err = None
+        file_type_err = None
+        if os.path.exists(raw):
+            try:
+                with open(raw, "r", encoding="utf-8") as f:
+                    payload = f.read()
+                parsed, file_json_err, file_yaml_err, file_type_err = _parse_payload(payload)
+                if parsed is not None:
+                    return parsed
+            except Exception as exc:
+                logger.warning("Could not read --hyperparameters file '%s': %s", raw, exc)
+                return {}
+
+        logger.warning(
+            (
+                "Could not parse --hyperparameters as inline JSON/YAML or JSON/YAML file; ignoring. "
+                "inline_json_error=%s inline_yaml_error=%s inline_type_error=%s "
+                "file_json_error=%s file_yaml_error=%s file_type_error=%s"
+            ),
+            json_err,
+            yaml_err,
+            type_err,
+            file_json_err,
+            file_yaml_err,
+            file_type_err,
+        )
+        return {}
     except Exception as e:
         logger.warning(f"Could not parse --hyperparameters: {e}. Ignoring.")
         return {}
@@ -172,6 +254,61 @@ def deep_update(dst: dict, src: dict) -> dict:
         else:
             dst[k] = v
     return dst
+
+
+def _set_nested_key(dst: dict, dotted_key: str, value) -> None:
+    parts = dotted_key.split(".")
+    cur = dst
+    for part in parts[:-1]:
+        node = cur.get(part)
+        if not isinstance(node, dict):
+            node = {}
+            cur[part] = node
+        cur = node
+    cur[parts[-1]] = value
+
+
+def _get_nested_key(src: dict, dotted_key: str, default=_MISSING):
+    cur = src
+    for part in dotted_key.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return default
+        cur = cur[part]
+    return cur
+
+
+def _apply_dotted_overrides_to_nested(hp: dict) -> dict:
+    """
+    Mirror dotted keys into nested dicts so user overrides stay consistent.
+    """
+    normalized = copy.deepcopy(hp or {})
+    for key, value in list((hp or {}).items()):
+        if isinstance(key, str) and "." in key:
+            _set_nested_key(normalized, key, copy.deepcopy(value))
+    return normalized
+
+
+def _synchronize_hparam_aliases(hp: dict) -> dict:
+    """
+    Keep nested and dotted aliases consistent to avoid conflicting overrides.
+    Nested values take precedence when both exist.
+    """
+    synced = copy.deepcopy(hp or {})
+    candidate_keys = set(_HP_ALIAS_KEYS)
+    candidate_keys.update(
+        key for key in synced.keys()
+        if isinstance(key, str) and "." in key
+    )
+
+    for dotted_key in sorted(candidate_keys):
+        nested_value = _get_nested_key(synced, dotted_key, default=_MISSING)
+        has_dotted = dotted_key in synced
+        if nested_value is not _MISSING:
+            synced[dotted_key] = copy.deepcopy(nested_value)
+            continue
+        if has_dotted:
+            _set_nested_key(synced, dotted_key, copy.deepcopy(synced[dotted_key]))
+    return synced
 
 
 @contextlib.contextmanager
@@ -261,7 +398,9 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
 
     user_hp = args.hyperparameters if isinstance(args.hyperparameters, dict) else load_user_hparams(args.hyperparameters)
     if user_hp and _is_valid_hp_dict(user_hp):
-        hp = deep_update(hp, user_hp)
+        user_hp = _apply_dotted_overrides_to_nested(user_hp)
+    else:
+        user_hp = {}
 
     # Map CLI knobs into AutoMM optimization hyperparameters when provided.
     # We set multiple common key names (nested dicts and dotted flat keys) to
@@ -294,7 +433,7 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
     # Map backbone selections into mm_hparams if provided
     try:
         has_text_cols = bool(text_cols)
-        has_image_cols = False
+        has_image_cols = bool(image_columns)
         model_names_cache: Optional[List[str]] = None
         model_names_modified = False
 
@@ -343,10 +482,14 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
     except Exception:
         logger.warning("Failed to attach backbone selections to mm_hparams; continuing without them.")
 
+    if user_hp:
+        # Merge user overrides last so explicit custom keys always win.
+        hp = deep_update(hp, user_hp)
+
     if ag_version:
         logger.info(f"Detected AutoGluon version: {ag_version}; applied robust hyperparameter mappings.")
 
-    return hp
+    return _synchronize_hparam_aliases(hp)
 
 
 def train_predictor(
@@ -644,13 +787,15 @@ def autogluon_hyperparameters(
     if backbone_text:
         hp["model.hf_text.checkpoint_name"] = str(backbone_text)
 
-    # Merge user-provided hyperparameters (inline JSON or path) last so they win.
+    # Merge user-provided hyperparameters (inline JSON/YAML or file path) last so they win.
     if isinstance(hyperparameters, dict):
         user_hp = hyperparameters
     else:
         user_hp = load_user_hparams(hyperparameters)
-    hp = deep_update(hp, user_hp)
+    hp = deep_update(hp, _apply_dotted_overrides_to_nested(user_hp))
+    hp = _synchronize_hparam_aliases(hp)
     hp = _enforce_cpu_gpu_safety(hp)
+    hp = _synchronize_hparam_aliases(hp)
     hp = _prune_empty(hp)
 
     fit_cfg = {}
