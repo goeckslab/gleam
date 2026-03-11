@@ -80,6 +80,11 @@ jobs:
           if [ ! -d "$venv" ]; then
             continue
           fi
+          if [ ! -x "$venv/bin/python" ]; then
+            echo "Removing stale venv without python: $venv"
+            rm -rf "$venv"
+            continue
+          fi
           if [ ! -x "$venv/bin/galaxyctl" ]; then
             echo "Removing stale venv without galaxyctl: $venv"
             rm -rf "$venv"
@@ -98,7 +103,9 @@ jobs:
           fi
           echo "== $venv =="
           ls -la "$venv/bin" || true
+          ls -la "$venv/bin/python" || true
           ls -la "$venv/bin/galaxyctl" || true
+          head -n 1 "$venv/bin/galaxyctl" || true
         done
     # Install the `wheel` package so that when installing other packages which
     # are not available as wheels, pip will build a wheel for them, which can be cached.
@@ -377,6 +384,11 @@ jobs:
           if [ ! -d "$venv" ]; then
             continue
           fi
+          if [ ! -x "$venv/bin/python" ]; then
+            echo "Removing stale venv without python: $venv"
+            rm -rf "$venv"
+            continue
+          fi
           if [ ! -x "$venv/bin/galaxyctl" ]; then
             echo "Removing stale venv without galaxyctl: $venv"
             rm -rf "$venv"
@@ -395,7 +407,9 @@ jobs:
           fi
           echo "== $venv =="
           ls -la "$venv/bin" || true
+          ls -la "$venv/bin/python" || true
           ls -la "$venv/bin/galaxyctl" || true
+          head -n 1 "$venv/bin/galaxyctl" || true
         done
     - name: Get number of CPU cores
       uses: SimenB/github-actions-cpu-cores@v2
@@ -427,7 +441,9 @@ jobs:
           fi
           echo "== $venv =="
           ls -la "$venv/bin" || true
+          ls -la "$venv/bin/python" || true
           ls -la "$venv/bin/galaxyctl" || true
+          head -n 1 "$venv/bin/galaxyctl" || true
         done
     - uses: actions/upload-artifact@v7
       with:
