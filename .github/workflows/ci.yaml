@@ -219,14 +219,16 @@ jobs:
         ports:
           - 5432:5432
     steps:
-    - name: Free disk space
-      run: |
-        echo "Disk usage BEFORE cleanup:"
-        df -h
-        echo "Removing .NET..."
-        sudo rm -rf /usr/share/dotnet || true
-        echo "Removing Android SDK..."
-        sudo rm -rf /usr/local/lib/android || true
+	    - name: Free disk space
+	      run: |
+	        echo "Disk usage BEFORE cleanup:"
+	        df -h
+	        echo "Directory sizes BEFORE cleanup:"
+	        sudo du -sh /opt/hostedtoolcache /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup 2>/dev/null || true
+	        echo "Removing .NET..."
+	        sudo rm -rf /usr/share/dotnet || true
+	        echo "Removing Android SDK..."
+	        sudo rm -rf /usr/local/lib/android || true
         echo "Removing Haskell..."
         sudo rm -rf /opt/ghc || true
         sudo rm -rf /usr/local/.ghcup || true
