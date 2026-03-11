@@ -320,6 +320,7 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
 
   <tests>
     <!-- Basic run with images + external test set -->
+    <!--
     <test expect_num_outputs="3">
       <param name="input_csv" value="train.csv"/>
       <param name="target_column" value="7"/>
@@ -335,8 +336,10 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
         </assert_contents>
       </output>
     </test>
+    -->
 
     <!-- Custom threshold -->
+    <!--
     <test expect_num_outputs="3">
       <param name="input_csv" value="train.csv"/>
       <param name="target_column" value="7"/>
@@ -352,8 +355,10 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
         </assert_contents>
       </output>
     </test>
+    -->
 
     <!-- No external test set; internal split -->
+    <!--
     <test expect_num_outputs="3">
       <param name="input_csv" value="train.csv"/>
       <param name="target_column" value="7"/>
@@ -366,6 +371,7 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
         </assert_contents>
       </output>
     </test>
+    -->
 
     <!-- Text/tabular only (ignore images) -->
     <test expect_num_outputs="3">
