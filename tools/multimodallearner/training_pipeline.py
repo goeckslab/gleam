@@ -45,6 +45,26 @@ _HP_ALIAS_KEYS = [
     "model.hf_text.checkpoint_name",
     "model.timm_image.checkpoint_name",
 ]
+_AG_OPTIM_NAMESPACE_CUTOFF = Version("1.4.0")
+
+
+def _detect_autogluon_version() -> Optional[Version]:
+    try:
+        ag_mod = importlib.import_module("autogluon")
+        ag_ver = getattr(ag_mod, "__version__", None)
+        if not ag_ver:
+            return None
+        return Version(str(ag_ver))
+    except Exception:
+        return None
+
+
+def _is_ag_14_or_newer(ag_version: Optional[Version]) -> bool:
+    # Default to modern namespace to avoid hard failures on AG 1.4+ when version
+    # detection is unavailable.
+    if ag_version is None:
+        return True
+    return ag_version >= _AG_OPTIM_NAMESPACE_CUTOFF
 
 
 def _get_env_int(keys: List[str]) -> Optional[int]:
@@ -311,6 +331,94 @@ def _synchronize_hparam_aliases(hp: dict) -> dict:
     return synced
 
 
+def _normalize_hparams_for_ag_version(hp: dict, ag_version: Optional[Version]) -> dict:
+    """
+    Normalize hyperparameters to avoid deprecated/broken override keys.
+    For AutoGluon >=1.4, always emit canonical ``optim`` keys.
+    """
+    normalized = _apply_dotted_overrides_to_nested(hp or {})
+
+    if not _is_ag_14_or_newer(ag_version):
+        return _synchronize_hparam_aliases(normalized)
+
+    optim_cfg = normalized.get("optim")
+    if not isinstance(optim_cfg, dict):
+        optim_cfg = {}
+
+    legacy_optim_cfg = normalized.get("optimization")
+    if isinstance(legacy_optim_cfg, dict):
+        for key, value in legacy_optim_cfg.items():
+            if key not in optim_cfg:
+                optim_cfg[key] = copy.deepcopy(value)
+
+    for key, value in list(normalized.items()):
+        if not isinstance(key, str) or "." not in key:
+            continue
+        prefix, leaf_key = key.split(".", 1)
+        if prefix not in {"optim", "optimization"}:
+            continue
+        if leaf_key not in optim_cfg:
+            optim_cfg[leaf_key] = copy.deepcopy(value)
+
+    if "max_epochs" not in optim_cfg and "epochs" in optim_cfg:
+        optim_cfg["max_epochs"] = copy.deepcopy(optim_cfg["epochs"])
+    if "lr" not in optim_cfg and "learning_rate" in optim_cfg:
+        optim_cfg["lr"] = copy.deepcopy(optim_cfg["learning_rate"])
+
+    batch_value = _MISSING
+    for batch_key in ("per_device_train_batch_size", "batch_size", "train_batch_size"):
+        if batch_key in optim_cfg and optim_cfg[batch_key] is not None:
+            batch_value = optim_cfg[batch_key]
+            break
+    if batch_value is not _MISSING:
+        optim_cfg.setdefault("per_device_train_batch_size", copy.deepcopy(batch_value))
+        optim_cfg.setdefault("batch_size", copy.deepcopy(batch_value))
+
+    if "max_epochs" in optim_cfg:
+        try:
+            optim_cfg["max_epochs"] = int(optim_cfg["max_epochs"])
+        except (TypeError, ValueError):
+            logger.warning("Ignoring non-integer optim.max_epochs=%s", optim_cfg["max_epochs"])
+            optim_cfg.pop("max_epochs", None)
+
+    if "lr" in optim_cfg:
+        try:
+            optim_cfg["lr"] = float(optim_cfg["lr"])
+        except (TypeError, ValueError):
+            logger.warning("Ignoring non-numeric optim.lr=%s", optim_cfg["lr"])
+            optim_cfg.pop("lr", None)
+
+    for batch_key in ("per_device_train_batch_size", "batch_size"):
+        if batch_key not in optim_cfg:
+            continue
+        try:
+            optim_cfg[batch_key] = int(optim_cfg[batch_key])
+        except (TypeError, ValueError):
+            logger.warning("Ignoring non-integer optim.%s=%s", batch_key, optim_cfg[batch_key])
+            optim_cfg.pop(batch_key, None)
+
+    for stale_key in ("epochs", "learning_rate", "train_batch_size"):
+        optim_cfg.pop(stale_key, None)
+
+    normalized["optim"] = optim_cfg
+    normalized.pop("optimization", None)
+
+    for key in list(normalized.keys()):
+        if not isinstance(key, str):
+            continue
+        if key.startswith("optimization."):
+            normalized.pop(key, None)
+            continue
+        if key in {"optim.epochs", "optim.learning_rate", "optim.train_batch_size"}:
+            normalized.pop(key, None)
+
+    for key in ("max_epochs", "lr", "per_device_train_batch_size", "batch_size"):
+        if key in optim_cfg:
+            normalized[f"optim.{key}"] = copy.deepcopy(optim_cfg[key])
+
+    return _synchronize_hparam_aliases(normalized)
+
+
 @contextlib.contextmanager
 def suppress_stdout_stderr():
     """Silence noisy prints from AG internals (fit_summary)."""
@@ -353,14 +461,7 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
     ]
     text_cols = inferred_text_cols
 
-    ag_version = None
-    try:
-        ag_mod = importlib.import_module("autogluon")
-        ag_ver = getattr(ag_mod, "__version__", None)
-        if ag_ver:
-            ag_version = Version(str(ag_ver))
-    except Exception:
-        ag_mod = None
+    ag_version = _detect_autogluon_version()
 
     def _log_missing_support(key: str) -> None:
         logger.info(
@@ -399,6 +500,7 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
     user_hp = args.hyperparameters if isinstance(args.hyperparameters, dict) else load_user_hparams(args.hyperparameters)
     if user_hp and _is_valid_hp_dict(user_hp):
         user_hp = _apply_dotted_overrides_to_nested(user_hp)
+        user_hp = _normalize_hparams_for_ag_version(user_hp, ag_version)
     else:
         user_hp = {}
 
@@ -489,7 +591,7 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
     if ag_version:
         logger.info(f"Detected AutoGluon version: {ag_version}; applied robust hyperparameter mappings.")
 
-    return _synchronize_hparam_aliases(hp)
+    return _normalize_hparams_for_ag_version(hp, ag_version)
 
 
 def train_predictor(
@@ -693,8 +795,11 @@ def autogluon_hyperparameters(
                 cleaned[k] = v
         return cleaned
 
+    ag_version = _detect_autogluon_version()
+    use_modern_optim_namespace = _is_ag_14_or_newer(ag_version)
+
     # Base hyperparameters following the structure described in the AutoGluon
-    # customization guide (env / optimization / model).
+    # customization guide (env / optim / model).
     env_cfg = {}
     if random_seed is not None:
         env_cfg["seed"] = int(random_seed)
@@ -740,11 +845,17 @@ def autogluon_hyperparameters(
     if epochs is not None:
         optim_cfg["max_epochs"] = int(epochs)
     if learning_rate is not None:
-        optim_cfg["learning_rate"] = float(learning_rate)
+        lr_val = float(learning_rate)
+        if use_modern_optim_namespace:
+            optim_cfg["lr"] = lr_val
+        else:
+            optim_cfg["learning_rate"] = lr_val
     if batch_size is not None:
         bs = int(batch_size)
         optim_cfg["per_device_train_batch_size"] = bs
-        optim_cfg["train_batch_size"] = bs
+        optim_cfg["batch_size"] = bs
+        if not use_modern_optim_namespace:
+            optim_cfg["train_batch_size"] = bs
 
     model_cfg = {}
     if eval_metric:
@@ -754,29 +865,34 @@ def autogluon_hyperparameters(
     if backbone_text:
         model_cfg.setdefault("hf_text", {})["checkpoint_name"] = str(backbone_text)
 
-    hp = {
-        "env": env_cfg,
-        "optimization": optim_cfg,
-        "model": model_cfg,
-    }
+    hp = {"env": env_cfg, "model": model_cfg}
+    if use_modern_optim_namespace:
+        hp["optim"] = copy.deepcopy(optim_cfg)
+    else:
+        hp["optimization"] = copy.deepcopy(optim_cfg)
+        hp["optim"] = copy.deepcopy(optim_cfg)
 
     # Also expose the most common dotted aliases for robustness across AG versions.
     if epochs is not None:
-        hp["optimization.max_epochs"] = int(epochs)
         hp["optim.max_epochs"] = int(epochs)
+        if not use_modern_optim_namespace:
+            hp["optimization.max_epochs"] = int(epochs)
     if learning_rate is not None:
         lr_val = float(learning_rate)
-        hp["optimization.learning_rate"] = lr_val
-        hp["optimization.lr"] = lr_val
-        hp["optim.learning_rate"] = lr_val
         hp["optim.lr"] = lr_val
+        if not use_modern_optim_namespace:
+            hp["optimization.learning_rate"] = lr_val
+            hp["optimization.lr"] = lr_val
+            hp["optim.learning_rate"] = lr_val
     if batch_size is not None:
         bs_val = int(batch_size)
-        hp["optimization.per_device_train_batch_size"] = bs_val
-        hp["optimization.batch_size"] = bs_val
         hp["optim.per_device_train_batch_size"] = bs_val
         hp["optim.batch_size"] = bs_val
         hp["env.per_gpu_batch_size"] = bs_val
+        if not use_modern_optim_namespace:
+            hp["optimization.per_device_train_batch_size"] = bs_val
+            hp["optimization.batch_size"] = bs_val
+            hp["optimization.train_batch_size"] = bs_val
     if resolved_num_workers is not None:
         hp["env.num_workers"] = int(resolved_num_workers)
     if resolved_num_workers_inference is not None:
@@ -792,10 +908,11 @@ def autogluon_hyperparameters(
         user_hp = hyperparameters
     else:
         user_hp = load_user_hparams(hyperparameters)
+    user_hp = _normalize_hparams_for_ag_version(user_hp, ag_version)
     hp = deep_update(hp, _apply_dotted_overrides_to_nested(user_hp))
-    hp = _synchronize_hparam_aliases(hp)
+    hp = _normalize_hparams_for_ag_version(hp, ag_version)
     hp = _enforce_cpu_gpu_safety(hp)
-    hp = _synchronize_hparam_aliases(hp)
+    hp = _normalize_hparams_for_ag_version(hp, ag_version)
     hp = _prune_empty(hp)
 
     fit_cfg = {}
