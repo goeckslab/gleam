@@ -241,6 +241,40 @@ jobs:
       with:
         path: ~/.cache/pip
         key: pip_cache_py_${{ matrix.python-version }}_gxy_${{ needs.setup.outputs.galaxy-head-sha }}
+    - name: Cache .planemo
+      uses: actions/cache@v5
+      id: cache-planemo
+      with:
+        path: ~/.planemo
+        key: planemo_cache_py_${{ matrix.python-version }}_gxy_${{ needs.setup.outputs.galaxy-head-sha }}
+    - name: Prune stale Planemo Galaxy venvs
+      run: |
+        set -euo pipefail
+        mkdir -p ~/.planemo
+        for venv in ~/.planemo/gx_venv_*; do
+          if [ ! -d "$venv" ]; then
+            continue
+          fi
+          if [ ! -x "$venv/bin/galaxyctl" ]; then
+            echo "Removing stale venv without galaxyctl: $venv"
+            rm -rf "$venv"
+          fi
+        done
+    - name: Debug Planemo Galaxy venvs (pre-test)
+      run: |
+        set -x
+        echo "GALAXY_BRANCH=${{ needs.setup.outputs.branch }}"
+        echo "--- ~/.planemo ---"
+        ls -la ~/.planemo || true
+        echo "--- venv galaxyctl ---"
+        for venv in ~/.planemo/gx_venv_*; do
+          if [ ! -d "$venv" ]; then
+            continue
+          fi
+          echo "== $venv =="
+          ls -la "$venv/bin" || true
+          ls -la "$venv/bin/galaxyctl" || true
+        done
     - name: Get number of CPU cores
       uses: SimenB/github-actions-cpu-cores@v2
       id: cpu-cores
@@ -257,6 +291,22 @@ jobs:
         galaxy-slots: ${{ steps.cpu-cores.outputs.count }}
         # Limit each test to 15 minutes
         test_timeout: 1500
+    - name: Debug Planemo Galaxy venvs (post-test)
+      if: ${{ always() }}
+      run: |
+        set -x
+        echo "GALAXY_BRANCH=${{ needs.setup.outputs.branch }}"
+        echo "--- ~/.planemo ---"
+        ls -la ~/.planemo || true
+        echo "--- venv galaxyctl ---"
+        for venv in ~/.planemo/gx_venv_*; do
+          if [ ! -d "$venv" ]; then
+            continue
+          fi
+          echo "== $venv =="
+          ls -la "$venv/bin" || true
+          ls -la "$venv/bin/galaxyctl" || true
+        done
     - uses: actions/upload-artifact@v7
       with:
         name: 'Tool test output ${{ matrix.chunk }}'

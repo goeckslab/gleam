@@ -85,6 +85,21 @@ jobs:
             rm -rf "$venv"
           fi
         done
+    - name: Debug Planemo Galaxy venvs (setup)
+      run: |
+        set -x
+        echo "GALAXY_BRANCH=${{ env.GALAXY_BRANCH }}"
+        echo "--- ~/.planemo ---"
+        ls -la ~/.planemo || true
+        echo "--- venv galaxyctl ---"
+        for venv in ~/.planemo/gx_venv_*; do
+          if [ ! -d "$venv" ]; then
+            continue
+          fi
+          echo "== $venv =="
+          ls -la "$venv/bin" || true
+          ls -la "$venv/bin/galaxyctl" || true
+        done
     # Install the `wheel` package so that when installing other packages which
     # are not available as wheels, pip will build a wheel for them, which can be cached.
     - name: Install wheel
@@ -367,6 +382,21 @@ jobs:
             rm -rf "$venv"
           fi
         done
+    - name: Debug Planemo Galaxy venvs (pre-test)
+      run: |
+        set -x
+        echo "GALAXY_BRANCH=${{ env.GALAXY_BRANCH }}"
+        echo "--- ~/.planemo ---"
+        ls -la ~/.planemo || true
+        echo "--- venv galaxyctl ---"
+        for venv in ~/.planemo/gx_venv_*; do
+          if [ ! -d "$venv" ]; then
+            continue
+          fi
+          echo "== $venv =="
+          ls -la "$venv/bin" || true
+          ls -la "$venv/bin/galaxyctl" || true
+        done
     - name: Get number of CPU cores
       uses: SimenB/github-actions-cpu-cores@v2
       id: cpu-cores
@@ -383,6 +413,22 @@ jobs:
         galaxy-slots: ${{ steps.cpu-cores.outputs.count }}
         # Limit each test to 15 minutes
         test_timeout: 1800
+    - name: Debug Planemo Galaxy venvs (post-test)
+      if: ${{ always() }}
+      run: |
+        set -x
+        echo "GALAXY_BRANCH=${{ env.GALAXY_BRANCH }}"
+        echo "--- ~/.planemo ---"
+        ls -la ~/.planemo || true
+        echo "--- venv galaxyctl ---"
+        for venv in ~/.planemo/gx_venv_*; do
+          if [ ! -d "$venv" ]; then
+            continue
+          fi
+          echo "== $venv =="
+          ls -la "$venv/bin" || true
+          ls -la "$venv/bin/galaxyctl" || true
+        done
     - uses: actions/upload-artifact@v7
       with:
         name: 'Tool test output ${{ matrix.chunk }}'
