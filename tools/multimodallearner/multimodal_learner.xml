@@ -1,4 +1,4 @@
-<tool id="multimodal_learner" name="Multimodal Learner" version="0.1.7" profile="22.01">
+<tool id="multimodal_learner" name="Multimodal Learner" version="0.1.8" profile="22.01">
   <description>Train and evaluate an AutoGluon Multimodal model (tabular + image + text)</description>
 
   <requirements>
@@ -318,11 +318,11 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
     <data name="output_json" format="json" label="Multimodal Learner metric results on data ${on_string}"/>
   </outputs>
 
-  <tests>
-    <!-- Basic run with images + external test set -->
-    <test expect_num_outputs="3">
-      <param name="input_csv" value="train.csv"/>
-      <param name="target_column" value="7"/>
+	  <tests>
+	    <!-- Basic run with images + external test set -->
+	    <test expect_num_outputs="3">
+	      <param name="input_csv" value="train.csv"/>
+	      <param name="target_column" value="7"/>
       <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
       <param name="test_dataset_conditional|input_test" value="test.csv"/>
       <param name="use_images_conditional|use_images" value="yes"/>
@@ -332,14 +332,14 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
       <output name="output_html">
         <assert_contents>
           <has_text text="Model Performance Summary"/>
-        </assert_contents>
-      </output>
-    </test>
+	        </assert_contents>
+	      </output>
+	    </test>
 
-    <!-- Custom threshold -->
-    <test expect_num_outputs="3">
-      <param name="input_csv" value="train.csv"/>
-      <param name="target_column" value="7"/>
+	    <!-- Custom threshold -->
+	    <test expect_num_outputs="3">
+	      <param name="input_csv" value="train.csv"/>
+	      <param name="target_column" value="7"/>
       <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
       <param name="test_dataset_conditional|input_test" value="test.csv"/>
       <param name="use_images_conditional|use_images" value="yes"/>
@@ -349,27 +349,27 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
       <output name="output_json">
         <assert_contents>
           <has_text text="&quot;threshold&quot;: 0.4"/>
-        </assert_contents>
-      </output>
-    </test>
+	        </assert_contents>
+	      </output>
+	    </test>
 
-    <!-- No external test set; internal split -->
-    <test expect_num_outputs="3">
-      <param name="input_csv" value="train.csv"/>
-      <param name="target_column" value="7"/>
+	    <!-- No external test set; internal split -->
+	    <test expect_num_outputs="3">
+	      <param name="input_csv" value="train.csv"/>
+	      <param name="target_column" value="7"/>
       <param name="test_dataset_conditional|has_test_dataset" value="no"/>
       <param name="use_images_conditional|use_images" value="yes"/>
       <param name="use_images_conditional|images_zip_repeat_0|images_zip" value="images.zip"/>
       <output name="output_json">
         <assert_contents>
           <has_text text="&quot;val&quot;"/>
-        </assert_contents>
-      </output>
-    </test>
+	        </assert_contents>
+	      </output>
+	    </test>
 
-    <!-- Text/tabular only (ignore images) -->
-    <test expect_num_outputs="3">
-      <param name="input_csv" value="train.csv"/>
+	    <!-- Text/tabular only (ignore images) -->
+	    <test expect_num_outputs="3">
+	      <param name="input_csv" value="train.csv"/>
       <param name="target_column" value="7"/>
       <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
       <param name="test_dataset_conditional|input_test" value="test.csv"/>
