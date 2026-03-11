@@ -52,6 +52,25 @@ jobs:
       with:
         path: ~/.cache/pip
         key: pip_cache_py_${{ matrix.python-version }}_gxy_${{ steps.get-galaxy-sha.outputs.galaxy-head-sha }}
+    - name: Cache .planemo
+      uses: actions/cache@v5
+      id: cache-planemo
+      with:
+        path: ~/.planemo
+        key: planemo_cache_py_${{ matrix.python-version }}_gxy_${{ steps.get-galaxy-sha.outputs.galaxy-head-sha }}
+    - name: Prune stale Planemo Galaxy venvs
+      run: |
+        set -euo pipefail
+        mkdir -p ~/.planemo
+        for venv in ~/.planemo/gx_venv_*; do
+          if [ ! -d "$venv" ]; then
+            continue
+          fi
+          if [ ! -x "$venv/bin/galaxyctl" ]; then
+            echo "Removing stale venv without galaxyctl: $venv"
+            rm -rf "$venv"
+          fi
+        done
     # Install the `wheel` package so that when installing other packages which
     # are not available as wheels, pip will build a wheel for them, which can be cached.
     - name: Install wheel
@@ -98,6 +117,25 @@ jobs:
       with:
         path: ~/.cache/pip
         key: pip_cache_py_${{ matrix.python-version }}_gxy_${{ needs.setup.outputs.galaxy-head-sha }}
+    - name: Cache .planemo
+      uses: actions/cache@v5
+      id: cache-planemo
+      with:
+        path: ~/.planemo
+        key: planemo_cache_py_${{ matrix.python-version }}_gxy_${{ needs.setup.outputs.galaxy-head-sha }}
+    - name: Prune stale Planemo Galaxy venvs
+      run: |
+        set -euo pipefail
+        mkdir -p ~/.planemo
+        for venv in ~/.planemo/gx_venv_*; do
+          if [ ! -d "$venv" ]; then
+            continue
+          fi
+          if [ ! -x "$venv/bin/galaxyctl" ]; then
+            echo "Removing stale venv without galaxyctl: $venv"
+            rm -rf "$venv"
+          fi
+        done
     - name: Set default skip options for scheduled runs
       if: ${{ github.event_name == 'schedule' }}
       run: echo "EXTRA_SKIP=--skip version_bumped" >> "$GITHUB_ENV"
