@@ -490,6 +490,10 @@ jobs:
     needs: [deploy]
     if: ${{ always() && needs.deploy.result != 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' ) && github.repository_owner == 'goeckslab' }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: write
     steps:
     # report to the PR if deployment failed
     - name: Get PR object
@@ -500,7 +504,7 @@ jobs:
     - name: Create comment
       uses: peter-evans/create-or-update-comment@v4
       with:
-        token: ${{ secrets.PAT }}
+        token: ${{ github.token }}
         issue-number: ${{ steps.getpr.outputs.number }}
         body: |
           Attention: deployment ${{ needs.deploy.result }}!
