@@ -66,12 +66,33 @@ jobs:
               per_page: 100,
             });
 
-            const relevantToolFiles = changedFiles
-              .map((file) => file.filename)
-              .filter((filename) => filename.startsWith("tools/"))
-              .filter((filename) => !filename.includes("/test-data/"))
-              .filter((filename) => !filename.endsWith("/README.md"))
-              .filter((filename) => !filename.endsWith("/LICENSE"));
+            const isRelevantToolPath = (filename) =>
+              filename.startsWith("tools/") &&
+              !filename.includes("/test-data/") &&
+              !filename.endsWith("/README.md") &&
+              !filename.endsWith("/LICENSE");
+
+            const relevantToolFiles = changedFiles.flatMap((file) => {
+              const paths = [file.filename];
+              if (file.previous_filename) {
+                paths.push(file.previous_filename);
+              }
+
+              const relevantPaths = [...new Set(paths.filter(isRelevantToolPath))];
+              if (relevantPaths.length === 0) {
+                return [];
+              }
+
+              if (
+                file.status === "renamed" &&
+                file.previous_filename &&
+                file.previous_filename !== file.filename
+              ) {
+                return [`${file.previous_filename} -> ${file.filename}`];
+              }
+
+              return relevantPaths;
+            });
 
             if (relevantToolFiles.length === 0) {
               core.info("No relevant files changed under tools/. Skipping reminder issue.");
