@@ -1,0 +1,164 @@
+name: Post-merge Server Reminder
+
+on:
+  pull_request_target:
+    types:
+      - closed
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to inspect
+        required: true
+        type: number
+      dry_run:
+        description: Preview the reminder without creating an issue
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  create-reminder:
+    name: Create server update reminder issue
+    if: >-
+      ${{
+        (
+          github.event_name == 'pull_request_target' &&
+          github.event.pull_request.merged == true &&
+          github.event.pull_request.base.ref == 'main'
+        ) ||
+        github.event_name == 'workflow_dispatch'
+      }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create reminder issue
+        uses: actions/github-script@v7
+        env:
+          REMINDER_ASSIGNEE: ${{ vars.REMINDER_ASSIGNEE || 'qchiujunhao' }}
+          REMINDER_LABELS: ${{ vars.REMINDER_LABELS || 'ops' }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const isManualRun = context.eventName === "workflow_dispatch";
+            const dryRun = isManualRun && String(context.payload.inputs?.dry_run) === "true";
+            const prNumber = isManualRun
+              ? Number(context.payload.inputs?.pr_number)
+              : context.payload.pull_request.number;
+
+            const { data: pr } = isManualRun
+              ? await github.rest.pulls.get({
+                  owner,
+                  repo,
+                  pull_number: prNumber,
+                })
+              : { data: context.payload.pull_request };
+
+            const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
+              owner,
+              repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+
+            const relevantToolFiles = changedFiles
+              .map((file) => file.filename)
+              .filter((filename) => filename.startsWith("tools/"))
+              .filter((filename) => !filename.includes("/test-data/"))
+              .filter((filename) => !filename.endsWith("/README.md"))
+              .filter((filename) => !filename.endsWith("/LICENSE"));
+
+            if (relevantToolFiles.length === 0) {
+              core.info("No relevant files changed under tools/. Skipping reminder issue.");
+              return;
+            }
+
+            if (pr.base.ref !== "main") {
+              core.info(`PR #${pr.number} targets ${pr.base.ref}, not main. Skipping reminder issue.`);
+              return;
+            }
+
+            if (!pr.merged_at && !dryRun) {
+              core.info(`PR #${pr.number} is not merged. Skipping reminder issue.`);
+              return;
+            }
+
+            const assignees = process.env.REMINDER_ASSIGNEE
+              ? [process.env.REMINDER_ASSIGNEE]
+              : [];
+
+            const requestedLabels = process.env.REMINDER_LABELS
+              ? process.env.REMINDER_LABELS.split(",").map((label) => label.trim()).filter(Boolean)
+              : [];
+            const prSummaryLine = pr.merged_at
+              ? `PR #${pr.number} (${pr.title}) was merged into \`main\` by @${pr.merged_by?.login || "unknown"}.`
+              : `PR #${pr.number} (${pr.title}) targets \`main\` but is not merged yet.`;
+
+            const title = `Reminder: update cancer server after PR #${pr.number}`;
+            const body = [
+              prSummaryLine,
+              "",
+              "Follow-up checklist:",
+              "- Update the cancer server.",
+              "- Monitor the main server update.",
+              "",
+              "Relevant tool files changed:",
+              ...relevantToolFiles.map((filename) => `- \`${filename}\``),
+              "",
+              `Merged PR: ${pr.html_url}`,
+              `Merge commit: ${pr.merge_commit_sha || "n/a"}`,
+            ].join("\n");
+
+            const { data: existingIssues } = await github.rest.search.issuesAndPullRequests({
+              q: `repo:${owner}/${repo} is:issue is:open "${title}"`,
+            });
+
+            if (existingIssues.total_count > 0) {
+              core.info(`Reminder issue already exists: ${existingIssues.items[0].html_url}`);
+              return;
+            }
+
+            let labels = [];
+            if (requestedLabels.length > 0) {
+              const repoLabels = await github.paginate(github.rest.issues.listLabelsForRepo, {
+                owner,
+                repo,
+                per_page: 100,
+              });
+              const availableLabels = new Set(repoLabels.map((label) => label.name));
+              labels = requestedLabels.filter((label) => availableLabels.has(label));
+            }
+
+            const issuePayload = { owner, repo, title, body };
+            if (labels.length > 0) {
+              issuePayload.labels = labels;
+            }
+
+            if (dryRun) {
+              core.info(`Dry run for PR #${pr.number}`);
+              core.info(`Assignees: ${assignees.join(", ") || "none"}`);
+              core.info(`Labels: ${labels.join(", ") || "none"}`);
+              core.info(`Issue title: ${title}`);
+              core.info(`Issue body:\n${body}`);
+              return;
+            }
+
+            try {
+              if (assignees.length > 0) {
+                issuePayload.assignees = assignees;
+              }
+              await github.rest.issues.create(issuePayload);
+            } catch (error) {
+              if (assignees.length > 0) {
+                core.warning(`Issue created without assignee: ${error.message}`);
+                delete issuePayload.assignees;
+                await github.rest.issues.create(issuePayload);
+                return;
+              }
+              throw error;
+            }
