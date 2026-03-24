@@ -177,6 +177,49 @@ def _build_backbone_replacements(cfg: dict, ag_config: Optional[dict], args) -> 
     return replacements
 
 
+def _resolve_env_setting(cfg: dict, ag_config: Optional[dict], key: str) -> Optional[Any]:
+    hparams = (ag_config or {}).get("hyperparameters") if isinstance(ag_config, dict) else {}
+    if isinstance(hparams, dict):
+        env_cfg = hparams.get("env")
+        if isinstance(env_cfg, dict) and key in env_cfg:
+            return env_cfg.get(key)
+        dotted_val = hparams.get(f"env.{key}")
+        if dotted_val is not None:
+            return dotted_val
+
+    env_cfg = cfg.get("env") if isinstance(cfg, dict) else {}
+    if isinstance(env_cfg, dict) and key in env_cfg:
+        return env_cfg.get(key)
+    return None
+
+
+def _build_runtime_metadata_rows(
+    cfg: dict,
+    args,
+    ag_config: Optional[dict] = None,
+) -> List[tuple[str, Any]]:
+    fit_cfg = (ag_config or {}).get("fit") if isinstance(ag_config, dict) else {}
+    if not isinstance(fit_cfg, dict):
+        fit_cfg = {}
+
+    resolved_seed = _resolve_env_setting(cfg, ag_config, "seed")
+    if resolved_seed is None:
+        resolved_seed = fit_cfg.get("seed", getattr(args, "random_seed", None))
+
+    rows: List[tuple[str, Any]] = [
+        ("Random seed", resolved_seed if resolved_seed is not None else "—"),
+        ("Deterministic mode", bool(getattr(args, "deterministic", False))),
+        ("GPU count", _resolve_env_setting(cfg, ag_config, "num_gpus") or 0),
+        ("Training worker count", _resolve_env_setting(cfg, ag_config, "num_workers") or 0),
+        (
+            "Evaluation worker count",
+            _resolve_env_setting(cfg, ag_config, "num_workers_inference") or 0,
+        ),
+    ]
+
+    return rows
+
+
 def _summarize_config(cfg: dict, args, ag_config: Optional[dict] = None) -> List[tuple[str, str]]:
     """
     Build rows describing model components and key hyperparameters from a loaded config.yaml.
@@ -349,6 +392,7 @@ def write_outputs(
     )
 
     config_rows = _summarize_config(cfg_yaml, args, ag_config=ag_config)
+    runtime_rows = _build_runtime_metadata_rows(cfg_yaml, args, ag_config=ag_config)
     threshold_rows = []
     if problem_type == "binary" and args.threshold is not None:
         threshold_rows.append(("Decision threshold (Test)", f"{float(args.threshold):.3f}"))
@@ -356,7 +400,7 @@ def write_outputs(
         ("Target column", label_col),
         ("Model evaluation metric", args.eval_metric or "AutoGluon default"),
         ("Experiment quality", args.preset or "AutoGluon default"),
-    ] + threshold_rows + config_rows
+    ] + threshold_rows + runtime_rows + config_rows
 
     summary_html = build_summary_html(
         predictor=predictor,
