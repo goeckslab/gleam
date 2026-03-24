@@ -485,6 +485,155 @@ jobs:
         shed-target: toolshed
         shed-key: ${{ secrets.TS_API_KEY }}
 
+  deploy-reminder:
+    name: Create server update reminder issue
+    needs: [deploy]
+    if: ${{ needs.deploy.result == 'success' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main') && github.repository_owner == 'goeckslab' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+    - name: Get PR object
+      uses: 8BitJonny/gh-get-current-pr@2.2.0
+      id: getpr
+      with:
+        sha: ${{ github.event.after }}
+    - name: Create reminder issue
+      if: ${{ steps.getpr.outputs.number != '' }}
+      uses: actions/github-script@v7
+      env:
+        REMINDER_ASSIGNEE: ${{ vars.REMINDER_ASSIGNEE || 'qchiujunhao' }}
+        REMINDER_LABELS: ${{ vars.REMINDER_LABELS || 'ops' }}
+        PR_NUMBER: ${{ steps.getpr.outputs.number }}
+      with:
+        github-token: ${{ github.token }}
+        script: |
+          const owner = context.repo.owner;
+          const repo = context.repo.repo;
+          const prNumber = Number(process.env.PR_NUMBER);
+
+          const { data: pr } = await github.rest.pulls.get({
+            owner,
+            repo,
+            pull_number: prNumber,
+          });
+
+          const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
+            owner,
+            repo,
+            pull_number: pr.number,
+            per_page: 100,
+          });
+
+          const isRelevantToolPath = (filename) =>
+            filename.startsWith("tools/") &&
+            !filename.includes("/test-data/") &&
+            !filename.endsWith("/README.md") &&
+            !filename.endsWith("/LICENSE");
+
+          const relevantToolFiles = changedFiles.flatMap((file) => {
+            const paths = [file.filename];
+            if (file.previous_filename) {
+              paths.push(file.previous_filename);
+            }
+
+            const relevantPaths = [...new Set(paths.filter(isRelevantToolPath))];
+            if (relevantPaths.length === 0) {
+              return [];
+            }
+
+            if (
+              file.status === "renamed" &&
+              file.previous_filename &&
+              file.previous_filename !== file.filename
+            ) {
+              return [`${file.previous_filename} -> ${file.filename}`];
+            }
+
+            return relevantPaths;
+          });
+
+          if (relevantToolFiles.length === 0) {
+            core.info("No relevant files changed under tools/. Skipping reminder issue.");
+            return;
+          }
+
+          if (pr.base.ref !== "main") {
+            core.info(`PR #${pr.number} targets ${pr.base.ref}, not main. Skipping reminder issue.`);
+            return;
+          }
+
+          if (!pr.merged_at) {
+            core.info(`PR #${pr.number} is not merged. Skipping reminder issue.`);
+            return;
+          }
+
+          const assignees = process.env.REMINDER_ASSIGNEE
+            ? [process.env.REMINDER_ASSIGNEE]
+            : [];
+
+          const requestedLabels = process.env.REMINDER_LABELS
+            ? process.env.REMINDER_LABELS.split(",").map((label) => label.trim()).filter(Boolean)
+            : [];
+          const prSummaryLine = `PR #${pr.number} (${pr.title}) was merged into \`main\` by @${pr.merged_by?.login || "unknown"}.`;
+
+          const title = `Reminder: update cancer server after PR #${pr.number}`;
+          const body = [
+            prSummaryLine,
+            "",
+            "Follow-up checklist:",
+            "- [ ] Update the cancer server.",
+            "- [ ] Monitor the main server update.",
+            "",
+            "Relevant tool files changed:",
+            ...relevantToolFiles.map((filename) => `- \`${filename}\``),
+            "",
+            `Merged PR: ${pr.html_url}`,
+            `Merge commit: ${pr.merge_commit_sha || "n/a"}`,
+          ].join("\n");
+
+          const { data: existingIssues } = await github.rest.search.issuesAndPullRequests({
+            q: `repo:${owner}/${repo} is:issue is:open "${title}"`,
+          });
+
+          if (existingIssues.total_count > 0) {
+            core.info(`Reminder issue already exists: ${existingIssues.items[0].html_url}`);
+            return;
+          }
+
+          let labels = [];
+          if (requestedLabels.length > 0) {
+            const repoLabels = await github.paginate(github.rest.issues.listLabelsForRepo, {
+              owner,
+              repo,
+              per_page: 100,
+            });
+            const availableLabels = new Set(repoLabels.map((label) => label.name));
+            labels = requestedLabels.filter((label) => availableLabels.has(label));
+          }
+
+          const issuePayload = { owner, repo, title, body };
+          if (labels.length > 0) {
+            issuePayload.labels = labels;
+          }
+
+          try {
+            if (assignees.length > 0) {
+              issuePayload.assignees = assignees;
+            }
+            await github.rest.issues.create(issuePayload);
+          } catch (error) {
+            if (assignees.length > 0) {
+              core.warning(`Issue created without assignee: ${error.message}`);
+              delete issuePayload.assignees;
+              await github.rest.issues.create(issuePayload);
+              return;
+            }
+            throw error;
+          }
+
   deploy-report:
     name: Report deploy status
     needs: [deploy]

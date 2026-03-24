@@ -1,9 +1,6 @@
-name: Post-merge Server Reminder
+name: Manual Server Reminder
 
 on:
-  pull_request_target:
-    types:
-      - closed
   workflow_dispatch:
     inputs:
       pr_number:
@@ -24,15 +21,7 @@ permissions:
 jobs:
   create-reminder:
     name: Create server update reminder issue
-    if: >-
-      ${{
-        (
-          github.event_name == 'pull_request_target' &&
-          github.event.pull_request.merged == true &&
-          github.event.pull_request.base.ref == 'main'
-        ) ||
-        github.event_name == 'workflow_dispatch'
-      }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
       - name: Create reminder issue
@@ -45,19 +34,14 @@ jobs:
           script: |
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const isManualRun = context.eventName === "workflow_dispatch";
-            const dryRun = isManualRun && String(context.payload.inputs?.dry_run) === "true";
-            const prNumber = isManualRun
-              ? Number(context.payload.inputs?.pr_number)
-              : context.payload.pull_request.number;
+            const dryRun = String(context.payload.inputs?.dry_run) === "true";
+            const prNumber = Number(context.payload.inputs?.pr_number);
 
-            const { data: pr } = isManualRun
-              ? await github.rest.pulls.get({
-                  owner,
-                  repo,
-                  pull_number: prNumber,
-                })
-              : { data: context.payload.pull_request };
+            const { data: pr } = await github.rest.pulls.get({
+              owner,
+              repo,
+              pull_number: prNumber,
+            });
 
             const changedFiles = await github.paginate(github.rest.pulls.listFiles, {
               owner,
