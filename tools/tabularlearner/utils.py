@@ -230,7 +230,7 @@ def build_tabbed_html(
     if config_html:
         default_active = "config"
         tabs.append(
-            '<div class="tab active" onclick="showTab(\'config\')">Model Config Summary</div>'
+            '<div class="tab active" onclick="showTab(\'config\')">Experiment Summary</div>'
         )
         tabs.append(
             '<div class="tab" onclick="showTab(\'summary\')">Validation Summary</div>'

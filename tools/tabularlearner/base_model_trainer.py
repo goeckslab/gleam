@@ -1230,7 +1230,7 @@ class BaseModelTrainer:
             )
             row.append(_fmt(train_val))
 
-            # Validation from Train & Validation Summary first row; fallback to computed CV.
+            # Validation from the cross-validation summary first row; fallback to computed CV.
             val_val = _validation_metric(metric)
             if val_val is None:
                 val_val = self._compute_metric_value(
@@ -1247,7 +1247,7 @@ class BaseModelTrainer:
 
         df = pd.DataFrame(rows, columns=["Metric", "Train", "Validation", "Test"])
         return (
-            "<h2>Model Performance Summary</h2>"
+            "<h2>Best Model Performance</h2>"
             + '<div class="table-wrapper">'
             + df.to_html(
                 index=False,
@@ -1403,7 +1403,7 @@ class BaseModelTrainer:
             "threshold": "Threshold Plot",
             "percentage_above_below": "Percentage Above vs. Below Cutoff",
             "class_report": "Per-Class Metrics",
-            "pr_auc": "Precision-Recall AUC",
+            "pr_auc": "Precision-Recall Curve",
             "roc_auc": "Receiver Operating Characteristic AUC",
             "residuals": "Residuals Distribution",
             "error": "Prediction Error Distribution",
@@ -1412,8 +1412,7 @@ class BaseModelTrainer:
             columns=["TT (Ec)", "TT (Sec)"], errors="ignore", inplace=True
         )
         summary_html = (
-            header
-            + "<h2>Train & Validation Summary</h2>"
+            "<h2>Cross-Validation Validation Summary Across Candidate Models</h2>"
             + '<div class="table-wrapper">'
             + val_df.to_html(index=False, classes="table sortable")
             + "</div>"
@@ -1435,7 +1434,7 @@ class BaseModelTrainer:
             header
             + dataset_overview_html
             + performance_summary_html
-            + "<h2>Setup Parameters</h2>"
+            + "<h2>Experiment and Data Parameters</h2>"
             + '<div class="table-wrapper">'
             + df_setup.to_html(
                 index=False,
@@ -1687,7 +1686,7 @@ class BaseModelTrainer:
             )
         # 7) Assemble final HTML (three tabs)
         html = get_html_template()
-        html += "<h1>Tabular Learner Model Report</h1>"
+        html += "<h1>Tabular Learner Experiment Report</h1>"
         html += build_tabbed_html(
             summary_html,
             test_html,
