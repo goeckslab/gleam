@@ -117,6 +117,7 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
   --output_json '$output_json'
   --output_html '$output_html'
   --output_config '$output_config'
+  --output_model_archive '$output_model_archive'
 ]]></command>
 
   <inputs>
@@ -316,11 +317,12 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
     <data name="output_html" format="html" label="Multimodal Learner analysis report on data ${on_string}"/>
     <data name="output_config" format="yaml" label="Multimodal Learner training config on data ${on_string}"/>
     <data name="output_json" format="json" label="Multimodal Learner metric results on data ${on_string}"/>
+    <data name="output_model_archive" format="zip" label="Multimodal Learner trained model on data ${on_string}"/>
   </outputs>
 
 	  <tests>
 	    <!-- Basic run with images + external test set -->
-	    <test expect_num_outputs="3">
+	    <test expect_num_outputs="4">
 	      <param name="input_csv" value="train.csv"/>
 	      <param name="target_column" value="7"/>
       <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
@@ -337,7 +339,7 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
 	    </test>
 
 	    <!-- Custom threshold -->
-	    <test expect_num_outputs="3">
+	    <test expect_num_outputs="4">
 	      <param name="input_csv" value="train.csv"/>
 	      <param name="target_column" value="7"/>
       <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
@@ -354,7 +356,7 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
 	    </test>
 
 	    <!-- No external test set; internal split -->
-	    <test expect_num_outputs="3">
+	    <test expect_num_outputs="4">
 	      <param name="input_csv" value="train.csv"/>
 	      <param name="target_column" value="7"/>
       <param name="test_dataset_conditional|has_test_dataset" value="no"/>
@@ -368,7 +370,7 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
 	    </test>
 
 	    <!-- Text/tabular only (ignore images) -->
-	    <test expect_num_outputs="3">
+	    <test expect_num_outputs="4">
 	      <param name="input_csv" value="train.csv"/>
       <param name="target_column" value="7"/>
       <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
