@@ -1,0 +1,69 @@
+cff-version: 1.2.0
+message: "If you use GLEAM, please cite the software using the metadata below and, when available, the archived release DOI."
+title: "GLEAM: Galaxy Learning and Modeling"
+type: software
+license: MIT
+repository-code: "https://github.com/goeckslab/gleam"
+url: "https://github.com/goeckslab/gleam"
+abstract: "GLEAM is a maintained Galaxy workbench for machine learning workflows, including tabular, image, multimodal, and digital pathology tooling."
+keywords:
+  - Galaxy
+  - machine learning
+  - AutoML
+  - digital pathology
+  - multimodal learning
+  - Ludwig
+  - PyCaret
+  - AutoGluon
+authors:
+  - family-names: Lyra Jr
+    given-names: Paulo
+    affiliation: "Department of Machine Learning, Moffitt Cancer Center"
+  - family-names: Qiu
+    given-names: Junhao
+    affiliation: "Department of Machine Learning, Moffitt Cancer Center"
+  - family-names: Dang
+    given-names: Khai
+    affiliation: "Department of Machine Learning, Moffitt Cancer Center"
+  - family-names: Pybus
+    given-names: Alyssa
+    affiliation: "Department of Machine Learning, Moffitt Cancer Center"
+  - family-names: Singh
+    given-names: Maansi
+    affiliation: "Department of Machine Learning, Moffitt Cancer Center"
+  - family-names: Gu
+    given-names: Qiang
+    affiliation: "Knight Cancer Institute, Oregon Health & Science University"
+  - family-names: Sargent
+    given-names: Luke
+    affiliation: "Knight Cancer Institute, Oregon Health & Science University"
+  - family-names: Creason
+    given-names: Allison
+    affiliation: "Knight Cancer Institute, Oregon Health & Science University"
+  - family-names: Goecks
+    given-names: Jeremy
+    affiliation: "Department of Machine Learning, Moffitt Cancer Center"
+preferred-citation:
+  type: software
+  title: "GLEAM: Galaxy Learning and Modeling"
+  authors:
+    - family-names: Lyra Jr
+      given-names: Paulo
+    - family-names: Qiu
+      given-names: Junhao
+    - family-names: Dang
+      given-names: Khai
+    - family-names: Pybus
+      given-names: Alyssa
+    - family-names: Singh
+      given-names: Maansi
+    - family-names: Gu
+      given-names: Qiang
+    - family-names: Sargent
+      given-names: Luke
+    - family-names: Creason
+      given-names: Allison
+    - family-names: Goecks
+      given-names: Jeremy
+  repository-code: "https://github.com/goeckslab/gleam"
+  url: "https://github.com/goeckslab/gleam"

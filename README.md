@@ -1,108 +1,124 @@
-[![Galaxy Tool Linting and Tests for push and PR](https://github.com/goeckslab/gleam/actions/workflows/pr.yaml/badge.svg?branch=main)](https://github.com/goeckslab/gleam/actions/workflows/pr.yaml/badge.svg)
-[![Weekly global Tool Linting and Tests](https://github.com/goeckslab/gleam/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/goeckslab/gleam/actions/workflows/ci.yaml/badge.svg)
+[![Galaxy Tool Linting and Tests for push and PR](https://github.com/goeckslab/gleam/actions/workflows/pr.yaml/badge.svg?branch=main)](https://github.com/goeckslab/gleam/actions/workflows/pr.yaml)
+[![Weekly global Tool Linting and Tests](https://github.com/goeckslab/gleam/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/goeckslab/gleam/actions/workflows/ci.yaml)
 
 # GLEAM: Galaxy Learning and Modeling
 
-GLEAM (Galaxy Learning and Modeling) is a suite of machine learning tools for the [Galaxy](https://usegalaxy.org/) platform. Developed by the [Goecks Lab](https://goeckslab.org/), GLEAM empowers researchers to train models, generate predictions, and produce reproducible reports—all from a user-friendly interface without writing code.
+GLEAM (Galaxy Learning and Modeling) is a maintained suite of Galaxy tools for no-code and low-code machine learning workflows. The repository is the software-maintenance home for the GLEAM workbench: it contains Galaxy wrappers, Python entrypoints, test assets, and container build definitions for tool development and deployment in Galaxy.
 
-## Features
-- Modern best practices for machine learning
-- Reproducible and scalable workflows
-- Machine learning support for diverse data types: tabular, image, text, categorical, and more
-- Deep learning via Ludwig and automated ML via PyCaret
-- Easy installation in Galaxy via XML wrappers
-- Auto-generated visual reports
+This repository is not intended to be a manuscript-specific analysis archive. Paper-specific benchmark datasets, figure-generation notebooks, and result tables should live in separate companion repositories or public data archives referenced by the corresponding publication.
 
-## Available Tools
+## Tool Families
 
-### 1. TabularLearner
+### Tabular Learner
+- Backend: PyCaret
+- Tasks: classification and regression on structured tabular data
+- Outputs: trained model artifact, best-model parameters, HTML evaluation report
+- Docs: [tools/tabularlearner/README.md](tools/tabularlearner/README.md)
 
-Machine learning for structured tabular datasets using [PyCaret](https://pycaret.org/).
+### Image Learner
+- Backend: Ludwig with TorchVision and MetaFormer model support
+- Tasks: image classification and regression from image ZIP archives plus metadata CSV files
+- Outputs: trained model artifact, HTML report, metrics/prediction assets
+- Docs: [tools/imagelearner/README.md](tools/imagelearner/README.md)
 
-- Train classification and regression models
-- Evaluate performance and extract feature importance
-- Generate predictions on new datasets
-- Create interactive HTML reports
+### Multimodal Learner
+- Backend: AutoGluon Multimodal
+- Tasks: classification and regression using tabular, text, and image inputs
+- Outputs: HTML report, metrics JSON, training config YAML
+- Docs: [tools/multimodallearner/README.md](tools/multimodallearner/README.md)
 
-### 2. ImageLearner
+### Galaxy-Ludwig
+- Backend: Ludwig
+- Tasks: general-purpose model configuration, training, evaluation, prediction, hyperparameter search, and visualization
+- Outputs: Ludwig model artifacts, metrics, reports, plots, and configuration files
+- Docs: [tools/galaxy-ludwig/README.md](tools/galaxy-ludwig/README.md)
 
-Deep learning-based image classification using [Ludwig](https://ludwig.ai/).
-
-- input files: Zip file with images  and csv with metadata
-- Tasks: classification
-- Models available: ResNet, EfficientNet, VGG, Shufflenet, Vit, AlexNet and More...
-- Output: Ludwig_model file, a report in the form of an HTML file (with learning curves, confusion matrices, and etc...), and a collection of CSV/json/png files containing the predictions, experiment stats and visualizations.
-
-### 3. Multimodal Learner
-
-AutoGluon-based training for datasets that mix tabular, text, and image columns.
-
-- Ingests CSV/TSV labels with optional text fields and image paths (images supplied as ZIP archives)
-- Supports classification and regression with quality presets, time limits, and deterministic mode
-- Choose modern text and vision backbones while handling missing images and class balancing
-- Produces metrics (JSON), training config (YAML), and an interactive HTML report for validation/test splits
-
-### 4. Galaxy-Ludwig
-
-General-purpose interface to Ludwig's full machine learning capabilities.
-
-- Train and evaluate models on structured input (tabular, image, text, etc.)
-- Expose Ludwig’s flexible configuration system
-- Ideal for users needing advanced model customization
-
-### 5. Galaxy-Digital Pathology Processing
-
-Set of three specialized tools designed to transforms raw, large pathology images into a structured format, enabling the application of best practices for model development and ensuring data readiness for robust and efficient training.
-
-- Image Tiler: Accepts .svs image format, which is the most common proprietary format for digital pathology whole slide images.
-- Embedding Extractor: Leverages pre-trained models from the TorchVision foundation models for feature extraction (for example, ResNet50, EfficientNet_B0, DenseNet121).
-- Multiple Instance Learning (MIL) Bag Processor: Facilitates the aggregation of embeddings from individual image tiles into "bags" using various pooling techniques (such as Max Pooling or Attention Pooling).
+### Digital Pathology Utilities
+- Image tiling with PyHIST
+- Embedding extraction with TorchVision and pathology-oriented backbones
+- MIL bag construction from embedding tables
+- Docs:
+  - [tools/galaxy-tiler/README.md](tools/galaxy-tiler/README.md)
+  - [tools/galaxy-embedding_extractor/README.md](tools/galaxy-embedding_extractor/README.md)
+  - [tools/galaxy-mil_bag/README.md](tools/galaxy-mil_bag/README.md)
 
 ## Installation
 
-### Install from Galaxy ToolShed (Recommended)
+### Option 1: Install released tools from the Galaxy ToolShed
 
-GLEAM tools are available in the [Galaxy ToolShed](https://toolshed.g2.bx.psu.edu/) and can be installed directly into your Galaxy instance:
+GLEAM tools are published for Galaxy administrators through the [Galaxy ToolShed](https://toolshed.g2.bx.psu.edu/).
 
-1. Log in to your Galaxy instance as an administrator
-2. Navigate to **Admin** → **Install and Uninstall** (or **Manage Tools**)
-3. Search for the following tool suites under the **goeckslab** owner:
-   - `suite_tabular_learner` - TabularLearner tools
-   - `suite_imagelearner` - ImageLearner tools
-   - `suite_ludwig` - Galaxy-Ludwig tools
-   - `suite_tiler` - Image Tiler tool
-   - `suite_embedding_extractor` - Embedding Extractor tool
-   - `suite_mil_bag` - Multiple Instance Learning Bag Processor tool
-4. Select the desired tool suites and click **Install**
+1. Sign in to your Galaxy instance as an administrator.
+2. Open `Admin` and then `Install and Uninstall` or `Manage Tools`.
+3. Search for tool suites published by the `goeckslab` owner.
+4. Install the suites you need, for example:
+   - `suite_tabular_learner`
+   - `suite_imagelearner`
+   - `suite_ludwig`
+   - `suite_tiler`
+   - `suite_embedding_extractor`
+   - `suite_mil_bag`
+5. Let Galaxy resolve the declared dependencies and restart the server if your deployment requires it.
 
-Galaxy will automatically handle dependencies and configuration.
+This is the recommended path for production Galaxy instances because it tracks released tool definitions rather than an arbitrary development snapshot.
 
-### Manual Installation (Alternative)
+### Option 2: Install directly from this repository for development
 
-If you prefer to install from source or need to modify the tools:
+Use this path if you are developing GLEAM itself, testing local modifications, or validating wrapper behavior before a ToolShed release.
 
 1. Clone the repository:
 
    ```bash
    git clone https://github.com/goeckslab/gleam.git
+   cd gleam
    ```
 
-2. Add entries for each tool in your tool_conf.xml of your galaxy instance:
-    ```xml
-    <tool file="<path-to-your-local-tabularlearner/tabular_learner.xml>" />
-    <tool file="<path-to-your-local-imagelearner/image_learner_train.xml>" />
-    <tool file="<path-to-your-local-galaxy-ludwig/ludwig_train.xml>" />
-    ```
+2. Copy or symlink the tool directories you want into your Galaxy `tools/` tree.
 
+3. Register the desired wrappers in your Galaxy tool panel configuration. For example:
+
+   ```xml
+   <section id="gleam" name="GLEAM">
+     <tool file="gleam/tools/tabularlearner/tabular_learner.xml" />
+     <tool file="gleam/tools/tabularlearner/pycaret_predict.xml" />
+     <tool file="gleam/tools/imagelearner/image_learner.xml" />
+     <tool file="gleam/tools/multimodallearner/multimodal_learner.xml" />
+     <tool file="gleam/tools/galaxy-ludwig/ludwig_train.xml" />
+     <tool file="gleam/tools/galaxy-ludwig/ludwig_evaluate.xml" />
+     <tool file="gleam/tools/galaxy-ludwig/ludwig_predict.xml" />
+     <tool file="gleam/tools/galaxy-tiler/tiling_pyhist.xml" />
+     <tool file="gleam/tools/galaxy-embedding_extractor/pytorch_embedding.xml" />
+     <tool file="gleam/tools/galaxy-mil_bag/mil_bag.xml" />
+   </section>
+   ```
+
+4. Ensure your Galaxy deployment can execute the containers referenced by the wrappers. Most GLEAM tools expect Docker or another Galaxy-supported container backend.
+
+5. Restart Galaxy and verify that the tools load without wrapper errors.
+
+### Container and runtime notes
+
+- Several tools use prebuilt images from `quay.io/goeckslab/...`.
+- GPU-backed tools require compatible CUDA drivers and a Galaxy job configuration that permits GPU/container execution.
+- Some models download pretrained weights at runtime on first use. For reproducible production deployments, pre-populate caches or pin the corresponding container image and model source.
+
+## Testing and CI
+
+The repository includes Galaxy wrapper tests and CI workflows under [.github/workflows](.github/workflows). Local development typically relies on `planemo` plus wrapper-specific test data already versioned in `tools/*/test-data`.
+
+## Citation and Releases
+
+- Citation metadata is provided in [CITATION.cff](CITATION.cff) and [codemeta.json](codemeta.json).
+- Release history is tracked in [CHANGELOG.md](CHANGELOG.md).
+- Maintainers and author credit are listed in [AUTHORS.md](AUTHORS.md) and [MAINTAINERS.md](MAINTAINERS.md).
+- Third-party software, model, and container provenance is summarized in [THIRD_PARTY.md](THIRD_PARTY.md).
+- The archival release workflow is documented in [RELEASE.md](RELEASE.md).
 
 ## Contributing
-We welcome contributions. To propose new tools, report bugs, or suggest improvements:
 
-1. Fork the repository
+Contributions that improve Galaxy wrapper quality, testing, documentation, and container reproducibility are welcome.
 
-2. Create a feature branch
-
-3. Commit and test your changes
-
-4. Submit a pull request
-
+1. Fork the repository.
+2. Create a feature branch.
+3. Run the relevant wrapper and CI tests.
+4. Open a pull request with a clear description of the user-facing impact.

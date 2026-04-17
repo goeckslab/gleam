@@ -1,0 +1,116 @@
+{
+  "@context": "https://doi.org/10.5063/schema/codemeta-2.0",
+  "@type": "SoftwareSourceCode",
+  "name": "GLEAM: Galaxy Learning and Modeling",
+  "description": "GLEAM is a maintained Galaxy workbench for machine learning workflows, including tabular, image, multimodal, and digital pathology tooling.",
+  "codeRepository": "https://github.com/goeckslab/gleam",
+  "url": "https://github.com/goeckslab/gleam",
+  "license": "https://spdx.org/licenses/MIT.html",
+  "applicationCategory": "Bioinformatics",
+  "keywords": [
+    "Galaxy",
+    "machine learning",
+    "AutoML",
+    "digital pathology",
+    "multimodal learning",
+    "Ludwig",
+    "PyCaret",
+    "AutoGluon"
+  ],
+  "programmingLanguage": [
+    "Python",
+    "XML",
+    "YAML",
+    "Dockerfile"
+  ],
+  "developmentStatus": "active",
+  "author": [
+    {
+      "@type": "Person",
+      "givenName": "Paulo",
+      "familyName": "Lyra Jr",
+      "affiliation": {
+        "@type": "Organization",
+        "name": "Department of Machine Learning, Moffitt Cancer Center"
+      }
+    },
+    {
+      "@type": "Person",
+      "givenName": "Junhao",
+      "familyName": "Qiu",
+      "affiliation": {
+        "@type": "Organization",
+        "name": "Department of Machine Learning, Moffitt Cancer Center"
+      }
+    },
+    {
+      "@type": "Person",
+      "givenName": "Khai",
+      "familyName": "Dang",
+      "affiliation": {
+        "@type": "Organization",
+        "name": "Department of Machine Learning, Moffitt Cancer Center"
+      }
+    },
+    {
+      "@type": "Person",
+      "givenName": "Alyssa",
+      "familyName": "Pybus",
+      "affiliation": {
+        "@type": "Organization",
+        "name": "Department of Machine Learning, Moffitt Cancer Center"
+      }
+    },
+    {
+      "@type": "Person",
+      "givenName": "Maansi",
+      "familyName": "Singh",
+      "affiliation": {
+        "@type": "Organization",
+        "name": "Department of Machine Learning, Moffitt Cancer Center"
+      }
+    },
+    {
+      "@type": "Person",
+      "givenName": "Qiang",
+      "familyName": "Gu",
+      "affiliation": {
+        "@type": "Organization",
+        "name": "Knight Cancer Institute, Oregon Health & Science University"
+      }
+    },
+    {
+      "@type": "Person",
+      "givenName": "Luke",
+      "familyName": "Sargent",
+      "affiliation": {
+        "@type": "Organization",
+        "name": "Knight Cancer Institute, Oregon Health & Science University"
+      }
+    },
+    {
+      "@type": "Person",
+      "givenName": "Allison",
+      "familyName": "Creason",
+      "affiliation": {
+        "@type": "Organization",
+        "name": "Knight Cancer Institute, Oregon Health & Science University"
+      }
+    },
+    {
+      "@type": "Person",
+      "givenName": "Jeremy",
+      "familyName": "Goecks",
+      "email": "jgoecks@gmail.com",
+      "affiliation": {
+        "@type": "Organization",
+        "name": "Department of Machine Learning, Moffitt Cancer Center"
+      }
+    }
+  ],
+  "maintainer": {
+    "@type": "Organization",
+    "name": "Goecks Lab"
+  },
+  "issueTracker": "https://github.com/goeckslab/gleam/issues"
+}

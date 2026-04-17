@@ -1,48 +1,59 @@
 # Galaxy-Ludwig
-A library of Galaxy deep learning tools based on Ludwig.
 
-# Install Galaxy-Ludwig into Galaxy
-We assume that you have Galaxy running and docker installed in your server/laptop. 
-* Create a new folder named ludwig(or whatever) under Galaxy’s tools folder.
-* Select and download the branch you want to install and use. Copy all XML, py files under the tools folder in this repo to the ludwig folder(the folder you created in the last step).
-* Update `tool_conf.xml` to include Galaxy-Ludwig. See [documentation](https://docs.galaxyproject.org/en/master/admin/tool_panel.html) for more details. This is an example:
-```
-<section id="ludwig" name="Ludwig Applications">
-  <tool file="ludwig/ludwig_evaluate.xml" />
-  <tool file="ludwig/ludwig_experiment.xml" />
-  <tool file="ludwig/ludwig_hyperopt.xml" />
-  <tool file="ludwig/ludwig_predict.xml" />
-  <tool file="ludwig/ludwig_render_config.xml" />
-  <tool file="ludwig/ludwig_train.xml" />
-  <tool file="ludwig/ludwig_visualize.xml" />
-</section>
-```
+Galaxy-Ludwig is the GLEAM wrapper family that exposes Ludwig configuration, training, evaluation, prediction, visualization, and hyperparameter optimization through Galaxy.
 
+## Included wrappers
 
-* This is an example of a `job_conf.yml` file that you can create to enable Docker for a local Galaxy instance where you want Ludwig-related jobs to run:
+- `ludwig_autogenconfig.xml`
+- `ludwig_render_config.xml`
+- `ludwig_train.xml`
+- `ludwig_experiment.xml`
+- `ludwig_evaluate.xml`
+- `ludwig_predict.xml`
+- `ludwig_hyperopt.xml`
+- `ludwig_visualize.xml`
 
-```
-runners:
-  local:
-    load: galaxy.jobs.runners.local:LocalJobRunner
-    workers: 4
-execution:
-  default: local
-  environments:
-    local:
-      runner: local
-      docker_enabled: true
-```
-If you are using an older version of Galaxy, then `job_conf.xml` would be something you want to configure instead of `job_conf.yml`. Then you would want to configure destination instead of execution and environment. 
-See [documentation](https://docs.galaxyproject.org/en/master/admin/jobs.html#running-jobs-in-containers) for job_conf configuration. 
-* If you haven’t set `sanitize_all_html: false` in `galaxy.yml`, please set it to False to enable our HTML report functionality.
+## Installation into Galaxy
 
-# Get Galaxy-Ludwig docker image
+1. Copy or symlink `tools/galaxy-ludwig` into your Galaxy `tools/` directory.
+2. Register the wrappers you want in `tool_conf.xml` or your equivalent tool panel configuration:
 
-This step is optional.
-If you want to speed up your runs, execute the following command:
-```
+   ```xml
+   <section id="ludwig" name="Ludwig Applications">
+     <tool file="gleam/tools/galaxy-ludwig/ludwig_evaluate.xml" />
+     <tool file="gleam/tools/galaxy-ludwig/ludwig_experiment.xml" />
+     <tool file="gleam/tools/galaxy-ludwig/ludwig_hyperopt.xml" />
+     <tool file="gleam/tools/galaxy-ludwig/ludwig_predict.xml" />
+     <tool file="gleam/tools/galaxy-ludwig/ludwig_render_config.xml" />
+     <tool file="gleam/tools/galaxy-ludwig/ludwig_train.xml" />
+     <tool file="gleam/tools/galaxy-ludwig/ludwig_visualize.xml" />
+   </section>
+   ```
+
+3. Configure Galaxy container execution. For example:
+
+   ```yaml
+   runners:
+     local:
+       load: galaxy.jobs.runners.local:LocalJobRunner
+       workers: 4
+   execution:
+     default: local
+     environments:
+       local:
+         runner: local
+         docker_enabled: true
+   ```
+
+4. If your deployment sanitizes all HTML output, configure Galaxy appropriately so the generated reports can render as intended.
+
+## Container images
+
+- CPU-oriented wrapper image: `quay.io/goeckslab/galaxy-ludwig:0.10.3`
+- GPU-oriented wrapper image: `quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1`
+
+Pre-pulling the image can reduce startup latency:
+
+```bash
 docker pull quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1
 ```
-
-* Should be good to go. 
