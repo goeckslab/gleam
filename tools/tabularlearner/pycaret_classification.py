@@ -204,34 +204,20 @@ class ClassificationModelTrainer(BaseModelTrainer):
 
             # ---- PR with threshold marker ----
             try:
-                if y_scores is None:
+                fig_pr = self._build_precision_recall_fig(y_true, y_scores)
+                if fig_pr is None:
                     raise ValueError("Predicted probabilities unavailable")
-                precision, recall, thr_pr = precision_recall_curve(y_true, y_scores)
-                pr_auc = auc(recall, precision)
-                fig_pr = go.Figure()
-                fig_pr.add_scatter(
-                    x=recall, y=precision, mode="lines", name=f"PR (AUC={pr_auc:.3f})"
-                )
-                if len(thr_pr):
-                    idx_pr = int(np.argmin(np.abs(thr_pr - prob_thresh)))
-                    # note: thr_pr has length = len(precision) - 1
-                    idx_pr = max(0, min(idx_pr, len(recall) - 1))
-                    fig_pr.add_scatter(
-                        x=[recall[idx_pr]],
-                        y=[precision[idx_pr]],
-                        mode="markers",
-                        name=f"@ {prob_thresh:.2f}",
-                        marker=dict(size=10),
-                    )
-                fig_pr.update_layout(
-                    title=f"Precision–Recall (marker at threshold={prob_thresh:.2f})",
-                    xaxis_title="Recall",
-                    yaxis_title="Precision",
-                )
-                _apply_report_layout(fig_pr)
                 self.explainer_plots["pr_auc"] = fig_pr
             except Exception as e:
                 LOG.warning(f"Threshold marker on PR failed; falling back: {e}")
+
+        if "pr_auc" not in self.explainer_plots:
+            try:
+                fig_pr = self._build_precision_recall_fig(y_true, y_scores)
+                if fig_pr is not None:
+                    self.explainer_plots["pr_auc"] = fig_pr
+            except Exception as e:
+                LOG.warning(f"Could not generate custom PR curve: {e}")
 
         # these go into the Test tab (don't overwrite overrides)
         for key, fn in [
@@ -360,6 +346,48 @@ class ClassificationModelTrainer(BaseModelTrainer):
             return f" (threshold={float(prob_thresh):.2f})"
         except Exception:
             return f" (threshold={prob_thresh})"
+
+    def _build_precision_recall_fig(self, y_true, y_scores):
+        """
+        Build a binary precision-recall curve with recall on X and precision on Y.
+        Returns None when class probabilities are unavailable or not binary.
+        """
+        if y_scores is None or getattr(self.exp, "is_multiclass", False):
+            return None
+
+        y_scores = np.asarray(y_scores)
+        if y_scores.ndim != 1:
+            return None
+
+        precision, recall, thr_pr = precision_recall_curve(y_true, y_scores)
+        pr_auc = auc(recall, precision)
+        fig_pr = go.Figure()
+        fig_pr.add_scatter(
+            x=recall,
+            y=precision,
+            mode="lines",
+            name=f"PR (AUC={pr_auc:.3f})",
+        )
+
+        prob_thresh = getattr(self, "probability_threshold", None)
+        if prob_thresh is not None and len(thr_pr):
+            idx_pr = int(np.argmin(np.abs(thr_pr - prob_thresh)))
+            idx_pr = max(0, min(idx_pr, len(recall) - 1))
+            fig_pr.add_scatter(
+                x=[recall[idx_pr]],
+                y=[precision[idx_pr]],
+                mode="markers",
+                name=f"@ {prob_thresh:.2f}",
+                marker=dict(size=10),
+            )
+
+        fig_pr.update_layout(
+            title=f"Precision-Recall Curve{self._threshold_suffix()}",
+            xaxis_title="Recall",
+            yaxis_title="Precision",
+        )
+        _apply_report_layout(fig_pr)
+        return fig_pr
 
     def _build_confusion_matrix_fig(self, y_true, y_pred, labels):
         def _label_sort_key(lbl):

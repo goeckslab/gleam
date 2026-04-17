@@ -1,0 +1,52 @@
+{
+  "title": "GLEAM: Galaxy Learning and Modeling",
+  "creators": [
+    {
+      "name": "Lyra Jr, Paulo",
+      "affiliation": "Department of Machine Learning, Moffitt Cancer Center"
+    },
+    {
+      "name": "Qiu, Junhao",
+      "affiliation": "Department of Machine Learning, Moffitt Cancer Center"
+    },
+    {
+      "name": "Dang, Khai",
+      "affiliation": "Department of Machine Learning, Moffitt Cancer Center"
+    },
+    {
+      "name": "Pybus, Alyssa",
+      "affiliation": "Department of Machine Learning, Moffitt Cancer Center"
+    },
+    {
+      "name": "Singh, Maansi",
+      "affiliation": "Department of Machine Learning, Moffitt Cancer Center"
+    },
+    {
+      "name": "Gu, Qiang",
+      "affiliation": "Knight Cancer Institute, Oregon Health & Science University"
+    },
+    {
+      "name": "Sargent, Luke",
+      "affiliation": "Knight Cancer Institute, Oregon Health & Science University"
+    },
+    {
+      "name": "Creason, Allison",
+      "affiliation": "Knight Cancer Institute, Oregon Health & Science University"
+    },
+    {
+      "name": "Goecks, Jeremy",
+      "affiliation": "Department of Machine Learning, Moffitt Cancer Center"
+    }
+  ],
+  "description": "GLEAM is a maintained Galaxy workbench for machine learning workflows, including tabular, image, multimodal, and digital pathology tooling.",
+  "license": "MIT",
+  "access_right": "open",
+  "upload_type": "software",
+  "keywords": [
+    "Galaxy",
+    "machine learning",
+    "AutoML",
+    "digital pathology",
+    "multimodal learning"
+  ]
+}
