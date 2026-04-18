@@ -10,60 +10,58 @@
         #if $data_configuration.sample_id_selector.use_sample_id == "yes"
             --sample-id-column '$data_configuration.sample_id_selector.sample_id_column'
         #end if
-        #if $task_configuration.model_selection.model_type == "classification"
-            #if $task_configuration.model_selection.classification_models
-                --models '$task_configuration.model_selection.classification_models'
+        #if $model_hyperparameter_configuration.model_selection.model_type == "classification"
+            #if $model_hyperparameter_configuration.model_selection.classification_models
+                --models '$model_hyperparameter_configuration.model_selection.classification_models'
             #end if
         #end if
-        #if $task_configuration.model_selection.model_type == "regression"
-            #if $task_configuration.model_selection.regression_models
-                --models '$task_configuration.model_selection.regression_models'
+        #if $model_hyperparameter_configuration.model_selection.model_type == "regression"
+            #if $model_hyperparameter_configuration.model_selection.regression_models
+                --models '$model_hyperparameter_configuration.model_selection.regression_models'
             #end if
         #end if
         #if $model_hyperparameter_configuration.tune_model
             --tune_model
         #end if
-        #if $customize_defaults_section.advanced_settings.customize_defaults == "true"
-                #if $customize_defaults_section.advanced_settings.train_size
-                --train_size '$customize_defaults_section.advanced_settings.train_size'
-                #end if
-                #if $customize_defaults_section.advanced_settings.normalize
-                --normalize
-                #end if
-                #if $customize_defaults_section.advanced_settings.feature_selection
-                --feature_selection
-                #end if
-                #if $customize_defaults_section.advanced_settings.cross_validation.enable_cross_validation == "true"
-                    --cross_validation
-                    #if $customize_defaults_section.advanced_settings.cross_validation.cross_validation_folds
-                        --cross_validation_folds '$customize_defaults_section.advanced_settings.cross_validation.cross_validation_folds'
-                    #end if
-                #end if
-                #if $customize_defaults_section.advanced_settings.cross_validation.enable_cross_validation == "false"
-                    --no_cross_validation
-                #end if
-                #if $customize_defaults_section.advanced_settings.remove_outliers
-                --remove_outliers
-                #end if
-                #if $customize_defaults_section.advanced_settings.remove_multicollinearity
-                --remove_multicollinearity
-                #end if
-                #if $customize_defaults_section.advanced_settings.polynomial_features
-                --polynomial_features
-                #end if
-                #if $customize_defaults_section.advanced_settings.fix_imbalance
-                --fix_imbalance
-                #end if
-                #if $customize_defaults_section.advanced_settings.probability_threshold
-                --probability_threshold '$customize_defaults_section.advanced_settings.probability_threshold'
-                #end if
+        #if $customize_defaults_section.train_size
+            --train_size '$customize_defaults_section.train_size'
+        #end if
+        #if $customize_defaults_section.normalize
+            --normalize
+        #end if
+        #if $customize_defaults_section.feature_selection
+            --feature_selection
+        #end if
+        #if $customize_defaults_section.cross_validation.enable_cross_validation == "true"
+            --cross_validation
+            #if $customize_defaults_section.cross_validation.cross_validation_folds
+                --cross_validation_folds '$customize_defaults_section.cross_validation.cross_validation_folds'
+            #end if
+        #end if
+        #if $customize_defaults_section.cross_validation.enable_cross_validation == "false"
+            --no_cross_validation
+        #end if
+        #if $customize_defaults_section.remove_outliers
+            --remove_outliers
+        #end if
+        #if $customize_defaults_section.remove_multicollinearity
+            --remove_multicollinearity
+        #end if
+        #if $customize_defaults_section.polynomial_features
+            --polynomial_features
+        #end if
+        #if $customize_defaults_section.fix_imbalance
+            --fix_imbalance
+        #end if
+        #if $customize_defaults_section.probability_threshold
+            --probability_threshold '$customize_defaults_section.probability_threshold'
         #end if
         #if $data_configuration.test_data_choice.has_test_file == "yes"
             --test_file '$data_configuration.test_data_choice.test_file'
         #end if
-        --model_type '$task_configuration.model_selection.model_type'
-        #if $task_configuration.model_selection.best_model_metric
-            --best_model_metric '$task_configuration.model_selection.best_model_metric'
+        --model_type '$model_hyperparameter_configuration.model_selection.model_type'
+        #if $model_hyperparameter_configuration.model_selection.best_model_metric
+            --best_model_metric '$model_hyperparameter_configuration.model_selection.best_model_metric'
         #end if
         ]]>
     </command>
@@ -98,7 +96,7 @@
                 </when>
             </conditional>
         </section>
-        <section name="task_configuration" title="Task Configuration" expanded="true">
+        <section name="model_hyperparameter_configuration" title="Model, Weights, and Hyperparameters Configuration" expanded="true">
             <conditional name="model_selection">
                 <param name="model_type" type="select" label="Task type">
                     <option value="classification">classification</option>
@@ -174,43 +172,30 @@
                     </param>
                 </when>
             </conditional>
-        </section>
-        <section name="model_hyperparameter_configuration" title="Model, Weights, and Hyperparameters Configuration" expanded="true">
             <param name="tune_model" type="boolean" truevalue="True" falsevalue="False" label="Tune hyperparameters" help="Hyperparameter tuning on the best model" />
         </section>
         <section name="customize_defaults_section" title="Customize Default Settings" expanded="false">
             <param name="random_seed" type="integer" value="42" label="Random seed" help="Random seed for reproducibility." />
-            <conditional name="advanced_settings">
-                <param name="customize_defaults" type="select" label="Customize default settings?" help="Select yes if you want to customize the default settings of the experiment.">
-                    <option value="false" selected="true">No</option>
-                    <option value="true">Yes</option>
+            <param name="train_size" type="float" value="0.7" min="0.1" max="0.9" label="Train Size" help="Proportion of the input dataset to include in the train split." />
+            <param name="normalize" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Normalize Data" help="Whether to normalize data before training." />
+            <param name="feature_selection" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Feature Selection" help="Whether to perform feature selection." />
+            <conditional name="cross_validation">
+                <param name="enable_cross_validation" type="select" label="Enable Cross Validation?" help="Select whether to enable cross-validation." >
+                    <option value="false" >No</option>
+                    <option value="true" selected="true">Yes</option>
                 </param>
                 <when value="true">
-                    <param name="train_size" type="float" value="0.7" min="0.1" max="0.9" label="Train Size" help="Proportion of the input dataset to include in the train split." />
-                    <param name="normalize" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Normalize Data" help="Whether to normalize data before training." />
-                    <param name="feature_selection" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Feature Selection" help="Whether to perform feature selection." />
-                    <conditional name="cross_validation">
-                        <param name="enable_cross_validation" type="select" label="Enable Cross Validation?" help="Select whether to enable cross-validation." >
-                            <option value="false" >No</option>
-                            <option value="true" selected="true">Yes</option>
-                        </param>
-                        <when value="true">
-                            <param name="cross_validation_folds" type="integer" value="10" min="2" max="20" label="Cross Validation Folds" help="Number of folds to use for cross-validation." />
-                        </when>
-                        <when value="false">
-                            <!-- No additional parameters to show if the user selects 'No' -->
-                        </when>
-                    </conditional>
-                    <param name="remove_outliers" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Remove Outliers" help="Whether to remove outliers from the input dataset before training." />
-                    <param name="remove_multicollinearity" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Remove Multicollinearity" help="Whether to remove multicollinear features before training." />
-                    <param name="polynomial_features" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Polynomial Features" help="Whether to create polynomial features before training." />
-                    <param name="fix_imbalance" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Fix Imbalance" help="ONLY for classfication! Whether to use SMOTE or similar methods to fix imbalance in the input dataset." />
-                    <param name="probability_threshold" type="float" min="0.0" max="1.0" value="0.5" label="Classification Probability Threshold" help="Only applies to classification. Probability above which a prediction is considered positive. Default is 0.5." />
+                    <param name="cross_validation_folds" type="integer" value="10" min="2" max="20" label="Cross Validation Folds" help="Number of folds to use for cross-validation." />
                 </when>
                 <when value="false">
                     <!-- No additional parameters to show if the user selects 'No' -->
                 </when>
             </conditional>
+            <param name="remove_outliers" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Remove Outliers" help="Whether to remove outliers from the input dataset before training." />
+            <param name="remove_multicollinearity" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Remove Multicollinearity" help="Whether to remove multicollinear features before training." />
+            <param name="polynomial_features" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Polynomial Features" help="Whether to create polynomial features before training." />
+            <param name="fix_imbalance" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Fix Imbalance" help="ONLY for classfication! Whether to use SMOTE or similar methods to fix imbalance in the input dataset." />
+            <param name="probability_threshold" type="float" min="0.0" max="1.0" value="0.5" label="Classification Probability Threshold" help="Only applies to classification. Probability above which a prediction is considered positive. Default is 0.5." />
         </section>
     </inputs>
     <outputs>
@@ -225,15 +210,14 @@
             <param name="model_selection|model_type" value="classification"/>
             <param name="model_selection|best_model_metric" value="F1"/>
             <param name="random_seed" value="42"/>
-            <param name="advanced_settings|customize_defaults" value="true"/>
-            <param name="advanced_settings|train_size" value="0.8"/>
-            <param name="advanced_settings|normalize" value="true"/>
-            <param name="advanced_settings|feature_selection" value="true"/>
-            <param name="advanced_settings|cross_validation|enable_cross_validation" value="true"/>
-            <param name="advanced_settings|cross_validation|cross_validation_folds" value="5"/>
-            <param name="advanced_settings|remove_outliers" value="true"/>
-            <param name="advanced_settings|remove_multicollinearity" value="true"/>
-            <param name="advanced_settings|probability_threshold" value="0.4" />
+            <param name="train_size" value="0.8"/>
+            <param name="normalize" value="true"/>
+            <param name="feature_selection" value="true"/>
+            <param name="cross_validation|enable_cross_validation" value="true"/>
+            <param name="cross_validation|cross_validation_folds" value="5"/>
+            <param name="remove_outliers" value="true"/>
+            <param name="remove_multicollinearity" value="true"/>
+            <param name="probability_threshold" value="0.4" />
             <output name="model" file="expected_model_classification_customized.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
@@ -251,14 +235,13 @@
             <param name="target_feature" value="11"/> 
             <param name="model_selection|model_type" value="classification"/>
             <param name="random_seed" value="42"/>
-            <param name="advanced_settings|customize_defaults" value="true"/>
-            <param name="advanced_settings|train_size" value="0.8"/>
-            <param name="advanced_settings|normalize" value="true"/>
-            <param name="advanced_settings|feature_selection" value="true"/>
-            <param name="advanced_settings|cross_validation|enable_cross_validation" value="false"/>
-            <param name="advanced_settings|remove_outliers" value="true"/>
-            <param name="advanced_settings|remove_multicollinearity" value="true"/>
-            <param name="advanced_settings|probability_threshold" value="0.6" />
+            <param name="train_size" value="0.8"/>
+            <param name="normalize" value="true"/>
+            <param name="feature_selection" value="true"/>
+            <param name="cross_validation|enable_cross_validation" value="false"/>
+            <param name="remove_outliers" value="true"/>
+            <param name="remove_multicollinearity" value="true"/>
+            <param name="probability_threshold" value="0.6" />
             <output name="model" file="expected_model_classification_customized_cross_off.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>

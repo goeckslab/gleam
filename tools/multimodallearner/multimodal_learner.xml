@@ -76,7 +76,7 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
   #end if
 
   --preset '$model_hyperparameter_configuration.preset'
-  --eval_metric '$task_configuration.eval_metric'
+  --eval_metric '$model_hyperparameter_configuration.eval_metric'
 
   --random_seed '$customize_defaults_section.random_seed'
   #if $customize_defaults_section.time_limit
@@ -86,32 +86,30 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
   --deterministic
   #end if
 
-  #if $customize_defaults_section.customize_defaults_conditional.customize_defaults == "yes"
-    #if $customize_defaults_section.customize_defaults_conditional.validation_size not in ("", None)
-      --validation_size $customize_defaults_section.customize_defaults_conditional.validation_size
-    #end if
-    #if $customize_defaults_section.customize_defaults_conditional.split_probabilities and str($customize_defaults_section.customize_defaults_conditional.split_probabilities).strip()
-      --split_probabilities #echo " ".join([str(float(x)) for x in str($customize_defaults_section.customize_defaults_conditional.split_probabilities).replace(",", " ").split() if x.strip()]) #
-    #end if
-    #if $customize_defaults_section.customize_defaults_conditional.cross_validation == "true"
-      --cross_validation true
-      --num_folds $customize_defaults_section.customize_defaults_conditional.num_folds
-    #end if
-    #if $customize_defaults_section.customize_defaults_conditional.epochs
-      --epochs $customize_defaults_section.customize_defaults_conditional.epochs
-    #end if
-    #if $customize_defaults_section.customize_defaults_conditional.learning_rate
-      --learning_rate $customize_defaults_section.customize_defaults_conditional.learning_rate
-    #end if
-    #if $customize_defaults_section.customize_defaults_conditional.batch_size
-      --batch_size $customize_defaults_section.customize_defaults_conditional.batch_size
-    #end if
-    #if $customize_defaults_section.customize_defaults_conditional.threshold
-      --threshold $customize_defaults_section.customize_defaults_conditional.threshold
-    #end if
-    #if $customize_defaults_section.customize_defaults_conditional.hyperparameters
-      --hyperparameters '$customize_defaults_section.customize_defaults_conditional.hyperparameters'
-    #end if
+  #if $customize_defaults_section.validation_size not in ("", None)
+    --validation_size $customize_defaults_section.validation_size
+  #end if
+  #if $customize_defaults_section.split_probabilities and str($customize_defaults_section.split_probabilities).strip()
+    --split_probabilities #echo " ".join([str(float(x)) for x in str($customize_defaults_section.split_probabilities).replace(",", " ").split() if x.strip()]) #
+  #end if
+  #if $customize_defaults_section.cross_validation == "true"
+    --cross_validation true
+    --num_folds $customize_defaults_section.num_folds
+  #end if
+  #if $customize_defaults_section.epochs
+    --epochs $customize_defaults_section.epochs
+  #end if
+  #if $customize_defaults_section.learning_rate
+    --learning_rate $customize_defaults_section.learning_rate
+  #end if
+  #if $customize_defaults_section.batch_size
+    --batch_size $customize_defaults_section.batch_size
+  #end if
+  #if $customize_defaults_section.threshold
+    --threshold $customize_defaults_section.threshold
+  #end if
+  #if $customize_defaults_section.hyperparameters
+    --hyperparameters '$customize_defaults_section.hyperparameters'
   #end if
 
   --output_json '$output_json'
@@ -143,49 +141,46 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
       </conditional>
     </section>
 
-    <section name="task_configuration" title="Task Configuration" expanded="true">
-    <param name="eval_metric" type="select" label="Primary evaluation metric (task inferred automatically)">
-      <option value="auto" selected="true">Auto (let AutoGluon choose)</option>
-      <option value="roc_auc">ROC AUC</option>
-      <option value="accuracy">Accuracy</option>
-      <option value="balanced_accuracy">Balanced Accuracy</option>
-      <option value="f1">F1</option>
-      <option value="f1_macro">F1 Macro</option>
-      <option value="f1_micro">F1 Micro</option>
-      <option value="f1_weighted">F1 Weighted</option>
-      <option value="precision">Precision</option>
-      <option value="precision_macro">Precision Macro</option>
-      <option value="precision_micro">Precision Micro</option>
-      <option value="precision_weighted">Precision Weighted</option>
-      <option value="recall">Recall</option>
-      <option value="recall_macro">Recall Macro</option>
-      <option value="recall_micro">Recall Micro</option>
-      <option value="recall_weighted">Recall Weighted</option>
-      <option value="average_precision">Average Precision</option>
-      <option value="roc_auc_ovo_macro">ROC AUC OVO Macro</option>
-      <option value="roc_auc_ovo_weighted">ROC AUC OVO Weighted</option>
-      <option value="roc_auc_ovr_macro">ROC AUC OVR Macro</option>
-      <option value="roc_auc_ovr_weighted">ROC AUC OVR Weighted</option>
-      <option value="log_loss">Log Loss</option>
-      <option value="mse">MSE</option>
-      <option value="rmse">RMSE</option>
-      <option value="mae">MAE</option>
-      <option value="msle">MSLE</option>
-      <option value="r2">R2</option>
-    </param>
-    </section>
-
     <section name="model_hyperparameter_configuration" title="Model, Weights, and Hyperparameters Configuration" expanded="true">
-    <param name="backbone_text" type="select" label="Text backbone" optional="true">
-      <option value="microsoft/deberta-v3-base" selected="true">microsoft/deberta-v3-base</option>
-      <option value="microsoft/deberta-v3-small">microsoft/deberta-v3-small</option>
-      <option value="google/electra-base-discriminator">google/electra-base-discriminator</option>
-      <option value="google/electra-small-discriminator">google/electra-small-discriminator</option>
-      <option value="roberta-base">roberta-base</option>
-      <option value="bert-base-uncased">bert-base-uncased</option>
-      <option value="distilroberta-base">distilroberta-base</option>
-      <option value="albert-base-v2">albert-base-v2</option>
-    </param>
+      <param name="eval_metric" type="select" label="Primary evaluation metric (task inferred automatically)">
+        <option value="auto" selected="true">Auto (let AutoGluon choose)</option>
+        <option value="roc_auc">ROC AUC</option>
+        <option value="accuracy">Accuracy</option>
+        <option value="balanced_accuracy">Balanced Accuracy</option>
+        <option value="f1">F1</option>
+        <option value="f1_macro">F1 Macro</option>
+        <option value="f1_micro">F1 Micro</option>
+        <option value="f1_weighted">F1 Weighted</option>
+        <option value="precision">Precision</option>
+        <option value="precision_macro">Precision Macro</option>
+        <option value="precision_micro">Precision Micro</option>
+        <option value="precision_weighted">Precision Weighted</option>
+        <option value="recall">Recall</option>
+        <option value="recall_macro">Recall Macro</option>
+        <option value="recall_micro">Recall Micro</option>
+        <option value="recall_weighted">Recall Weighted</option>
+        <option value="average_precision">Average Precision</option>
+        <option value="roc_auc_ovo_macro">ROC AUC OVO Macro</option>
+        <option value="roc_auc_ovo_weighted">ROC AUC OVO Weighted</option>
+        <option value="roc_auc_ovr_macro">ROC AUC OVR Macro</option>
+        <option value="roc_auc_ovr_weighted">ROC AUC OVR Weighted</option>
+        <option value="log_loss">Log Loss</option>
+        <option value="mse">MSE</option>
+        <option value="rmse">RMSE</option>
+        <option value="mae">MAE</option>
+        <option value="msle">MSLE</option>
+        <option value="r2">R2</option>
+      </param>
+      <param name="backbone_text" type="select" label="Text backbone" optional="true">
+        <option value="microsoft/deberta-v3-base" selected="true">microsoft/deberta-v3-base</option>
+        <option value="microsoft/deberta-v3-small">microsoft/deberta-v3-small</option>
+        <option value="google/electra-base-discriminator">google/electra-base-discriminator</option>
+        <option value="google/electra-small-discriminator">google/electra-small-discriminator</option>
+        <option value="roberta-base">roberta-base</option>
+        <option value="bert-base-uncased">bert-base-uncased</option>
+        <option value="distilroberta-base">distilroberta-base</option>
+        <option value="albert-base-v2">albert-base-v2</option>
+      </param>
 
     <conditional name="use_images_conditional">
       <param name="use_images" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Use image modality?"/>
@@ -296,27 +291,19 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
     </section>
 
     <section name="customize_defaults_section" title="Customize Default Settings" expanded="false">
-    <param name="random_seed" type="integer" value="42" label="Random seed"/>
-
-    <param name="time_limit" type="integer" optional="true" min="60" label="Time limit (seconds)" help="Total training time budget. Recommended: 3600+ for real runs"/>
-    <param name="deterministic" type="boolean" truevalue="true" falsevalue="false" checked="false"
-           label="Enable deterministic mode" help="Use deterministic algorithms and CuDNN settings to reduce run-to-run variance (may slow training)"/>
-
-    <conditional name="customize_defaults_conditional">
-      <param name="customize_defaults" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Advanced: customize training settings?"/>
-      <when value="yes">
-        <param name="validation_size" type="float" value="0.2" label="Validation fraction (when test set provided)"/>
-        <param name="split_probabilities" type="text" value="0.7 0.1 0.2" label="Train / Val / Test split (space-separated) when no test set"/>
-        <param name="cross_validation" type="boolean" truevalue="true" falsevalue="false" checked="false" label="Enable k-fold cross-validation"/>
-        <param name="num_folds" type="integer" value="5" label="Number of CV folds"/>
-        <param name="epochs" type="integer" optional="true" label="Max epochs"/>
-        <param name="learning_rate" type="float" optional="true" label="Learning rate"/>
-        <param name="batch_size" type="integer" optional="true" label="Batch size"/>
-        <param name="threshold" type="float" optional="true" min="0" max="1" label="Binary classification threshold"/>
-        <param name="hyperparameters" type="text" optional="true" label="Extra AutoGluon hyperparameters (JSON or YAML string)"/>
-      </when>
-      <when value="no"/>
-    </conditional>
+      <param name="random_seed" type="integer" value="42" label="Random seed"/>
+      <param name="time_limit" type="integer" optional="true" min="60" label="Time limit (seconds)" help="Total training time budget. Recommended: 3600+ for real runs"/>
+      <param name="deterministic" type="boolean" truevalue="true" falsevalue="false" checked="false"
+             label="Enable deterministic mode" help="Use deterministic algorithms and CuDNN settings to reduce run-to-run variance (may slow training)"/>
+      <param name="validation_size" type="float" value="0.2" label="Validation fraction (when test set provided)"/>
+      <param name="split_probabilities" type="text" value="0.7 0.1 0.2" label="Train / Val / Test split (space-separated) when no test set"/>
+      <param name="cross_validation" type="boolean" truevalue="true" falsevalue="false" checked="false" label="Enable k-fold cross-validation"/>
+      <param name="num_folds" type="integer" value="5" label="Number of CV folds"/>
+      <param name="epochs" type="integer" optional="true" label="Max epochs"/>
+      <param name="learning_rate" type="float" optional="true" label="Learning rate"/>
+      <param name="batch_size" type="integer" optional="true" label="Batch size"/>
+      <param name="threshold" type="float" optional="true" min="0" max="1" label="Binary classification threshold"/>
+      <param name="hyperparameters" type="text" optional="true" label="Extra AutoGluon hyperparameters (JSON or YAML string)"/>
     </section>
   </inputs>
 
@@ -327,11 +314,11 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
     <data name="output_model_archive" format="zip" label="Multimodal Learner trained model on data ${on_string}"/>
   </outputs>
 
-	  <tests>
-	    <!-- Basic run with images + external test set -->
-	    <test expect_num_outputs="4">
-	      <param name="input_csv" value="train.csv"/>
-	      <param name="target_column" value="7"/>
+  <tests>
+    <!-- Basic run with images + external test set -->
+    <test expect_num_outputs="4">
+      <param name="input_csv" value="train.csv"/>
+      <param name="target_column" value="7"/>
       <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
       <param name="test_dataset_conditional|input_test" value="test.csv"/>
       <param name="use_images_conditional|use_images" value="yes"/>
@@ -341,44 +328,43 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
       <output name="output_html">
         <assert_contents>
           <has_text text="Model Performance Summary"/>
-	        </assert_contents>
-	      </output>
-	    </test>
+        </assert_contents>
+      </output>
+    </test>
 
-	    <!-- Custom threshold -->
-	    <test expect_num_outputs="4">
-	      <param name="input_csv" value="train.csv"/>
-	      <param name="target_column" value="7"/>
+    <!-- Custom threshold -->
+    <test expect_num_outputs="4">
+      <param name="input_csv" value="train.csv"/>
+      <param name="target_column" value="7"/>
       <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
       <param name="test_dataset_conditional|input_test" value="test.csv"/>
       <param name="use_images_conditional|use_images" value="yes"/>
       <param name="use_images_conditional|images_zip_repeat_0|images_zip" value="images.zip"/>
-      <param name="customize_defaults_conditional|customize_defaults" value="yes"/>
-      <param name="customize_defaults_conditional|threshold" value="0.4"/>
+      <param name="threshold" value="0.4"/>
       <output name="output_json">
         <assert_contents>
           <has_text text="&quot;threshold&quot;: 0.4"/>
-	        </assert_contents>
-	      </output>
-	    </test>
+        </assert_contents>
+      </output>
+    </test>
 
-	    <!-- No external test set; internal split -->
-	    <test expect_num_outputs="4">
-	      <param name="input_csv" value="train.csv"/>
-	      <param name="target_column" value="7"/>
+    <!-- No external test set; internal split -->
+    <test expect_num_outputs="4">
+      <param name="input_csv" value="train.csv"/>
+      <param name="target_column" value="7"/>
       <param name="test_dataset_conditional|has_test_dataset" value="no"/>
       <param name="use_images_conditional|use_images" value="yes"/>
       <param name="use_images_conditional|images_zip_repeat_0|images_zip" value="images.zip"/>
       <output name="output_json">
         <assert_contents>
           <has_text text="&quot;val&quot;"/>
-	        </assert_contents>
-	      </output>
-	    </test>
+        </assert_contents>
+      </output>
+    </test>
 
-	    <!-- Text/tabular only (ignore images) -->
-	    <test expect_num_outputs="4">
-	      <param name="input_csv" value="train.csv"/>
+    <!-- Text/tabular only (ignore images) -->
+    <test expect_num_outputs="4">
+      <param name="input_csv" value="train.csv"/>
       <param name="target_column" value="7"/>
       <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
       <param name="test_dataset_conditional|input_test" value="test.csv"/>

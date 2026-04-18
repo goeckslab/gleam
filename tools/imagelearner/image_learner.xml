@@ -32,15 +32,15 @@
             mkdir -p "$TORCH_HOME";
 
             #set $selected_validation_metric = ""
-            #if $task_configuration.task_selection.task == "binary"
-                #set $selected_validation_metric = $task_configuration.task_selection.validation_metric_binary
-            #elif $task_configuration.task_selection.task == "classification"
-                #set $selected_validation_metric = $task_configuration.task_selection.validation_metric_multiclass
-            #elif $task_configuration.task_selection.task == "regression"
-                #set $selected_validation_metric = $task_configuration.task_selection.validation_metric_regression
+            #if $model_hyperparameter_configuration.task_selection.task == "binary"
+                #set $selected_validation_metric = $model_hyperparameter_configuration.task_selection.validation_metric_binary
+            #elif $model_hyperparameter_configuration.task_selection.task == "classification"
+                #set $selected_validation_metric = $model_hyperparameter_configuration.task_selection.validation_metric_multiclass
+            #elif $model_hyperparameter_configuration.task_selection.task == "regression"
+                #set $selected_validation_metric = $model_hyperparameter_configuration.task_selection.validation_metric_regression
             #else
-                #if $task_configuration.task_selection.validation_metric_auto
-                    #set $selected_validation_metric = $task_configuration.task_selection.validation_metric_auto
+                #if $model_hyperparameter_configuration.task_selection.validation_metric_auto
+                    #set $selected_validation_metric = $model_hyperparameter_configuration.task_selection.validation_metric_auto
                 #end if
             #end if
 
@@ -54,24 +54,22 @@
                         --fine-tune
                     #end if
                 #end if
-                #if $customize_defaults_section.advanced_settings.customize_defaults == "true"
-                    #if $customize_defaults_section.advanced_settings.epochs
-                        --epochs "$customize_defaults_section.advanced_settings.epochs"
+                #if $customize_defaults_section.epochs
+                        --epochs "$customize_defaults_section.epochs"
                     #end if
-                    #if $customize_defaults_section.advanced_settings.early_stop
-                        --early-stop "$customize_defaults_section.advanced_settings.early_stop"
+                    #if $customize_defaults_section.early_stop
+                        --early-stop "$customize_defaults_section.early_stop"
                     #end if
-                    #if $customize_defaults_section.advanced_settings.learning_rate_condition.learning_rate_define == "true"
-                        --learning-rate "$customize_defaults_section.advanced_settings.learning_rate_condition.learning_rate"
+                    #if $customize_defaults_section.learning_rate_condition.learning_rate_define == "true"
+                        --learning-rate "$customize_defaults_section.learning_rate_condition.learning_rate"
                     #end if
-                    #if $customize_defaults_section.advanced_settings.batch_size_condition.batch_size_define == "true"
-                        --batch-size "$customize_defaults_section.advanced_settings.batch_size_condition.batch_size"
+                    #if $customize_defaults_section.batch_size_condition.batch_size_define == "true"
+                        --batch-size "$customize_defaults_section.batch_size_condition.batch_size"
                     #end if
-                    --split-probabilities "$customize_defaults_section.advanced_settings.train_split" "$customize_defaults_section.advanced_settings.val_split" "$customize_defaults_section.advanced_settings.test_split"
-                    #if $customize_defaults_section.advanced_settings.threshold
-                        --threshold "$customize_defaults_section.advanced_settings.threshold"
+                    --split-probabilities "$customize_defaults_section.train_split" "$customize_defaults_section.val_split" "$customize_defaults_section.test_split"
+                    #if $customize_defaults_section.threshold
+                        --threshold "$customize_defaults_section.threshold"
                     #end if
-                #end if
                 #if $model_hyperparameter_configuration.augmentation
                     --augmentation "$model_hyperparameter_configuration.augmentation"
                 #end if
@@ -120,50 +118,48 @@
             </conditional>
             <param name="sample_id_column" type="data_column" data_ref="input_csv" use_header_names="true" optional="true" label="Sample ID column (optional)" help="Optional column used to group samples during splitting to prevent data leakage (e.g., patient_id or slide_id). Only used when no split column is provided." />
         </section>
-        <section name="task_configuration" title="Task Configuration" expanded="true">
-            <conditional name="task_selection">
-            <param name="task" type="select" label="Task type" help="Pick task to see only metrics Ludwig accepts for that task; Auto lets the tool infer task and metric.">
-                <option value="auto" selected="true">Auto (infer and use defaults)</option>
-                <option value="binary">Binary Classification</option>
-                <option value="classification">Multi-class Classification</option>
-                <option value="regression">Regression</option>
-            </param>
-            <when value="binary">
-                <param name="validation_metric_binary" type="select" optional="true" label="Validation metric (binary)" help="Metrics accepted by Ludwig 0.10.1 for binary outputs.">
-                    <option value="" selected="true">Auto (use task default)</option>
-                    <option value="roc_auc">ROC-AUC</option>
-                    <option value="accuracy">Accuracy</option>
-                    <option value="precision">Precision</option>
-                    <option value="recall">Recall</option>
-                    <option value="loss">Loss</option>
-                </param>
-            </when>
-            <when value="classification">
-                <param name="validation_metric_multiclass" type="select" optional="true" label="Validation metric (multi-class)" help="Metrics accepted by Ludwig 0.10.1 for multi-class outputs.">
-                    <option value="" selected="true">Auto (use task default)</option>
-                    <option value="accuracy">Accuracy</option>
-                    <option value="loss">Loss</option>
-                </param>
-            </when>
-            <when value="regression">
-                <param name="validation_metric_regression" type="select" optional="true" label="Validation metric (regression)" help="Metrics accepted by Ludwig 0.10.1 for regression outputs.">
-                    <option value="" selected="true">Auto (use task default)</option>
-                    <option value="mean_squared_error">Mean Squared Error</option>
-                    <option value="mean_absolute_error">Mean Absolute Error</option>
-                    <option value="root_mean_squared_error">Root Mean Squared Error</option>
-                    <option value="root_mean_squared_percentage_error">Root Mean Squared Percentage Error</option>
-                    <option value="loss">Loss</option>
-                </param>
-            </when>
-            <when value="auto">
-                <param name="validation_metric_auto" type="select" optional="true" label="Validation metric (auto)" help="Auto defers to the inferred task and picks the best default metric; use this only to override the choice.">
-                    <option value="" selected="true"></option>
-                </param>
-            </when>
-            </conditional>
-        </section>
         <section name="model_hyperparameter_configuration" title="Model, Weights, and Hyperparameters Configuration" expanded="true">
-        <param name="model_name" type="select" optional="false" label="Model architecture" >
+            <conditional name="task_selection">
+                <param name="task" type="select" label="Task type" help="Pick task to see only metrics Ludwig accepts for that task; Auto lets the tool infer task and metric.">
+                    <option value="auto" selected="true">Auto (infer and use defaults)</option>
+                    <option value="binary">Binary Classification</option>
+                    <option value="classification">Multi-class Classification</option>
+                    <option value="regression">Regression</option>
+                </param>
+                <when value="binary">
+                    <param name="validation_metric_binary" type="select" optional="true" label="Validation metric (binary)" help="Metrics accepted by Ludwig 0.10.1 for binary outputs.">
+                        <option value="" selected="true">Auto (use task default)</option>
+                        <option value="roc_auc">ROC-AUC</option>
+                        <option value="accuracy">Accuracy</option>
+                        <option value="precision">Precision</option>
+                        <option value="recall">Recall</option>
+                        <option value="loss">Loss</option>
+                    </param>
+                </when>
+                <when value="classification">
+                    <param name="validation_metric_multiclass" type="select" optional="true" label="Validation metric (multi-class)" help="Metrics accepted by Ludwig 0.10.1 for multi-class outputs.">
+                        <option value="" selected="true">Auto (use task default)</option>
+                        <option value="accuracy">Accuracy</option>
+                        <option value="loss">Loss</option>
+                    </param>
+                </when>
+                <when value="regression">
+                    <param name="validation_metric_regression" type="select" optional="true" label="Validation metric (regression)" help="Metrics accepted by Ludwig 0.10.1 for regression outputs.">
+                        <option value="" selected="true">Auto (use task default)</option>
+                        <option value="mean_squared_error">Mean Squared Error</option>
+                        <option value="mean_absolute_error">Mean Absolute Error</option>
+                        <option value="root_mean_squared_error">Root Mean Squared Error</option>
+                        <option value="root_mean_squared_percentage_error">Root Mean Squared Percentage Error</option>
+                        <option value="loss">Loss</option>
+                    </param>
+                </when>
+                <when value="auto">
+                    <param name="validation_metric_auto" type="select" optional="true" label="Validation metric (auto)" help="Auto defers to the inferred task and picks the best default metric; use this only to override the choice.">
+                        <option value="" selected="true"></option>
+                    </param>
+                </when>
+            </conditional>
+            <param name="model_name" type="select" optional="false" label="Model architecture" >
 
             <option value="resnet18">Resnet18</option>
             <option value="resnet34">Resnet34</option>
@@ -348,57 +344,46 @@
         </param>
         </section>
         <section name="customize_defaults_section" title="Customize Default Settings" expanded="false">
-        <param argument="random_seed" type="integer" value="42" optional="true" label="Random seed (set for reproducibility)" min="0" max="999999"/>
-        <conditional name="advanced_settings">
-            <param name="customize_defaults" type="select" label="Customize Default Settings?" help="Select yes if you want to customize the default settings of the experiment.">
-                <option value="false" selected="true">No</option>
-                <option value="true">Yes</option>
-            </param>
-            <when value="true">
-                <param name="epochs" type="integer" value="10" min="1" max="99999" label="Epochs" help="Total number of full passes through the training dataset. Higher values may improve accuracy but increase training time. Default: 10." />
-                <param name="early_stop" type="integer" value="5" min="1" max="99999" label="Early Stop" help="Number of epochs with no improvement after which training will be stopped. Default: 5." />
-                <conditional name="learning_rate_condition">
-                    <param name="learning_rate_define" type="select" label="Define an initial learning rate?" help="Want to change the initial learning rate from default to a number? See ludwig.ai for more info. Default: No" >
-                        <option value="false" selected="true" >No</option>
-                        <option value="true">Yes</option>
-                    </param>
-                    <when value="true">
-                        <param name="learning_rate" type="float" value="0.001" min="0.0001" max="1.0" label="Learning Rate" help="Initial learning rate for the optimizer. Default: 0.001." />
-                    </when>
-                    <when value="false">
-                        <!-- No additional parameters to show if the user selects 'No' -->
-                    </when>
-                </conditional>
-                <conditional name="batch_size_condition">
-                    <param name="batch_size_define" type="select" label="Define your batch size?" help="Want to change the batch size from auto to a number? See ludwig.ai for more info. Default: No" >
-                        <option value="false" selected="true" >No</option>
-                        <option value="true">Yes</option>
-                    </param>
-                    <when value="true">
-                        <param name="batch_size" type="integer" value="32" min="1" max="99999" label="Batch Size" help="Number of samples per gradient update. Default: 32." />
-                    </when>
-                    <when value="false">
-                        <!-- No additional parameters to show if the user selects 'No' -->
-                    </when>
-                </conditional>
-                <param name="train_split" type="float"
-                        label="Training split proportion (only works if no split column in the metadata csv)"
-                        value="0.7"
-                        help="Fraction of data for training (e.g., 0.7). train split + val split + test split should = 1"/>
-                <param name="val_split"   type="float"
-                        label="Validation split proportion (only works if no split column in the metadata csv)"
-                        value="0.1"
-                        help="Fraction of data for validation (e.g., 0.1). train split + val split + test split should = 1"/>
-                <param name="test_split"  type="float"
-                        label="Test split proportion (only works if no split column in the metadata csv)"
-                        value="0.2"
-                        help="Fraction of data for testing (e.g., 0.2) train split + val split + test split should = 1."/>
-                <param name="threshold" type="float" value="0.5" min="0.0" max="1.0" optional="true" label="Decision Threshold (binary only)" help="Set the decision threshold for binary classification (0.0–1.0). Only applies when task is binary; default is 0.5." />
-            </when>
-            <when value="false">
-                <!-- No additional parameters to show if the user selects 'No' -->
-            </when>
-        </conditional>
+            <param argument="random_seed" type="integer" value="42" optional="true" label="Random seed (set for reproducibility)" min="0" max="999999"/>
+            <param name="epochs" type="integer" value="10" min="1" max="99999" label="Epochs" help="Total number of full passes through the training dataset. Higher values may improve accuracy but increase training time. Default: 10." />
+            <param name="early_stop" type="integer" value="5" min="1" max="99999" label="Early Stop" help="Number of epochs with no improvement after which training will be stopped. Default: 5." />
+            <conditional name="learning_rate_condition">
+                <param name="learning_rate_define" type="select" label="Define an initial learning rate?" help="Want to change the initial learning rate from default to a number? See ludwig.ai for more info. Default: No" >
+                    <option value="false" selected="true" >No</option>
+                    <option value="true">Yes</option>
+                </param>
+                <when value="true">
+                    <param name="learning_rate" type="float" value="0.001" min="0.0001" max="1.0" label="Learning Rate" help="Initial learning rate for the optimizer. Default: 0.001." />
+                </when>
+                <when value="false">
+                    <!-- No additional parameters to show if the user selects 'No' -->
+                </when>
+            </conditional>
+            <conditional name="batch_size_condition">
+                <param name="batch_size_define" type="select" label="Define your batch size?" help="Want to change the batch size from auto to a number? See ludwig.ai for more info. Default: No" >
+                    <option value="false" selected="true" >No</option>
+                    <option value="true">Yes</option>
+                </param>
+                <when value="true">
+                    <param name="batch_size" type="integer" value="32" min="1" max="99999" label="Batch Size" help="Number of samples per gradient update. Default: 32." />
+                </when>
+                <when value="false">
+                    <!-- No additional parameters to show if the user selects 'No' -->
+                </when>
+            </conditional>
+            <param name="train_split" type="float"
+                    label="Training split proportion (only works if no split column in the metadata csv)"
+                    value="0.7"
+                    help="Fraction of data for training (e.g., 0.7). train split + val split + test split should = 1"/>
+            <param name="val_split"   type="float"
+                    label="Validation split proportion (only works if no split column in the metadata csv)"
+                    value="0.1"
+                    help="Fraction of data for validation (e.g., 0.1). train split + val split + test split should = 1"/>
+            <param name="test_split"  type="float"
+                    label="Test split proportion (only works if no split column in the metadata csv)"
+                    value="0.2"
+                    help="Fraction of data for testing (e.g., 0.2) train split + val split + test split should = 1."/>
+            <param name="threshold" type="float" value="0.5" min="0.0" max="1.0" optional="true" label="Decision Threshold (binary only)" help="Set the decision threshold for binary classification (0.0–1.0). Only applies when task is binary; default is 0.5." />
         </section>
     </inputs>
     <outputs>
@@ -480,8 +465,7 @@
             <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="randformer_s12" />
-            <param name="advanced_settings|customize_defaults" value="true" />
-            <param name="advanced_settings|epochs" value="5" />
+            <param name="epochs" value="5" />
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Test Performance Summary" />
@@ -529,8 +513,7 @@
             <param name="input_csv" value="binary_classification.csv" ftype="csv" />
             <param name="image_zip" value="binary_images.zip" ftype="zip" />
             <param name="model_name" value="resnet18" />
-            <param name="advanced_settings|customize_defaults" value="true" />
-            <param name="advanced_settings|threshold" value="0.6" />
+            <param name="threshold" value="0.6" />
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Results Summary" />
@@ -558,8 +541,7 @@
             <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="resnet18" />
-            <param name="advanced_settings|customize_defaults" value="true" />
-            <param name="advanced_settings|epochs" value="3" />
+            <param name="epochs" value="3" />
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Results Summary" />
@@ -581,8 +563,7 @@
             <param name="input_csv" value="mnist_subset_binary.csv" ftype="csv" />
             <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_name" value="resnet18" />
-            <param name="advanced_settings|customize_defaults" value="true" />
-            <param name="advanced_settings|threshold" value="0.6" />
+            <param name="threshold" value="0.6" />
             <param name="task_selection|task" value="classification" />
             <param name="task_selection|validation_metric_multiclass" value="accuracy" />
             <output name="output_report">
