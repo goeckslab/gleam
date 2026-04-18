@@ -1878,7 +1878,15 @@ class LudwigDirectBackend:
             # Multi-class transparency plots from test stats (replace ROC/PR for multi-class)
             if output_type == "category" and test_stats_path.exists():
                 try:
-                    multi_curves = build_multiclass_metric_plots(str(test_stats_path))
+                    multi_curves = build_multiclass_metric_plots(
+                        str(test_stats_path),
+                        metadata_csv_path=str(label_metadata_path)
+                        if label_metadata_path and label_metadata_path.exists()
+                        else None,
+                        train_set_metadata_path=str(train_set_metadata_path)
+                        if train_set_metadata_path.exists()
+                        else None,
+                    )
                     tab3_content = append_plot_blocks(tab3_content, multi_curves)
                     if multi_curves:
                         logger.info("Added multi-class per-class metric plots to test tab")

@@ -170,6 +170,35 @@ def _resolve_confusion_labels(
     return [str(label) for label in labels[:n_classes]]
 
 
+def _resolve_display_labels(raw_labels: List, friendly_labels: Optional[List[str]]) -> List[str]:
+    """Map encoded class ids like 0/1 back to friendly labels when available."""
+    if not friendly_labels:
+        return [str(label) for label in raw_labels]
+
+    friendly_lookup = {str(label) for label in friendly_labels}
+    display_labels: List[str] = []
+    for raw_label in raw_labels:
+        raw_str = str(raw_label)
+        if raw_str in friendly_lookup:
+            display_labels.append(raw_str)
+            continue
+
+        idx = None
+        try:
+            idx_val = float(raw_str)
+            if idx_val.is_integer():
+                idx = int(idx_val)
+        except Exception:
+            idx = None
+
+        if idx is not None and 0 <= idx < len(friendly_labels):
+            display_labels.append(str(friendly_labels[idx]))
+        else:
+            display_labels.append(raw_str)
+
+    return display_labels
+
+
 def build_classification_plots(
     test_stats_path: str,
     training_stats_path: Optional[str] = None,
@@ -287,6 +316,7 @@ def build_classification_plots(
     pcs = label_stats.get("per_class_stats", {})
     if pcs:
         classes = list(pcs.keys())
+        display_classes = _resolve_display_labels(classes, labels)
         metrics = [
             "precision",
             "recall",
@@ -309,7 +339,7 @@ def build_classification_plots(
             go.Heatmap(
                 z=z,
                 x=[m.replace("_", " ") for m in metrics],
-                y=[str(c) for c in classes],
+                y=display_classes,
                 text=txt,
                 texttemplate="%{text}",
                 colorscale="Reds",
@@ -1469,7 +1499,11 @@ def build_multiclass_roc_pr_plots(
     return plots
 
 
-def build_multiclass_metric_plots(test_stats_path: str) -> List[Dict[str, str]]:
+def build_multiclass_metric_plots(
+    test_stats_path: str,
+    metadata_csv_path: Optional[str] = None,
+    train_set_metadata_path: Optional[str] = None,
+) -> List[Dict[str, str]]:
     """Alternative multi-class transparency plots using test_statistics.json per-class stats."""
     ts_path = Path(test_stats_path)
     if not ts_path.exists():
@@ -1487,6 +1521,13 @@ def build_multiclass_metric_plots(test_stats_path: str) -> List[Dict[str, str]]:
     classes = list(pcs.keys())
     if not classes:
         return []
+    friendly_labels = _resolve_confusion_labels(
+        label_stats,
+        len(classes),
+        metadata_csv_path=metadata_csv_path,
+        train_set_metadata_path=train_set_metadata_path,
+    )
+    display_classes = _resolve_display_labels(classes, friendly_labels)
 
     metrics = ["precision", "recall", "f1_score", "specificity", "accuracy"]
     fig_bar = go.Figure()
@@ -1497,7 +1538,7 @@ def build_multiclass_metric_plots(test_stats_path: str) -> List[Dict[str, str]]:
             values.append(v if isinstance(v, (int, float)) else 0)
         fig_bar.add_trace(
             go.Bar(
-                x=classes,
+                x=display_classes,
                 y=values,
                 name=metric.replace("_", " ").title(),
             )
