@@ -26,8 +26,8 @@
 #import re
 
 #set $image_zip_paths = []
-#if $use_images_conditional.use_images == "yes"
-  #for $zip_file in $use_images_conditional.images_zip_repeat
+#if $model_hyperparameter_configuration.use_images_conditional.use_images == "yes"
+  #for $zip_file in $model_hyperparameter_configuration.use_images_conditional.images_zip_repeat
     #set $image_zip_paths = $image_zip_paths + [$zip_file.images_zip]
   #end for
 #end if
@@ -38,9 +38,9 @@
 #end if
 
 set -e;
-ln -sf '$input_csv' 'train_input.csv';
-#if $test_dataset_conditional.has_test_dataset == "yes"
-ln -sf '$test_dataset_conditional.input_test' 'test_input.csv';
+ln -sf '$data_configuration.input_csv' 'train_input.csv';
+#if $data_configuration.test_dataset_conditional.has_test_dataset == "yes"
+ln -sf '$data_configuration.test_dataset_conditional.input_test' 'test_input.csv';
 #end if
 
 #set $TORCH_HOME = "./torch_cache"
@@ -53,64 +53,64 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
 
   python '$__tool_directory__/multimodal_learner.py'
   --input_csv_train 'train_input.csv'
-  #if $test_dataset_conditional.has_test_dataset == "yes"
+  #if $data_configuration.test_dataset_conditional.has_test_dataset == "yes"
   --input_csv_test 'test_input.csv'
   #end if
-  --target_column '$target_column'
-  #if $sample_id_selector.use_sample_id == "yes"
-  --sample_id_column '$sample_id_selector.sample_id_column'
+  --target_column '$data_configuration.target_column'
+  #if $data_configuration.sample_id_selector.use_sample_id == "yes"
+  --sample_id_column '$data_configuration.sample_id_selector.sample_id_column'
   #end if
 
-  #if $use_images_conditional.use_images == "yes"
+  #if $model_hyperparameter_configuration.use_images_conditional.use_images == "yes"
     #if $images_zip_cli
     --images_zip $images_zip_cli
     #end if
-    --missing_image_strategy '$use_images_conditional.missing_image_strategy'
-    #if $use_images_conditional.backbone_image
-    --backbone_image '$use_images_conditional.backbone_image'
+    --missing_image_strategy '$model_hyperparameter_configuration.use_images_conditional.missing_image_strategy'
+    #if $model_hyperparameter_configuration.use_images_conditional.backbone_image
+    --backbone_image '$model_hyperparameter_configuration.use_images_conditional.backbone_image'
     #end if
   #end if
 
-  #if $backbone_text not in ("", None)
-  --backbone_text '$backbone_text'
+  #if $model_hyperparameter_configuration.backbone_text not in ("", None)
+  --backbone_text '$model_hyperparameter_configuration.backbone_text'
   #end if
 
-  --preset '$preset'
-  --eval_metric '$eval_metric'
+  --preset '$model_hyperparameter_configuration.preset'
+  --eval_metric '$task_configuration.eval_metric'
 
-  --random_seed '$random_seed'
-  #if $time_limit
-  --time_limit $time_limit
+  --random_seed '$customize_defaults_section.random_seed'
+  #if $customize_defaults_section.time_limit
+  --time_limit $customize_defaults_section.time_limit
   #end if
-  #if $deterministic == "true"
+  #if $customize_defaults_section.deterministic == "true"
   --deterministic
   #end if
 
-  #if $customize_defaults_conditional.customize_defaults == "yes"
-    #if $customize_defaults_conditional.validation_size not in ("", None)
-      --validation_size $customize_defaults_conditional.validation_size
+  #if $customize_defaults_section.customize_defaults_conditional.customize_defaults == "yes"
+    #if $customize_defaults_section.customize_defaults_conditional.validation_size not in ("", None)
+      --validation_size $customize_defaults_section.customize_defaults_conditional.validation_size
     #end if
-    #if $customize_defaults_conditional.split_probabilities and str($customize_defaults_conditional.split_probabilities).strip()
-      --split_probabilities #echo " ".join([str(float(x)) for x in str($customize_defaults_conditional.split_probabilities).replace(",", " ").split() if x.strip()]) #
+    #if $customize_defaults_section.customize_defaults_conditional.split_probabilities and str($customize_defaults_section.customize_defaults_conditional.split_probabilities).strip()
+      --split_probabilities #echo " ".join([str(float(x)) for x in str($customize_defaults_section.customize_defaults_conditional.split_probabilities).replace(",", " ").split() if x.strip()]) #
     #end if
-    #if $customize_defaults_conditional.cross_validation == "true"
+    #if $customize_defaults_section.customize_defaults_conditional.cross_validation == "true"
       --cross_validation true
-      --num_folds $customize_defaults_conditional.num_folds
+      --num_folds $customize_defaults_section.customize_defaults_conditional.num_folds
     #end if
-    #if $customize_defaults_conditional.epochs
-      --epochs $customize_defaults_conditional.epochs
+    #if $customize_defaults_section.customize_defaults_conditional.epochs
+      --epochs $customize_defaults_section.customize_defaults_conditional.epochs
     #end if
-    #if $customize_defaults_conditional.learning_rate
-      --learning_rate $customize_defaults_conditional.learning_rate
+    #if $customize_defaults_section.customize_defaults_conditional.learning_rate
+      --learning_rate $customize_defaults_section.customize_defaults_conditional.learning_rate
     #end if
-    #if $customize_defaults_conditional.batch_size
-      --batch_size $customize_defaults_conditional.batch_size
+    #if $customize_defaults_section.customize_defaults_conditional.batch_size
+      --batch_size $customize_defaults_section.customize_defaults_conditional.batch_size
     #end if
-    #if $customize_defaults_conditional.threshold
-      --threshold $customize_defaults_conditional.threshold
+    #if $customize_defaults_section.customize_defaults_conditional.threshold
+      --threshold $customize_defaults_section.customize_defaults_conditional.threshold
     #end if
-    #if $customize_defaults_conditional.hyperparameters
-      --hyperparameters '$customize_defaults_conditional.hyperparameters'
+    #if $customize_defaults_section.customize_defaults_conditional.hyperparameters
+      --hyperparameters '$customize_defaults_section.customize_defaults_conditional.hyperparameters'
     #end if
   #end if
 
@@ -121,27 +121,61 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
 ]]></command>
 
   <inputs>
-    <param name="input_csv" type="data" format="csv,tsv" label="Training dataset (CSV/TSV)" help="Must contain the target column and optional image paths"/>
-    <param name="target_column" type="data_column" data_ref="input_csv" numerical="false" use_header_names="true" label="Target / Label column"/>
-    <conditional name="sample_id_selector">
-      <param name="use_sample_id" type="select" label="Use a sample ID column for leakage-aware splitting?" help="Select yes to choose a column that groups related records (e.g., patient_id or slide_id).">
-        <option value="no" selected="true">No column selected</option>
-        <option value="yes">Yes</option>
-      </param>
-      <when value="yes">
-        <param name="sample_id_column" type="data_column" data_ref="input_csv" use_header_names="true" label="Sample ID column" help="All rows with the same ID stay in the same split or fold to reduce leakage. Used for internal train/val/test splits and group-aware CV folds." />
-      </when>
-      <when value="no"/>
-    </conditional>
+    <section name="data_configuration" title="Data Configuration" expanded="true">
+      <param name="input_csv" type="data" format="csv,tsv" label="Training dataset (CSV/TSV)" help="Must contain the target column and optional image paths"/>
+      <conditional name="test_dataset_conditional">
+        <param name="has_test_dataset" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Provide separate test dataset?"/>
+        <when value="yes">
+          <param name="input_test" type="data" format="csv,tsv" optional="true" label="Test dataset (CSV/TSV)"/>
+        </when>
+        <when value="no"/>
+      </conditional>
+      <param name="target_column" type="data_column" data_ref="input_csv" numerical="false" use_header_names="true" label="Target / Label column"/>
+      <conditional name="sample_id_selector">
+        <param name="use_sample_id" type="select" label="Use a sample ID column for leakage-aware splitting?" help="Select yes to choose a column that groups related records (e.g., patient_id or slide_id).">
+          <option value="no" selected="true">No column selected</option>
+          <option value="yes">Yes</option>
+        </param>
+        <when value="yes">
+          <param name="sample_id_column" type="data_column" data_ref="input_csv" use_header_names="true" label="Sample ID column" help="All rows with the same ID stay in the same split or fold to reduce leakage. Used for internal train/val/test splits and group-aware CV folds." />
+        </when>
+        <when value="no"/>
+      </conditional>
+    </section>
 
-    <conditional name="test_dataset_conditional">
-      <param name="has_test_dataset" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Provide separate test dataset?"/>
-      <when value="yes">
-        <param name="input_test" type="data" format="csv,tsv" optional="true" label="Test dataset (CSV/TSV)"/>
-      </when>
-      <when value="no"/>
-    </conditional>
+    <section name="task_configuration" title="Task Configuration" expanded="true">
+    <param name="eval_metric" type="select" label="Primary evaluation metric (task inferred automatically)">
+      <option value="auto" selected="true">Auto (let AutoGluon choose)</option>
+      <option value="roc_auc">ROC AUC</option>
+      <option value="accuracy">Accuracy</option>
+      <option value="balanced_accuracy">Balanced Accuracy</option>
+      <option value="f1">F1</option>
+      <option value="f1_macro">F1 Macro</option>
+      <option value="f1_micro">F1 Micro</option>
+      <option value="f1_weighted">F1 Weighted</option>
+      <option value="precision">Precision</option>
+      <option value="precision_macro">Precision Macro</option>
+      <option value="precision_micro">Precision Micro</option>
+      <option value="precision_weighted">Precision Weighted</option>
+      <option value="recall">Recall</option>
+      <option value="recall_macro">Recall Macro</option>
+      <option value="recall_micro">Recall Micro</option>
+      <option value="recall_weighted">Recall Weighted</option>
+      <option value="average_precision">Average Precision</option>
+      <option value="roc_auc_ovo_macro">ROC AUC OVO Macro</option>
+      <option value="roc_auc_ovo_weighted">ROC AUC OVO Weighted</option>
+      <option value="roc_auc_ovr_macro">ROC AUC OVR Macro</option>
+      <option value="roc_auc_ovr_weighted">ROC AUC OVR Weighted</option>
+      <option value="log_loss">Log Loss</option>
+      <option value="mse">MSE</option>
+      <option value="rmse">RMSE</option>
+      <option value="mae">MAE</option>
+      <option value="msle">MSLE</option>
+      <option value="r2">R2</option>
+    </param>
+    </section>
 
+    <section name="model_hyperparameter_configuration" title="Model, Weights, and Hyperparameters Configuration" expanded="true">
     <param name="backbone_text" type="select" label="Text backbone" optional="true">
       <option value="microsoft/deberta-v3-base" selected="true">microsoft/deberta-v3-base</option>
       <option value="microsoft/deberta-v3-small">microsoft/deberta-v3-small</option>
@@ -259,37 +293,9 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
       <option value="high_quality">High quality</option>
       <option value="best_quality">Best quality (slowest)</option>
     </param>
+    </section>
 
-    <param name="eval_metric" type="select" label="Primary evaluation metric">
-      <option value="auto" selected="true">Auto (let AutoGluon choose)</option>
-      <option value="roc_auc">ROC AUC</option>
-      <option value="accuracy">Accuracy</option>
-      <option value="balanced_accuracy">Balanced Accuracy</option>
-      <option value="f1">F1</option>
-      <option value="f1_macro">F1 Macro</option>
-      <option value="f1_micro">F1 Micro</option>
-      <option value="f1_weighted">F1 Weighted</option>
-      <option value="precision">Precision</option>
-      <option value="precision_macro">Precision Macro</option>
-      <option value="precision_micro">Precision Micro</option>
-      <option value="precision_weighted">Precision Weighted</option>
-      <option value="recall">Recall</option>
-      <option value="recall_macro">Recall Macro</option>
-      <option value="recall_micro">Recall Micro</option>
-      <option value="recall_weighted">Recall Weighted</option>
-      <option value="average_precision">Average Precision</option>
-      <option value="roc_auc_ovo_macro">ROC AUC OVO Macro</option>
-      <option value="roc_auc_ovo_weighted">ROC AUC OVO Weighted</option>
-      <option value="roc_auc_ovr_macro">ROC AUC OVR Macro</option>
-      <option value="roc_auc_ovr_weighted">ROC AUC OVR Weighted</option>
-      <option value="log_loss">Log Loss</option>
-      <option value="mse">MSE</option>
-      <option value="rmse">RMSE</option>
-      <option value="mae">MAE</option>
-      <option value="msle">MSLE</option>
-      <option value="r2">R2</option>
-    </param>
-
+    <section name="customize_defaults_section" title="Customize Default Settings" expanded="false">
     <param name="random_seed" type="integer" value="42" label="Random seed"/>
 
     <param name="time_limit" type="integer" optional="true" min="60" label="Time limit (seconds)" help="Total training time budget. Recommended: 3600+ for real runs"/>
@@ -311,6 +317,7 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
       </when>
       <when value="no"/>
     </conditional>
+    </section>
   </inputs>
 
   <outputs>
