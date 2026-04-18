@@ -314,8 +314,8 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
 
   <outputs>
     <data name="output_html" format="html" label="Multimodal Learner analysis report on data ${on_string}"/>
-    <data name="output_config" format="yaml" label="Multimodal Learner training config on data ${on_string}"/>
-    <data name="output_json" format="json" label="Multimodal Learner metric results on data ${on_string}"/>
+    <data name="output_config" format="yaml" label="Multimodal Learner training config on data ${on_string}" hidden="true"/>
+    <data name="output_json" format="json" label="Multimodal Learner metric results on data ${on_string}" hidden="true"/>
   </outputs>
 
 	  <tests>
