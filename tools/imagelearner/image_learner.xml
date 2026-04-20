@@ -1,4 +1,4 @@
-<tool id="image_learner" name="Image Learner" version="0.1.6" profile="22.01">
+<tool id="image_learner" name="Image Learner" version="0.1.5" profile="22.01">
     <description>trains and evaluates an image classification/regression model</description>
     <requirements>
         <container type="docker">quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1</container>
