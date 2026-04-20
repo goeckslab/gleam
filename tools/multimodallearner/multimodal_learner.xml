@@ -38,9 +38,9 @@
 #end if
 
 set -e;
-ln -sf '$input_csv' 'train_input.csv';
+ln -sf '$input_csv' 'train_input.tabular';
 #if $test_dataset_conditional.has_test_dataset == "yes"
-ln -sf '$test_dataset_conditional.input_test' 'test_input.csv';
+ln -sf '$test_dataset_conditional.input_test' 'test_input.tabular';
 #end if
 
 #set $TORCH_HOME = "./torch_cache"
@@ -52,9 +52,9 @@ export HUGGINGFACE_HUB_CACHE="$HUGGINGFACE_HUB_CACHE" &&
 mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
 
   python '$__tool_directory__/multimodal_learner.py'
-  --input_csv_train 'train_input.csv'
+  --input_csv_train 'train_input.tabular'
   #if $test_dataset_conditional.has_test_dataset == "yes"
-  --input_csv_test 'test_input.csv'
+  --input_csv_test 'test_input.tabular'
   #end if
   --target_column '$target_column'
   #if $sample_id_selector.use_sample_id == "yes"

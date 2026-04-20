@@ -1,3 +1,4 @@
+import csv
 import errno
 import json
 import logging
@@ -128,10 +129,33 @@ def enable_deterministic_mode(seed: Optional[int] = None):
 def load_file(path: str) -> pd.DataFrame:
     if not path:
         return None
+
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Dataset not found: {path}")
-    return pd.read_csv(path, sep=None, engine="python")
+
+    suffix = path.suffix.lower()
+    if suffix == ".tsv":
+        LOG.info("Loading tabular dataset as TSV: %s", path)
+        return pd.read_csv(path, sep="\t")
+    if suffix == ".csv":
+        LOG.info("Loading tabular dataset as CSV: %s", path)
+        return pd.read_csv(path, sep=",")
+
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        sample = handle.read(8192)
+
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",\t;|")
+        delimiter = dialect.delimiter
+        LOG.info("Detected delimiter %r for tabular dataset: %s", delimiter, path)
+        return pd.read_csv(path, sep=delimiter)
+    except Exception:
+        LOG.warning(
+            "Could not infer delimiter for %s from extension/sample; falling back to pandas autodetection.",
+            path,
+        )
+        return pd.read_csv(path, sep=None, engine="python")
 
 
 def _normalize_path_value(val: object) -> Optional[str]:
