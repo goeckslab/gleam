@@ -7,6 +7,7 @@ import platform
 import shutil
 import sys
 import tempfile
+import zipfile
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
@@ -89,6 +90,40 @@ def _copy_config_if_available(
                 cfg_out.write(f"# Failed to copy config.yaml: {e}\n")
         except Exception:
             pass
+
+
+def _export_predictor_archive(
+    pred_path: Optional[str],
+    output_model_archive: Optional[str],
+) -> None:
+    if not output_model_archive:
+        return
+    try:
+        if not pred_path or not os.path.isdir(pred_path):
+            raise FileNotFoundError(
+                f"Predictor directory not found: {pred_path!r}"
+            )
+
+        archive_root = os.path.abspath(pred_path)
+        with zipfile.ZipFile(
+            output_model_archive,
+            mode="w",
+            compression=zipfile.ZIP_DEFLATED,
+        ) as zf:
+            for root, _, files in os.walk(archive_root):
+                for filename in files:
+                    file_path = os.path.join(root, filename)
+                    rel_path = os.path.relpath(file_path, archive_root)
+                    arcname = os.path.join("predictor", rel_path)
+                    zf.write(file_path, arcname=arcname)
+        logger.info("Wrote predictor archive → %s", output_model_archive)
+    except Exception as e:
+        logger.error(
+            "Failed to write model archive '%s': %s",
+            output_model_archive,
+            e,
+        )
+        raise
 
 
 def _load_config_yaml(args, predictor) -> dict:
@@ -505,6 +540,10 @@ def write_outputs(
         backbone_replacements,
         cfg_yaml=cfg_yaml,
     )
+    _export_predictor_archive(
+        pred_path,
+        getattr(args, "output_model_archive", None),
+    )
 
     outputs_to_check = [
         (args.output_json, "JSON results"),
@@ -512,6 +551,10 @@ def write_outputs(
     ]
     if args.output_config:
         outputs_to_check.append((args.output_config, "AutoGluon config"))
+    if getattr(args, "output_model_archive", None):
+        outputs_to_check.append(
+            (args.output_model_archive, "trained model archive")
+        )
     verify_outputs(outputs_to_check)
 
 
