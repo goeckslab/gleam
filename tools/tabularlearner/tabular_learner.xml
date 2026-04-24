@@ -75,7 +75,7 @@
                 </param>
                 <when value="yes">
                     <param name="test_file" type="data" format="csv,tabular" label="Test dataset"
-                           help="If a test dataset is provided, the input dataset will be split into training and validation sets only. 
+                           help="If a test dataset is provided, the input dataset will be split into training and validation sets only.
                                  If not, the tool will split your input into training, validation, and test automatically." />
                 </when>
                 <when value="no">
@@ -199,7 +199,7 @@
         </section>
     </inputs>
     <outputs>
-        <data name="model" format="h5" from_work_dir="pycaret_model.h5" label="${tool.name} best model on ${on_string}" />
+        <data name="model" format="h5" from_work_dir="pycaret_model.h5" label="${tool.name} best model on ${on_string}" hidden="true" />
         <data name="best_model_csv" format="csv" from_work_dir="best_model.csv" label="${tool.name} The parameters of the best model on ${on_string}" hidden="true" />
         <data name="comparison_result" format="html" from_work_dir="comparison_result.html" label="${tool.name} analysis report on ${on_string}" />
     </outputs>

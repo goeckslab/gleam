@@ -94,6 +94,7 @@
 
             mkdir -p '$output_model.extra_files_path' &&
             cp -r experiment_run/model/*.json experiment_run/model/model_weights '$output_model.extra_files_path' &&
+            python -c "import pathlib, zipfile; out = pathlib.Path('$output_artifacts_zip'); exp = pathlib.Path('experiment_run'); model_dir = exp / 'model'; zf = zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED); [zf.write(path, path.relative_to(exp.parent)) for path in sorted(exp.rglob('*')) if path.is_file() and model_dir not in path.parents]; zf.close()" &&
 
             echo "Image Learner Classification Experiment is Done!"
         ]]>
@@ -387,16 +388,9 @@
         </section>
     </inputs>
     <outputs>
-        <data format="ludwig_model" name="output_model" label="${tool.name} trained model on ${on_string}" />
+        <data format="ludwig_model" name="output_model" label="${tool.name} trained model on ${on_string}" hidden="true" />
         <data format="html" name="output_report" from_work_dir="image_classification_results_report.html" label="${tool.name} report on ${on_string}" />
-        <collection type="list" name="output_pred_csv" label="${tool.name} predictions CSVs/experiment stats/plots on ${on_string}" >
-            <discover_datasets pattern="(?P&lt;designation&gt;predictions\.csv)" format="csv" directory="experiment_run" />
-            <discover_datasets pattern="(?P&lt;designation&gt;.+)\.json" format="json" directory="experiment_run" />
-            <discover_datasets pattern="(?P&lt;designation&gt;.+)\.png" format="png" directory="experiment_run/visualizations/train" />
-            <discover_datasets pattern="(?P&lt;designation&gt;.+)\.png" format="png" directory="experiment_run/visualizations/test" />
-            <discover_datasets pattern="(?P&lt;designation&gt;.+)\.png" format="png" directory="experiment_run/feature_importance_examples" />
-            <discover_datasets pattern="(?P&lt;designation&gt;feature_importance_examples\.zip)" format="zip" directory="experiment_run" />
-        </collection>
+        <data format="zip" name="output_artifacts_zip" label="${tool.name} predictions and artifacts on ${on_string}" hidden="true" />
     </outputs>
     <tests>
         <test expect_num_outputs="3">
@@ -413,14 +407,8 @@
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
+            <output name="output_artifacts_zip" ftype="zip" />
 
-            <output_collection name="output_pred_csv" type="list" >
-                <element name="predictions.csv" >
-                    <assert_contents>
-                        <has_n_columns n="1" />
-                    </assert_contents>
-                </element>
-            </output_collection>
         </test>
         <test expect_num_outputs="3">
             <param name="input_csv" value="utkface_labels.csv" ftype="csv" />
@@ -433,13 +421,7 @@
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
-            <output_collection name="output_pred_csv" type="list" >
-                <element name="predictions.csv" >
-                    <assert_contents>
-                        <has_n_columns n="1" />
-                    </assert_contents>
-                </element>
-            </output_collection>
+            <output name="output_artifacts_zip" ftype="zip" />
         </test>
         <test expect_num_outputs="3">
             <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
@@ -452,14 +434,8 @@
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
+            <output name="output_artifacts_zip" ftype="zip" />
 
-            <output_collection name="output_pred_csv" type="list" >
-                <element name="predictions.csv" >
-                    <assert_contents>
-                        <has_n_columns n="1" />
-                    </assert_contents>
-                </element>
-            </output_collection>
         </test>
         <test expect_num_outputs="3">
             <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
@@ -473,14 +449,8 @@
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
+            <output name="output_artifacts_zip" ftype="zip" />
 
-            <output_collection name="output_pred_csv" type="list" >
-                <element name="predictions.csv" >
-                    <assert_contents>
-                        <has_n_columns n="1" />
-                    </assert_contents>
-                </element>
-            </output_collection>
         </test>
         <!-- Test 7: MetaFormer with 384x384 input - verifies model correctly handles non-224x224 dimensions -->
         <!-- <test expect_num_outputs="3">
@@ -495,18 +465,7 @@
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
-            <output_collection name="output_pred_csv" type="list" >
-                <element name="predictions.csv" >
-                    <assert_contents>
-                        <has_n_columns n="1" />
-                    </assert_contents>
-                </element>
-                <element name="description" >
-                    <assert_contents>
-                        <has_text text="384" />
-                    </assert_contents>
-                </element>
-            </output_collection>
+            <output name="output_artifacts_zip" ftype="zip" />
         </test> -->
         <!-- Test 8: Binary classification with custom threshold - verifies ROC curve generation for binary tasks; need to find a test dataset -->
         <!-- <test expect_num_outputs="3">
@@ -522,18 +481,7 @@
                     <has_text text="ROC-AUC Curves" />
                 </assert_contents>
             </output>
-            <output_collection name="output_pred_csv" type="list" >
-                <element name="predictions.csv" >
-                    <assert_contents>
-                        <has_n_columns n="1" />
-                    </assert_contents>
-                </element>
-                <element name="test_statistics.json" >
-                    <assert_contents>
-                        <has_text text="roc_auc" />
-                    </assert_contents>
-                </element>
-            </output_collection>
+            <output name="output_artifacts_zip" ftype="zip" />
         </test> -->
         <!-- Test 9: PoolFormerV2 model configuration - verifies custom_model parameter persists in config -->
         <!-- Test 10: Multi-class classification with ROC curves - verifies robust ROC-AUC plot generation -->
@@ -551,13 +499,7 @@
                     <has_text text="Micro-average ROC" />
                 </assert_contents>
             </output>
-            <output_collection name="output_pred_csv" type="list" >
-                <element name="predictions.csv" >
-                    <assert_contents>
-                        <has_n_columns n="1" />
-                    </assert_contents>
-                </element>
-            </output_collection>
+            <output name="output_artifacts_zip" ftype="zip" />
         </test> -->
         <test expect_num_outputs="3">
             <param name="input_csv" value="mnist_subset_binary.csv" ftype="csv" />
@@ -575,13 +517,7 @@
                     <has_text text="0.60" />
                 </assert_contents>
             </output>
-            <output_collection name="output_pred_csv" type="list" >
-                <element name="predictions.csv" >
-                    <assert_contents>
-                        <has_n_columns n="1" />
-                    </assert_contents>
-                </element>
-            </output_collection>
+            <output name="output_artifacts_zip" ftype="zip" />
         </test>
     </tests>
     <help>
@@ -608,7 +544,7 @@ The MetaFormer family represents a unified perspective on transformer-like archi
 
 **Outputs**
 The tool will output a trained model in the form of a ludwig_model file,
-a report in the form of an HTML file, and a collection of CSV/json/png files containing the predictions, experiment stats and visualizations.
+a report in the form of an HTML file, and a hidden ZIP archive containing the predictions, experiment stats, and visualizations.
 The html report will contain metrics&experiment setup parameters, train&val plots and test plots.
 
         ]]>
