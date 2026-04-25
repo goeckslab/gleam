@@ -26,11 +26,9 @@
 #import re
 
 #set $image_zip_paths = []
-#if $use_images_conditional.use_images == "yes"
-  #for $zip_file in $use_images_conditional.images_zip_repeat
-    #set $image_zip_paths = $image_zip_paths + [$zip_file.images_zip]
-  #end for
-#end if
+#for $zip_file in $data_configuration.images_zip_repeat
+  #set $image_zip_paths = $image_zip_paths + [$zip_file.images_zip]
+#end for
 #if len($image_zip_paths) > 0
   #set $images_zip_cli = " ".join(["'%s'" % z for z in $image_zip_paths])
 #else
@@ -38,9 +36,9 @@
 #end if
 
 set -e;
-ln -sf '$input_csv' 'train_input.tabular';
-#if $test_dataset_conditional.has_test_dataset == "yes"
-ln -sf '$test_dataset_conditional.input_test' 'test_input.tabular';
+ln -sf '$data_configuration.input_csv' 'train_input.tabular';
+#if $data_configuration.test_dataset_conditional.has_test_dataset == "yes"
+ln -sf '$data_configuration.test_dataset_conditional.input_test' 'test_input.tabular';
 #end if
 
 #set $TORCH_HOME = "./torch_cache"
@@ -53,327 +51,311 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
 
   python '$__tool_directory__/multimodal_learner.py'
   --input_csv_train 'train_input.tabular'
-  #if $test_dataset_conditional.has_test_dataset == "yes"
+  #if $data_configuration.test_dataset_conditional.has_test_dataset == "yes"
   --input_csv_test 'test_input.tabular'
   #end if
-  --target_column '$target_column'
-  #if $sample_id_selector.use_sample_id == "yes"
-  --sample_id_column '$sample_id_selector.sample_id_column'
+  --target_column '$data_configuration.target_column'
+  #if $data_configuration.sample_id_selector.use_sample_id == "yes"
+  --sample_id_column '$data_configuration.sample_id_selector.sample_id_column'
   #end if
 
-  #if $use_images_conditional.use_images == "yes"
+  #if len($image_zip_paths) > 0
     #if $images_zip_cli
     --images_zip $images_zip_cli
     #end if
-    --missing_image_strategy '$use_images_conditional.missing_image_strategy'
-    #if $use_images_conditional.backbone_image
-    --backbone_image '$use_images_conditional.backbone_image'
+    --missing_image_strategy '$data_configuration.missing_image_strategy'
+    #if $model_hyperparameter_configuration.backbone_image
+    --backbone_image '$model_hyperparameter_configuration.backbone_image'
     #end if
   #end if
 
-  #if $backbone_text not in ("", None)
-  --backbone_text '$backbone_text'
+  #if $model_hyperparameter_configuration.backbone_text not in ("", None)
+  --backbone_text '$model_hyperparameter_configuration.backbone_text'
   #end if
 
-  --preset '$preset'
-  --eval_metric '$eval_metric'
+  --preset '$model_hyperparameter_configuration.preset'
+  --eval_metric '$model_hyperparameter_configuration.eval_metric'
 
-  --random_seed '$random_seed'
-  #if $time_limit
-  --time_limit $time_limit
+  --random_seed '$customize_defaults_section.random_seed'
+  #if $customize_defaults_section.time_limit
+  --time_limit $customize_defaults_section.time_limit
   #end if
-  #if $deterministic == "true"
+  #if $customize_defaults_section.deterministic == "true"
   --deterministic
   #end if
 
-  #if $customize_defaults_conditional.customize_defaults == "yes"
-    #if $customize_defaults_conditional.validation_size not in ("", None)
-      --validation_size $customize_defaults_conditional.validation_size
-    #end if
-    #if $customize_defaults_conditional.split_probabilities and str($customize_defaults_conditional.split_probabilities).strip()
-      --split_probabilities #echo " ".join([str(float(x)) for x in str($customize_defaults_conditional.split_probabilities).replace(",", " ").split() if x.strip()]) #
-    #end if
-    #if $customize_defaults_conditional.cross_validation == "true"
-      --cross_validation true
-      --num_folds $customize_defaults_conditional.num_folds
-    #end if
-    #if $customize_defaults_conditional.epochs
-      --epochs $customize_defaults_conditional.epochs
-    #end if
-    #if $customize_defaults_conditional.learning_rate
-      --learning_rate $customize_defaults_conditional.learning_rate
-    #end if
-    #if $customize_defaults_conditional.batch_size
-      --batch_size $customize_defaults_conditional.batch_size
-    #end if
-    #if $customize_defaults_conditional.threshold
-      --threshold $customize_defaults_conditional.threshold
-    #end if
-    #if $customize_defaults_conditional.hyperparameters
-      --hyperparameters '$customize_defaults_conditional.hyperparameters'
-    #end if
+  #if $customize_defaults_section.validation_size not in ("", None)
+    --validation_size $customize_defaults_section.validation_size
+  #end if
+  #if $customize_defaults_section.split_probabilities and str($customize_defaults_section.split_probabilities).strip()
+    --split_probabilities #echo " ".join([str(float(x)) for x in str($customize_defaults_section.split_probabilities).replace(",", " ").split() if x.strip()]) #
+  #end if
+  #if $customize_defaults_section.cross_validation == "true"
+    --cross_validation true
+    --num_folds $customize_defaults_section.num_folds
+  #end if
+  #if $customize_defaults_section.epochs
+    --epochs $customize_defaults_section.epochs
+  #end if
+  #if $customize_defaults_section.learning_rate
+    --learning_rate $customize_defaults_section.learning_rate
+  #end if
+  #if $customize_defaults_section.batch_size
+    --batch_size $customize_defaults_section.batch_size
+  #end if
+  #if $customize_defaults_section.threshold
+    --threshold $customize_defaults_section.threshold
+  #end if
+  #if $customize_defaults_section.hyperparameters
+    --hyperparameters '$customize_defaults_section.hyperparameters'
   #end if
 
   --output_json '$output_json'
   --output_html '$output_html'
   --output_config '$output_config'
+  --output_model_archive '$output_model_archive'
 ]]></command>
 
   <inputs>
-    <param name="input_csv" type="data" format="csv,tsv" label="Training dataset (CSV/TSV)" help="Must contain the target column and optional image paths"/>
-    <param name="target_column" type="data_column" data_ref="input_csv" numerical="false" use_header_names="true" label="Target / Label column"/>
-    <conditional name="sample_id_selector">
-      <param name="use_sample_id" type="select" label="Use a sample ID column for leakage-aware splitting?" help="Select yes to choose a column that groups related records (e.g., patient_id or slide_id).">
-        <option value="no" selected="true">No column selected</option>
-        <option value="yes">Yes</option>
-      </param>
-      <when value="yes">
-        <param name="sample_id_column" type="data_column" data_ref="input_csv" use_header_names="true" label="Sample ID column" help="All rows with the same ID stay in the same split or fold to reduce leakage. Used for internal train/val/test splits and group-aware CV folds." />
-      </when>
-      <when value="no"/>
-    </conditional>
-
-    <conditional name="test_dataset_conditional">
-      <param name="has_test_dataset" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Provide separate test dataset?"/>
-      <when value="yes">
-        <param name="input_test" type="data" format="csv,tsv" optional="true" label="Test dataset (CSV/TSV)"/>
-      </when>
-      <when value="no"/>
-    </conditional>
-
-    <param name="backbone_text" type="select" label="Text backbone" optional="true">
-      <option value="microsoft/deberta-v3-base" selected="true">microsoft/deberta-v3-base</option>
-      <option value="microsoft/deberta-v3-small">microsoft/deberta-v3-small</option>
-      <option value="google/electra-base-discriminator">google/electra-base-discriminator</option>
-      <option value="google/electra-small-discriminator">google/electra-small-discriminator</option>
-      <option value="roberta-base">roberta-base</option>
-      <option value="bert-base-uncased">bert-base-uncased</option>
-      <option value="distilroberta-base">distilroberta-base</option>
-      <option value="albert-base-v2">albert-base-v2</option>
-    </param>
-
-    <conditional name="use_images_conditional">
-      <param name="use_images" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Use image modality?"/>
-      <when value="yes">
-        <repeat name="images_zip_repeat" title="Image archive(s)" min="1">
-          <param name="images_zip" type="data" format="zip" label="ZIP file containing images"/>
-        </repeat>
-        <param name="backbone_image" type="select" label="Image backbone" optional="true">
-          <option value='swin_base_patch4_window7_224.ms_in22k_ft_in1k' selected='true'>swin_base_patch4_window7_224.ms_in22k_ft_in1k</option>
-          <option value='swin_base_patch4_window7_224.ms_in1k'>swin_base_patch4_window7_224.ms_in1k</option>
-          <option value='swin_base_patch4_window7_224.ms_in22k'>swin_base_patch4_window7_224.ms_in22k</option>
-
-          <option value='swin_large_patch4_window12_384.ms_in22k_ft_in1k'>swin_large_patch4_window12_384.ms_in22k_ft_in1k</option>
-          <option value='swin_large_patch4_window12_384.ms_in22k'>swin_large_patch4_window12_384.ms_in22k</option>
-
-          <option value='swin_small_patch4_window7_224.ms_in22k_ft_in1k'>swin_small_patch4_window7_224.ms_in22k_ft_in1k</option>
-          <option value='swin_small_patch4_window7_224.ms_in1k'>swin_small_patch4_window7_224.ms_in1k</option>
-          <option value='swin_small_patch4_window7_224.ms_in22k'>swin_small_patch4_window7_224.ms_in22k</option>
-
-          <option value='swin_tiny_patch4_window7_224.ms_in22k_ft_in1k'>swin_tiny_patch4_window7_224.ms_in22k_ft_in1k</option>
-          <option value='swin_tiny_patch4_window7_224.ms_in1k'>swin_tiny_patch4_window7_224.ms_in1k</option>
-          <option value='swin_tiny_patch4_window7_224.ms_in22k'>swin_tiny_patch4_window7_224.ms_in22k</option>
-
-          <option value='caformer_b36.sail_in22k_ft_in1k'>caformer_b36.sail_in22k_ft_in1k</option>
-          <option value='caformer_b36.sail_in1k'>caformer_b36.sail_in1k</option>
-          <option value='caformer_b36.sail_in22k'>caformer_b36.sail_in22k</option>
-          <option value='caformer_b36.sail_in1k_384'>caformer_b36.sail_in1k_384</option>
-          <option value='caformer_b36.sail_in22k_ft_in1k_384'>caformer_b36.sail_in22k_ft_in1k_384</option>
-
-          <option value='caformer_m36.sail_in22k_ft_in1k'>caformer_m36.sail_in22k_ft_in1k</option>
-          <option value='caformer_m36.sail_in1k'>caformer_m36.sail_in1k</option>
-          <option value='caformer_m36.sail_in22k'>caformer_m36.sail_in22k</option>
-          <option value='caformer_m36.sail_in1k_384'>caformer_m36.sail_in1k_384</option>
-          <option value='caformer_m36.sail_in22k_ft_in1k_384'>caformer_m36.sail_in22k_ft_in1k_384</option>
-
-          <option value='caformer_s36.sail_in22k_ft_in1k'>caformer_s36.sail_in22k_ft_in1k</option>
-          <option value='caformer_s36.sail_in1k'>caformer_s36.sail_in1k</option>
-          <option value='caformer_s36.sail_in22k'>caformer_s36.sail_in22k</option>
-          <option value='caformer_s36.sail_in1k_384'>caformer_s36.sail_in1k_384</option>
-          <option value='caformer_s36.sail_in22k_ft_in1k_384'>caformer_s36.sail_in22k_ft_in1k_384</option>
-
-          <option value='caformer_s18.sail_in1k'>caformer_s18.sail_in1k</option>
-          <option value='caformer_s18.sail_in22k_ft_in1k'>caformer_s18.sail_in22k_ft_in1k</option>
-          <option value='caformer_s18.sail_in22k'>caformer_s18.sail_in22k</option>
-          <option value='caformer_s18.sail_in1k_384'>caformer_s18.sail_in1k_384</option>
-          <option value='caformer_s18.sail_in22k_ft_in1k_384'>caformer_s18.sail_in22k_ft_in1k_384</option>
-
-          <option value='vit_base_patch16_224.augreg2_in21k_ft_in1k'>vit_base_patch16_224.augreg2_in21k_ft_in1k</option>
-          <option value='vit_base_patch16_224.augreg_in1k'>vit_base_patch16_224.augreg_in1k</option>
-          <option value='vit_base_patch16_224.augreg_in21k'>vit_base_patch16_224.augreg_in21k</option>
-          <option value='vit_base_patch16_224.augreg_in21k_ft_in1k'>vit_base_patch16_224.augreg_in21k_ft_in1k</option>
-          <option value='vit_base_patch16_224.dino'>vit_base_patch16_224.dino</option>
-          <option value='vit_base_patch16_224.mae'>vit_base_patch16_224.mae</option>
-          <option value='vit_base_patch16_224.orig_in21k'>vit_base_patch16_224.orig_in21k</option>
-          <option value='vit_base_patch16_224.orig_in21k_ft_in1k'>vit_base_patch16_224.orig_in21k_ft_in1k</option>
-          <option value='vit_base_patch16_224.sam_in1k'>vit_base_patch16_224.sam_in1k</option>
-
-          <option value='convnext_base.fb_in1k'>convnext_base.fb_in1k</option>
-          <option value='convnext_base.fb_in22k_ft_in1k'>convnext_base.fb_in22k_ft_in1k</option>
-          <option value='convnext_base.fb_in22k_ft_in1k_384'>convnext_base.fb_in22k_ft_in1k_384</option>
-          <option value='convnext_base.fb_in22k'>convnext_base.fb_in22k</option>
-          <option value='convnext_base.dinov3_lvd1689m'>convnext_base.dinov3_lvd1689m</option>
-          <option value='convnext_base.clip_laion2b'>convnext_base.clip_laion2b</option>
-          <option value='convnext_base.clip_laion2b_augreg'>convnext_base.clip_laion2b_augreg</option>
-          <option value='convnext_base.clip_laion2b_augreg_ft_in1k'>convnext_base.clip_laion2b_augreg_ft_in1k</option>
-          <option value='convnext_base.clip_laion2b_augreg_ft_in12k'>convnext_base.clip_laion2b_augreg_ft_in12k</option>
-          <option value='convnext_base.clip_laion2b_augreg_ft_in12k_in1k'>convnext_base.clip_laion2b_augreg_ft_in12k_in1k</option>
-          <option value='convnext_base.clip_laion2b_augreg_ft_in12k_in1k_384'>convnext_base.clip_laion2b_augreg_ft_in12k_in1k_384</option>
-          <option value='convnext_base.clip_laiona'>convnext_base.clip_laiona</option>
-          <option value='convnext_base.clip_laiona_320'>convnext_base.clip_laiona_320</option>
-          <option value='convnext_base.clip_laiona_augreg_320'>convnext_base.clip_laiona_augreg_320</option>
-          <option value='convnext_base.clip_laiona_augreg_ft_in1k_384'>convnext_base.clip_laiona_augreg_ft_in1k_384</option>
-
-          <option value='eva02_base_patch14_448.mim_in22k_ft_in22k_in1k'>eva02_base_patch14_448.mim_in22k_ft_in22k_in1k</option>
-          <option value='eva02_base_patch14_448.mim_in22k_ft_in1k'>eva02_base_patch14_448.mim_in22k_ft_in1k</option>
-          <option value='eva02_base_patch14_448.mim_in22k_ft_in22k'>eva02_base_patch14_448.mim_in22k_ft_in22k</option>
-
-          <option value='resnet50.a1_in1k'>resnet50.a1_in1k</option>
-          <option value='resnet50.a1h_in1k'>resnet50.a1h_in1k</option>
-          <option value='resnet50.a2_in1k'>resnet50.a2_in1k</option>
-          <option value='resnet50.a3_in1k'>resnet50.a3_in1k</option>
-          <option value='resnet50.am_in1k'>resnet50.am_in1k</option>
-          <option value='resnet50.b1k_in1k'>resnet50.b1k_in1k</option>
-          <option value='resnet50.b2k_in1k'>resnet50.b2k_in1k</option>
-          <option value='resnet50.bt_in1k'>resnet50.bt_in1k</option>
-          <option value='resnet50.c1_in1k'>resnet50.c1_in1k</option>
-          <option value='resnet50.c2_in1k'>resnet50.c2_in1k</option>
-          <option value='resnet50.d_in1k'>resnet50.d_in1k</option>
-          <option value='resnet50.fb_ssl_yfcc100m_ft_in1k'>resnet50.fb_ssl_yfcc100m_ft_in1k</option>
-          <option value='resnet50.fb_swsl_ig1b_ft_in1k'>resnet50.fb_swsl_ig1b_ft_in1k</option>
-          <option value='resnet50.gluon_in1k'>resnet50.gluon_in1k</option>
-          <option value='resnet50.ra_in1k'>resnet50.ra_in1k</option>
-          <option value='resnet50.ram_in1k'>resnet50.ram_in1k</option>
-          <option value='resnet50.tv2_in1k'>resnet50.tv2_in1k</option>
-          <option value='resnet50.tv_in1k'>resnet50.tv_in1k</option>
+    <section name="data_configuration" title="Data Configuration" expanded="true">
+      <param name="input_csv" type="data" format="csv,tsv" label="Training dataset (CSV/TSV)" help="Must contain the target column and optional image paths"/>
+      <conditional name="test_dataset_conditional">
+        <param name="has_test_dataset" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Provide separate test dataset?"/>
+        <when value="yes">
+          <param name="input_test" type="data" format="csv,tsv" optional="true" label="Test dataset (CSV/TSV)"/>
+        </when>
+        <when value="no"/>
+      </conditional>
+      <repeat name="images_zip_repeat" title="Image archive(s)" min="0">
+        <param name="images_zip" type="data" format="zip" label="ZIP file containing images"/>
+      </repeat>
+      <param name="missing_image_strategy" type="boolean" truevalue="true" falsevalue="false" checked="false"
+             label="Drop rows with missing images?" help="True = drop, False = replace with placeholder (default)"/>
+      <param name="target_column" type="data_column" data_ref="input_csv" numerical="false" use_header_names="true" label="Target / Label column"/>
+      <conditional name="sample_id_selector">
+        <param name="use_sample_id" type="select" label="Use a sample ID column for leakage-aware splitting?" help="Select yes to choose a column that groups related records (e.g., patient_id or slide_id).">
+          <option value="no" selected="true">No column selected</option>
+          <option value="yes">Yes</option>
         </param>
-        <param name="missing_image_strategy" type="boolean" truevalue="true" falsevalue="false" checked="false"
-               label="Drop rows with missing images?" help="True = drop, False = replace with placeholder (default)"/>
-      </when>
-      <when value="no"/>
-    </conditional>
+        <when value="yes">
+          <param name="sample_id_column" type="data_column" data_ref="input_csv" use_header_names="true" label="Sample ID column" help="All rows with the same ID stay in the same split or fold to reduce leakage. Used for internal train/val/test splits and group-aware CV folds." />
+        </when>
+        <when value="no"/>
+      </conditional>
+    </section>
 
-    <param name="preset" type="select" label="Quality preset">
-      <option value="medium_quality" selected="true">Medium quality (fast)</option>
-      <option value="high_quality">High quality</option>
-      <option value="best_quality">Best quality (slowest)</option>
-    </param>
+    <section name="model_hyperparameter_configuration" title="Model, Weights, and Hyperparameters Configuration" expanded="true">
+      <param name="preset" type="select" label="Quality preset">
+        <option value="medium_quality" selected="true">Medium quality (fast)</option>
+        <option value="high_quality">High quality</option>
+        <option value="best_quality">Best quality (slowest)</option>
+      </param>
+      <param name="eval_metric" type="select" label="Primary evaluation metric (task inferred automatically)">
+        <option value="auto" selected="true">Auto (let AutoGluon choose)</option>
+        <option value="roc_auc">ROC AUC</option>
+        <option value="accuracy">Accuracy</option>
+        <option value="balanced_accuracy">Balanced Accuracy</option>
+        <option value="f1">F1</option>
+        <option value="f1_macro">F1 Macro</option>
+        <option value="f1_micro">F1 Micro</option>
+        <option value="f1_weighted">F1 Weighted</option>
+        <option value="precision">Precision</option>
+        <option value="precision_macro">Precision Macro</option>
+        <option value="precision_micro">Precision Micro</option>
+        <option value="precision_weighted">Precision Weighted</option>
+        <option value="recall">Recall</option>
+        <option value="recall_macro">Recall Macro</option>
+        <option value="recall_micro">Recall Micro</option>
+        <option value="recall_weighted">Recall Weighted</option>
+        <option value="average_precision">Average Precision</option>
+        <option value="roc_auc_ovo_macro">ROC AUC OVO Macro</option>
+        <option value="roc_auc_ovo_weighted">ROC AUC OVO Weighted</option>
+        <option value="roc_auc_ovr_macro">ROC AUC OVR Macro</option>
+        <option value="roc_auc_ovr_weighted">ROC AUC OVR Weighted</option>
+        <option value="log_loss">Log Loss</option>
+        <option value="mse">MSE</option>
+        <option value="rmse">RMSE</option>
+        <option value="mae">MAE</option>
+        <option value="msle">MSLE</option>
+        <option value="r2">R2</option>
+      </param>
+      <param name="backbone_text" type="select" label="Text backbone" optional="true">
+        <option value="microsoft/deberta-v3-base" selected="true">microsoft/deberta-v3-base</option>
+        <option value="microsoft/deberta-v3-small">microsoft/deberta-v3-small</option>
+        <option value="google/electra-base-discriminator">google/electra-base-discriminator</option>
+        <option value="google/electra-small-discriminator">google/electra-small-discriminator</option>
+        <option value="roberta-base">roberta-base</option>
+        <option value="bert-base-uncased">bert-base-uncased</option>
+        <option value="distilroberta-base">distilroberta-base</option>
+        <option value="albert-base-v2">albert-base-v2</option>
+      </param>
+      <param name="backbone_image" type="select" label="Image backbone" optional="true">
+        <option value='swin_base_patch4_window7_224.ms_in22k_ft_in1k' selected='true'>swin_base_patch4_window7_224.ms_in22k_ft_in1k</option>
+        <option value='swin_base_patch4_window7_224.ms_in1k'>swin_base_patch4_window7_224.ms_in1k</option>
+        <option value='swin_base_patch4_window7_224.ms_in22k'>swin_base_patch4_window7_224.ms_in22k</option>
 
-    <param name="eval_metric" type="select" label="Primary evaluation metric">
-      <option value="auto" selected="true">Auto (let AutoGluon choose)</option>
-      <option value="roc_auc">ROC AUC</option>
-      <option value="accuracy">Accuracy</option>
-      <option value="balanced_accuracy">Balanced Accuracy</option>
-      <option value="f1">F1</option>
-      <option value="f1_macro">F1 Macro</option>
-      <option value="f1_micro">F1 Micro</option>
-      <option value="f1_weighted">F1 Weighted</option>
-      <option value="precision">Precision</option>
-      <option value="precision_macro">Precision Macro</option>
-      <option value="precision_micro">Precision Micro</option>
-      <option value="precision_weighted">Precision Weighted</option>
-      <option value="recall">Recall</option>
-      <option value="recall_macro">Recall Macro</option>
-      <option value="recall_micro">Recall Micro</option>
-      <option value="recall_weighted">Recall Weighted</option>
-      <option value="average_precision">Average Precision</option>
-      <option value="roc_auc_ovo_macro">ROC AUC OVO Macro</option>
-      <option value="roc_auc_ovo_weighted">ROC AUC OVO Weighted</option>
-      <option value="roc_auc_ovr_macro">ROC AUC OVR Macro</option>
-      <option value="roc_auc_ovr_weighted">ROC AUC OVR Weighted</option>
-      <option value="log_loss">Log Loss</option>
-      <option value="mse">MSE</option>
-      <option value="rmse">RMSE</option>
-      <option value="mae">MAE</option>
-      <option value="msle">MSLE</option>
-      <option value="r2">R2</option>
-    </param>
+        <option value='swin_large_patch4_window12_384.ms_in22k_ft_in1k'>swin_large_patch4_window12_384.ms_in22k_ft_in1k</option>
+        <option value='swin_large_patch4_window12_384.ms_in22k'>swin_large_patch4_window12_384.ms_in22k</option>
 
-    <param name="random_seed" type="integer" value="42" label="Random seed"/>
+        <option value='swin_small_patch4_window7_224.ms_in22k_ft_in1k'>swin_small_patch4_window7_224.ms_in22k_ft_in1k</option>
+        <option value='swin_small_patch4_window7_224.ms_in1k'>swin_small_patch4_window7_224.ms_in1k</option>
+        <option value='swin_small_patch4_window7_224.ms_in22k'>swin_small_patch4_window7_224.ms_in22k</option>
 
-    <param name="time_limit" type="integer" optional="true" min="60" label="Time limit (seconds)" help="Total training time budget. Recommended: 3600+ for real runs"/>
-    <param name="deterministic" type="boolean" truevalue="true" falsevalue="false" checked="false"
-           label="Enable deterministic mode" help="Use deterministic algorithms and CuDNN settings to reduce run-to-run variance (may slow training)"/>
+        <option value='swin_tiny_patch4_window7_224.ms_in22k_ft_in1k'>swin_tiny_patch4_window7_224.ms_in22k_ft_in1k</option>
+        <option value='swin_tiny_patch4_window7_224.ms_in1k'>swin_tiny_patch4_window7_224.ms_in1k</option>
+        <option value='swin_tiny_patch4_window7_224.ms_in22k'>swin_tiny_patch4_window7_224.ms_in22k</option>
 
-    <conditional name="customize_defaults_conditional">
-      <param name="customize_defaults" type="boolean" truevalue="yes" falsevalue="no" checked="false" label="Advanced: customize training settings?"/>
-      <when value="yes">
-        <param name="validation_size" type="float" value="0.2" label="Validation fraction (when test set provided)"/>
-        <param name="split_probabilities" type="text" value="0.7 0.1 0.2" label="Train / Val / Test split (space-separated) when no test set"/>
-        <param name="cross_validation" type="boolean" truevalue="true" falsevalue="false" checked="false" label="Enable k-fold cross-validation"/>
-        <param name="num_folds" type="integer" value="5" label="Number of CV folds"/>
-        <param name="epochs" type="integer" optional="true" label="Max epochs"/>
-        <param name="learning_rate" type="float" optional="true" label="Learning rate"/>
-        <param name="batch_size" type="integer" optional="true" label="Batch size"/>
-        <param name="threshold" type="float" optional="true" min="0" max="1" label="Binary classification threshold"/>
-        <param name="hyperparameters" type="text" optional="true" label="Extra AutoGluon hyperparameters (JSON or YAML string)"/>
-      </when>
-      <when value="no"/>
-    </conditional>
+        <option value='caformer_b36.sail_in22k_ft_in1k'>caformer_b36.sail_in22k_ft_in1k</option>
+        <option value='caformer_b36.sail_in1k'>caformer_b36.sail_in1k</option>
+        <option value='caformer_b36.sail_in22k'>caformer_b36.sail_in22k</option>
+        <option value='caformer_b36.sail_in1k_384'>caformer_b36.sail_in1k_384</option>
+        <option value='caformer_b36.sail_in22k_ft_in1k_384'>caformer_b36.sail_in22k_ft_in1k_384</option>
+
+        <option value='caformer_m36.sail_in22k_ft_in1k'>caformer_m36.sail_in22k_ft_in1k</option>
+        <option value='caformer_m36.sail_in1k'>caformer_m36.sail_in1k</option>
+        <option value='caformer_m36.sail_in22k'>caformer_m36.sail_in22k</option>
+        <option value='caformer_m36.sail_in1k_384'>caformer_m36.sail_in1k_384</option>
+        <option value='caformer_m36.sail_in22k_ft_in1k_384'>caformer_m36.sail_in22k_ft_in1k_384</option>
+
+        <option value='caformer_s36.sail_in22k_ft_in1k'>caformer_s36.sail_in22k_ft_in1k</option>
+        <option value='caformer_s36.sail_in1k'>caformer_s36.sail_in1k</option>
+        <option value='caformer_s36.sail_in22k'>caformer_s36.sail_in22k</option>
+        <option value='caformer_s36.sail_in1k_384'>caformer_s36.sail_in1k_384</option>
+        <option value='caformer_s36.sail_in22k_ft_in1k_384'>caformer_s36.sail_in22k_ft_in1k_384</option>
+
+        <option value='caformer_s18.sail_in1k'>caformer_s18.sail_in1k</option>
+        <option value='caformer_s18.sail_in22k_ft_in1k'>caformer_s18.sail_in22k_ft_in1k</option>
+        <option value='caformer_s18.sail_in22k'>caformer_s18.sail_in22k</option>
+        <option value='caformer_s18.sail_in1k_384'>caformer_s18.sail_in1k_384</option>
+        <option value='caformer_s18.sail_in22k_ft_in1k_384'>caformer_s18.sail_in22k_ft_in1k_384</option>
+
+        <option value='vit_base_patch16_224.augreg2_in21k_ft_in1k'>vit_base_patch16_224.augreg2_in21k_ft_in1k</option>
+        <option value='vit_base_patch16_224.augreg_in1k'>vit_base_patch16_224.augreg_in1k</option>
+        <option value='vit_base_patch16_224.augreg_in21k'>vit_base_patch16_224.augreg_in21k</option>
+        <option value='vit_base_patch16_224.augreg_in21k_ft_in1k'>vit_base_patch16_224.augreg_in21k_ft_in1k</option>
+        <option value='vit_base_patch16_224.dino'>vit_base_patch16_224.dino</option>
+        <option value='vit_base_patch16_224.mae'>vit_base_patch16_224.mae</option>
+        <option value='vit_base_patch16_224.orig_in21k'>vit_base_patch16_224.orig_in21k</option>
+        <option value='vit_base_patch16_224.orig_in21k_ft_in1k'>vit_base_patch16_224.orig_in21k_ft_in1k</option>
+        <option value='vit_base_patch16_224.sam_in1k'>vit_base_patch16_224.sam_in1k</option>
+
+        <option value='convnext_base.fb_in1k'>convnext_base.fb_in1k</option>
+        <option value='convnext_base.fb_in22k_ft_in1k'>convnext_base.fb_in22k_ft_in1k</option>
+        <option value='convnext_base.fb_in22k_ft_in1k_384'>convnext_base.fb_in22k_ft_in1k_384</option>
+        <option value='convnext_base.fb_in22k'>convnext_base.fb_in22k</option>
+        <option value='convnext_base.dinov3_lvd1689m'>convnext_base.dinov3_lvd1689m</option>
+        <option value='convnext_base.clip_laion2b'>convnext_base.clip_laion2b</option>
+        <option value='convnext_base.clip_laion2b_augreg'>convnext_base.clip_laion2b_augreg</option>
+        <option value='convnext_base.clip_laion2b_augreg_ft_in1k'>convnext_base.clip_laion2b_augreg_ft_in1k</option>
+        <option value='convnext_base.clip_laion2b_augreg_ft_in12k'>convnext_base.clip_laion2b_augreg_ft_in12k</option>
+        <option value='convnext_base.clip_laion2b_augreg_ft_in12k_in1k'>convnext_base.clip_laion2b_augreg_ft_in12k_in1k</option>
+        <option value='convnext_base.clip_laion2b_augreg_ft_in12k_in1k_384'>convnext_base.clip_laion2b_augreg_ft_in12k_in1k_384</option>
+        <option value='convnext_base.clip_laiona'>convnext_base.clip_laiona</option>
+        <option value='convnext_base.clip_laiona_320'>convnext_base.clip_laiona_320</option>
+        <option value='convnext_base.clip_laiona_augreg_320'>convnext_base.clip_laiona_augreg_320</option>
+        <option value='convnext_base.clip_laiona_augreg_ft_in1k_384'>convnext_base.clip_laiona_augreg_ft_in1k_384</option>
+
+        <option value='eva02_base_patch14_448.mim_in22k_ft_in22k_in1k'>eva02_base_patch14_448.mim_in22k_ft_in22k_in1k</option>
+        <option value='eva02_base_patch14_448.mim_in22k_ft_in1k'>eva02_base_patch14_448.mim_in22k_ft_in1k</option>
+        <option value='eva02_base_patch14_448.mim_in22k_ft_in22k'>eva02_base_patch14_448.mim_in22k_ft_in22k</option>
+
+        <option value='resnet50.a1_in1k'>resnet50.a1_in1k</option>
+        <option value='resnet50.a1h_in1k'>resnet50.a1h_in1k</option>
+        <option value='resnet50.a2_in1k'>resnet50.a2_in1k</option>
+        <option value='resnet50.a3_in1k'>resnet50.a3_in1k</option>
+        <option value='resnet50.am_in1k'>resnet50.am_in1k</option>
+        <option value='resnet50.b1k_in1k'>resnet50.b1k_in1k</option>
+        <option value='resnet50.b2k_in1k'>resnet50.b2k_in1k</option>
+        <option value='resnet50.bt_in1k'>resnet50.bt_in1k</option>
+        <option value='resnet50.c1_in1k'>resnet50.c1_in1k</option>
+        <option value='resnet50.c2_in1k'>resnet50.c2_in1k</option>
+        <option value='resnet50.d_in1k'>resnet50.d_in1k</option>
+        <option value='resnet50.fb_ssl_yfcc100m_ft_in1k'>resnet50.fb_ssl_yfcc100m_ft_in1k</option>
+        <option value='resnet50.fb_swsl_ig1b_ft_in1k'>resnet50.fb_swsl_ig1b_ft_in1k</option>
+        <option value='resnet50.gluon_in1k'>resnet50.gluon_in1k</option>
+        <option value='resnet50.ra_in1k'>resnet50.ra_in1k</option>
+        <option value='resnet50.ram_in1k'>resnet50.ram_in1k</option>
+        <option value='resnet50.tv2_in1k'>resnet50.tv2_in1k</option>
+        <option value='resnet50.tv_in1k'>resnet50.tv_in1k</option>
+      </param>
+
+    </section>
+
+    <section name="customize_defaults_section" title="Customize Default Settings" expanded="false">
+      <param name="random_seed" type="integer" value="42" label="Random seed"/>
+      <param name="time_limit" type="integer" optional="true" min="60" label="Time limit (seconds)" help="Total training time budget. Recommended: 3600+ for real runs"/>
+      <param name="deterministic" type="boolean" truevalue="true" falsevalue="false" checked="false"
+             label="Enable deterministic mode" help="Use deterministic algorithms and CuDNN settings to reduce run-to-run variance (may slow training)"/>
+      <param name="validation_size" type="float" value="0.2" label="Validation fraction (when test set provided)"/>
+      <param name="split_probabilities" type="text" value="0.7 0.1 0.2" label="Train / Val / Test split (space-separated) when no test set"/>
+      <param name="cross_validation" type="boolean" truevalue="true" falsevalue="false" checked="false" label="Enable k-fold cross-validation"/>
+      <param name="num_folds" type="integer" value="5" label="Number of CV folds"/>
+      <param name="epochs" type="integer" optional="true" label="Max epochs"/>
+      <param name="learning_rate" type="float" optional="true" label="Learning rate"/>
+      <param name="batch_size" type="integer" optional="true" label="Batch size"/>
+      <param name="threshold" type="float" optional="true" min="0" max="1" label="Binary classification threshold"/>
+      <param name="hyperparameters" type="text" optional="true" label="Extra AutoGluon hyperparameters (JSON or YAML string)"/>
+    </section>
   </inputs>
 
   <outputs>
     <data name="output_html" format="html" label="Multimodal Learner analysis report on data ${on_string}"/>
-    <data name="output_config" format="yaml" label="Multimodal Learner training config on data ${on_string}"/>
-    <data name="output_json" format="json" label="Multimodal Learner metric results on data ${on_string}"/>
+    <data name="output_config" format="yaml" label="Multimodal Learner training config on data ${on_string}" hidden="true"/>
+    <data name="output_json" format="json" label="Multimodal Learner metric results on data ${on_string}" hidden="true"/>
+    <data name="output_model_archive" format="zip" label="Multimodal Learner trained model on data ${on_string}" hidden="true"/>
   </outputs>
 
-	  <tests>
-	    <!-- Basic run with images + external test set -->
-	    <test expect_num_outputs="3">
-	      <param name="input_csv" value="train.csv"/>
-	      <param name="target_column" value="7"/>
+  <tests>
+    <!-- Basic run with images + external test set -->
+    <test expect_num_outputs="4">
+      <param name="input_csv" value="train.csv"/>
+      <param name="target_column" value="7"/>
       <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
       <param name="test_dataset_conditional|input_test" value="test.csv"/>
-      <param name="use_images_conditional|use_images" value="yes"/>
-      <param name="use_images_conditional|images_zip_repeat_0|images_zip" value="images.zip"/>
-      <param name="use_images_conditional|backbone_image" value="resnet50.tv_in1k"/>
+      <param name="images_zip_repeat_0|images_zip" value="images.zip"/>
+      <param name="backbone_image" value="resnet50.tv_in1k"/>
       <param name="backbone_text" value="google/electra-base-discriminator"/>
       <output name="output_html">
         <assert_contents>
           <has_text text="Model Performance Summary"/>
-	        </assert_contents>
-	      </output>
-	    </test>
+        </assert_contents>
+      </output>
+    </test>
 
-	    <!-- Custom threshold -->
-	    <test expect_num_outputs="3">
-	      <param name="input_csv" value="train.csv"/>
-	      <param name="target_column" value="7"/>
-      <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
-      <param name="test_dataset_conditional|input_test" value="test.csv"/>
-      <param name="use_images_conditional|use_images" value="yes"/>
-      <param name="use_images_conditional|images_zip_repeat_0|images_zip" value="images.zip"/>
-      <param name="customize_defaults_conditional|customize_defaults" value="yes"/>
-      <param name="customize_defaults_conditional|threshold" value="0.4"/>
-      <output name="output_json">
-        <assert_contents>
-          <has_text text="&quot;threshold&quot;: 0.4"/>
-	        </assert_contents>
-	      </output>
-	    </test>
-
-	    <!-- No external test set; internal split -->
-	    <test expect_num_outputs="3">
-	      <param name="input_csv" value="train.csv"/>
-	      <param name="target_column" value="7"/>
-      <param name="test_dataset_conditional|has_test_dataset" value="no"/>
-      <param name="use_images_conditional|use_images" value="yes"/>
-      <param name="use_images_conditional|images_zip_repeat_0|images_zip" value="images.zip"/>
-      <output name="output_json">
-        <assert_contents>
-          <has_text text="&quot;val&quot;"/>
-	        </assert_contents>
-	      </output>
-	    </test>
-
-	    <!-- Text/tabular only (ignore images) -->
-	    <test expect_num_outputs="3">
-	      <param name="input_csv" value="train.csv"/>
+    <!-- Custom threshold -->
+    <test expect_num_outputs="4">
+      <param name="input_csv" value="train.csv"/>
       <param name="target_column" value="7"/>
       <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
       <param name="test_dataset_conditional|input_test" value="test.csv"/>
-      <param name="use_images_conditional|use_images" value="no"/>
+      <param name="images_zip_repeat_0|images_zip" value="images.zip"/>
+      <param name="threshold" value="0.4"/>
+      <output name="output_json">
+        <assert_contents>
+          <has_text text="&quot;threshold&quot;: 0.4"/>
+        </assert_contents>
+      </output>
+    </test>
+
+    <!-- No external test set; internal split -->
+    <test expect_num_outputs="4">
+      <param name="input_csv" value="train.csv"/>
+      <param name="target_column" value="7"/>
+      <param name="test_dataset_conditional|has_test_dataset" value="no"/>
+      <param name="images_zip_repeat_0|images_zip" value="images.zip"/>
+      <output name="output_json">
+        <assert_contents>
+          <has_text text="&quot;val&quot;"/>
+        </assert_contents>
+      </output>
+    </test>
+
+    <!-- Text/tabular only (ignore images) -->
+    <test expect_num_outputs="4">
+      <param name="input_csv" value="train.csv"/>
+      <param name="target_column" value="7"/>
+      <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
+      <param name="test_dataset_conditional|input_test" value="test.csv"/>
       <output name="output_html">
         <assert_contents>
           <has_text text="Train and Validation Performance Summary"/>
