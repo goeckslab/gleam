@@ -389,17 +389,17 @@
     </inputs>
     <outputs>
         <data format="ludwig_model" name="output_model" label="${tool.name} trained model on ${on_string}" hidden="true" />
-        <data format="html" name="output_report" from_work_dir="image_classification_results_report.html" label="${tool.name} report on ${on_string}" />
+        <data format="html" name="output_report" from_work_dir="image_classification_results_report.html" label="${tool.name} analysis report on ${on_string}" />
         <data format="zip" name="output_artifacts_zip" label="${tool.name} predictions and artifacts on ${on_string}" hidden="true" />
     </outputs>
     <tests>
         <test expect_num_outputs="3">
-            <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
-            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
-            <param name="model_name" value="resnet18" />
-            <param name="augmentation" value="random_horizontal_flip,random_vertical_flip,random_rotate" />
-            <param name="task_selection|task" value="classification" />
-            <param name="task_selection|validation_metric_multiclass" value="accuracy" />
+            <param name="data_configuration|input_csv" value="mnist_subset.csv" ftype="csv" />
+            <param name="data_configuration|image_zip" value="mnist_subset.zip" ftype="zip" />
+            <param name="model_hyperparameter_configuration|model_name" value="resnet18" />
+            <param name="model_hyperparameter_configuration|augmentation" value="random_horizontal_flip,random_vertical_flip,random_rotate" />
+            <param name="model_hyperparameter_configuration|task_selection|task" value="classification" />
+            <param name="model_hyperparameter_configuration|task_selection|validation_metric_multiclass" value="accuracy" />
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Config and Overall Performance Summary" />
@@ -407,13 +407,18 @@
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
-            <output name="output_artifacts_zip" ftype="zip" />
+            <output name="output_artifacts_zip" ftype="zip">
+                <assert_contents>
+                    <has_archive_member path="experiment_run/predictions.csv" />
+                    <has_archive_member path="experiment_run/model/.*" negate="true" />
+                </assert_contents>
+            </output>
 
         </test>
         <test expect_num_outputs="3">
-            <param name="input_csv" value="utkface_labels.csv" ftype="csv" />
-            <param name="image_zip" value="age_regression.zip" ftype="zip" />
-            <param name="model_name" value="resnet18" />
+            <param name="data_configuration|input_csv" value="utkface_labels.csv" ftype="csv" />
+            <param name="data_configuration|image_zip" value="age_regression.zip" ftype="zip" />
+            <param name="model_hyperparameter_configuration|model_name" value="resnet18" />
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Config and Overall Performance Summary" />
@@ -421,12 +426,17 @@
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
-            <output name="output_artifacts_zip" ftype="zip" />
+            <output name="output_artifacts_zip" ftype="zip">
+                <assert_contents>
+                    <has_archive_member path="experiment_run/predictions.csv" />
+                    <has_archive_member path="experiment_run/model/.*" negate="true" />
+                </assert_contents>
+            </output>
         </test>
         <test expect_num_outputs="3">
-            <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
-            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
-            <param name="model_name" value="caformer_s18" />
+            <param name="data_configuration|input_csv" value="mnist_subset.csv" ftype="csv" />
+            <param name="data_configuration|image_zip" value="mnist_subset.zip" ftype="zip" />
+            <param name="model_hyperparameter_configuration|model_name" value="caformer_s18" />
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Config and Overall Performance Summary" />
@@ -434,14 +444,19 @@
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
-            <output name="output_artifacts_zip" ftype="zip" />
+            <output name="output_artifacts_zip" ftype="zip">
+                <assert_contents>
+                    <has_archive_member path="experiment_run/predictions.csv" />
+                    <has_archive_member path="experiment_run/model/.*" negate="true" />
+                </assert_contents>
+            </output>
 
         </test>
         <test expect_num_outputs="3">
-            <param name="input_csv" value="mnist_subset.csv" ftype="csv" />
-            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
-            <param name="model_name" value="randformer_s12" />
-            <param name="epochs" value="5" />
+            <param name="data_configuration|input_csv" value="mnist_subset.csv" ftype="csv" />
+            <param name="data_configuration|image_zip" value="mnist_subset.zip" ftype="zip" />
+            <param name="model_hyperparameter_configuration|model_name" value="randformer_s12" />
+            <param name="customize_defaults_section|epochs" value="5" />
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Test Performance Summary" />
@@ -449,7 +464,12 @@
                     <has_text text="Test Results" />
                 </assert_contents>
             </output>
-            <output name="output_artifacts_zip" ftype="zip" />
+            <output name="output_artifacts_zip" ftype="zip">
+                <assert_contents>
+                    <has_archive_member path="experiment_run/predictions.csv" />
+                    <has_archive_member path="experiment_run/model/.*" negate="true" />
+                </assert_contents>
+            </output>
 
         </test>
         <!-- Test 7: MetaFormer with 384x384 input - verifies model correctly handles non-224x224 dimensions -->
@@ -502,12 +522,12 @@
             <output name="output_artifacts_zip" ftype="zip" />
         </test> -->
         <test expect_num_outputs="3">
-            <param name="input_csv" value="mnist_subset_binary.csv" ftype="csv" />
-            <param name="image_zip" value="mnist_subset.zip" ftype="zip" />
-            <param name="model_name" value="resnet18" />
-            <param name="threshold" value="0.6" />
-            <param name="task_selection|task" value="classification" />
-            <param name="task_selection|validation_metric_multiclass" value="accuracy" />
+            <param name="data_configuration|input_csv" value="mnist_subset_binary.csv" ftype="csv" />
+            <param name="data_configuration|image_zip" value="mnist_subset.zip" ftype="zip" />
+            <param name="model_hyperparameter_configuration|model_name" value="resnet18" />
+            <param name="customize_defaults_section|threshold" value="0.6" />
+            <param name="model_hyperparameter_configuration|task_selection|task" value="classification" />
+            <param name="model_hyperparameter_configuration|task_selection|validation_metric_multiclass" value="accuracy" />
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Config and Overall Performance Summary" />
@@ -517,7 +537,12 @@
                     <has_text text="0.60" />
                 </assert_contents>
             </output>
-            <output name="output_artifacts_zip" ftype="zip" />
+            <output name="output_artifacts_zip" ftype="zip">
+                <assert_contents>
+                    <has_archive_member path="experiment_run/predictions.csv" />
+                    <has_archive_member path="experiment_run/model/.*" negate="true" />
+                </assert_contents>
+            </output>
         </test>
     </tests>
     <help>
