@@ -6,207 +6,200 @@
     <expand macro="python_requirements" />
     <command>
         <![CDATA[
-        python $__tool_directory__/pycaret_train.py --input_file '$input_file' --target_col '$target_feature' --output_dir '.' --random_seed '$random_seed' --n-jobs \${GALAXY_SLOTS:-1}
-        #if $sample_id_selector.use_sample_id == "yes"
-            --sample-id-column '$sample_id_selector.sample_id_column'
+        python $__tool_directory__/pycaret_train.py --input_file '$data_configuration.input_file' --target_col '$data_configuration.target_feature' --output_dir '.' --random_seed '$customize_defaults_section.random_seed' --n-jobs \${GALAXY_SLOTS:-1}
+        #if $data_configuration.sample_id_selector.use_sample_id == "yes"
+            --sample-id-column '$data_configuration.sample_id_selector.sample_id_column'
         #end if
-        #if $model_selection.model_type == "classification"
-            #if $model_selection.classification_models
-                --models '$model_selection.classification_models'
+        #if $model_hyperparameter_configuration.model_selection.model_type == "classification"
+            #if $model_hyperparameter_configuration.model_selection.classification_models
+                --models '$model_hyperparameter_configuration.model_selection.classification_models'
             #end if
         #end if
-        #if $model_selection.model_type == "regression"
-            #if $model_selection.regression_models
-                --models '$model_selection.regression_models'
+        #if $model_hyperparameter_configuration.model_selection.model_type == "regression"
+            #if $model_hyperparameter_configuration.model_selection.regression_models
+                --models '$model_hyperparameter_configuration.model_selection.regression_models'
             #end if
         #end if
-        #if $tune_model
+        #if $model_hyperparameter_configuration.tune_model
             --tune_model
         #end if
-        #if $advanced_settings.customize_defaults == "true"
-                #if $advanced_settings.train_size
-                --train_size '$advanced_settings.train_size'
-                #end if
-                #if $advanced_settings.normalize
-                --normalize
-                #end if
-                #if $advanced_settings.feature_selection
-                --feature_selection
-                #end if
-                #if $advanced_settings.cross_validation.enable_cross_validation == "true"
-                    --cross_validation
-                    #if $advanced_settings.cross_validation.cross_validation_folds
-                        --cross_validation_folds '$advanced_settings.cross_validation.cross_validation_folds'
-                    #end if
-                #end if
-                #if $advanced_settings.cross_validation.enable_cross_validation == "false"
-                    --no_cross_validation
-                #end if
-                #if $advanced_settings.remove_outliers
-                --remove_outliers
-                #end if
-                #if $advanced_settings.remove_multicollinearity
-                --remove_multicollinearity
-                #end if
-                #if $advanced_settings.polynomial_features
-                --polynomial_features
-                #end if
-                #if $advanced_settings.fix_imbalance
-                --fix_imbalance
-                #end if
-                #if $advanced_settings.probability_threshold
-                --probability_threshold '$advanced_settings.probability_threshold'
-                #end if
+        #if $customize_defaults_section.train_size
+            --train_size '$customize_defaults_section.train_size'
         #end if
-        #if $test_data_choice.has_test_file == "yes"
-            --test_file '$test_data_choice.test_file'
+        #if $customize_defaults_section.normalize
+            --normalize
         #end if
-        --model_type '$model_selection.model_type'
-        #if $model_selection.best_model_metric
-            --best_model_metric '$model_selection.best_model_metric'
+        #if $customize_defaults_section.feature_selection
+            --feature_selection
+        #end if
+        #if $customize_defaults_section.cross_validation.enable_cross_validation == "true"
+            --cross_validation
+            #if $customize_defaults_section.cross_validation.cross_validation_folds
+                --cross_validation_folds '$customize_defaults_section.cross_validation.cross_validation_folds'
+            #end if
+        #end if
+        #if $customize_defaults_section.cross_validation.enable_cross_validation == "false"
+            --no_cross_validation
+        #end if
+        #if $customize_defaults_section.remove_outliers
+            --remove_outliers
+        #end if
+        #if $customize_defaults_section.remove_multicollinearity
+            --remove_multicollinearity
+        #end if
+        #if $customize_defaults_section.polynomial_features
+            --polynomial_features
+        #end if
+        #if $customize_defaults_section.fix_imbalance
+            --fix_imbalance
+        #end if
+        #if $customize_defaults_section.probability_threshold
+            --probability_threshold '$customize_defaults_section.probability_threshold'
+        #end if
+        #if $data_configuration.test_data_choice.has_test_file == "yes"
+            --test_file '$data_configuration.test_data_choice.test_file'
+        #end if
+        --model_type '$model_hyperparameter_configuration.model_selection.model_type'
+        #if $model_hyperparameter_configuration.model_selection.best_model_metric
+            --best_model_metric '$model_hyperparameter_configuration.model_selection.best_model_metric'
         #end if
         ]]>
     </command>
     <inputs>
-        <param name="input_file" type="data" format="csv,tabular" label="Tabular Input Dataset" />
-        <conditional name="test_data_choice">
-            <param name="has_test_file" type="select" label="Do you have a separate test dataset?">
-                <option value="no" selected="true">No</option>
-                <option value="yes">Yes</option>
-            </param>
-            <when value="yes">
-                <param name="test_file" type="data" format="csv,tabular" label="Tabular Test Dataset"
-                       help="If a test dataset is provided, the input dataset will be split into training and validation sets only. 
-                             If not, the tool will split your input into training, validation, and test automatically." />
-            </when>
-            <when value="no">
-                <!-- Nothing extra shown -->
-            </when>
-        </conditional>
-        <param name="target_feature" multiple="false" type="data_column" use_header_names="true" data_ref="input_file" label="Select the target column:" />
-        <conditional name="sample_id_selector">
-            <param name="use_sample_id" type="select" label="Use a sample ID column for leakage-aware splitting?" help="Select yes to choose a column that groups related records (e.g., patient_id or slide_id).">
-                <option value="no" selected="true">No column selected</option>
-                <option value="yes">Yes</option>
-            </param>
-            <when value="yes">
-                <param name="sample_id_column" type="data_column" data_ref="input_file" use_header_names="true" label="Sample ID column" help="All rows with the same ID stay in the same split to reduce leakage. Used for group-aware splitting when no separate test file is provided, and for group-aware cross-validation when enabled." />
-            </when>
-            <when value="no">
-                <!-- No sample ID column -->
-            </when>
-        </conditional>
-        <conditional name="model_selection">
-            <param name="model_type" type="select" label="Task">
-                <option value="classification">classification</option>
-                <option value="regression">regression</option>
-            </param>
-            <when value="classification">
-                <param name="classification_models" type="select" multiple="true" label="Only Select Classification Models if you don't want to compare all models">
-                    <option value="lr">Logistic Regression</option>
-                    <option value="knn">K Neighbors Classifier</option>
-                    <option value="nb">Naive Bayes</option>
-                    <option value="dt">Decision Tree Classifier</option>
-                    <option value="svm">SVM - Linear Kernel</option>
-                    <option value="rbfsvm">SVM - Radial Kernel</option>
-                    <option value="gpc">Gaussian Process Classifier</option>
-                    <option value="mlp">MLP Classifier</option>
-                    <option value="ridge">Ridge Classifier</option>
-                    <option value="rf">Random Forest Classifier</option>
-                    <option value="qda">Quadratic Discriminant Analysis</option>
-                    <option value="ada">Ada Boost Classifier</option>
-                    <option value="gbc">Gradient Boosting Classifier</option>
-                    <option value="lda">Linear Discriminant Analysis</option>
-                    <option value="et">Extra Trees Classifier</option>
-                    <option value="xgboost">Extreme Gradient Boosting</option>
-                    <option value="lightgbm">Light Gradient Boosting Machine</option>
-                    <option value="catboost">CatBoost Classifier</option>
+        <section name="data_configuration" title="Data Configuration" expanded="true">
+            <param name="input_file" type="data" format="csv,tabular" label="Training dataset" />
+            <conditional name="test_data_choice">
+                <param name="has_test_file" type="select" label="Provide a separate test dataset?">
+                    <option value="no" selected="true">No</option>
+                    <option value="yes">Yes</option>
                 </param>
-                <param name="best_model_metric" type="select" label="Select metric to pick the best model" help="PyCaret will rank models by this metric. Default is Accuracy.">
-                    <option value="Accuracy" selected="true">Accuracy</option>
-                    <option value="AUC">ROC-AUC</option>
-                    <option value="Precision">Precision</option>
-                    <option value="Recall">Recall</option>
-                    <option value="F1">F1</option>
-                    <option value="Kappa">Cohen’s Kappa</option>
-                    <option value="Log Loss">Log Loss (lower is better)</option>
-                    <option value="PR-AUC-Weighted">PR-AUC (weighted)</option>
+                <when value="yes">
+                    <param name="test_file" type="data" format="csv,tabular" label="Test dataset"
+                           help="If a test dataset is provided, the input dataset will be split into training and validation sets only.
+                                 If not, the tool will split your input into training, validation, and test automatically." />
+                </when>
+                <when value="no">
+                    <!-- Nothing extra shown -->
+                </when>
+            </conditional>
+            <param name="target_feature" multiple="false" type="data_column" use_header_names="true" data_ref="input_file" label="Target column" />
+            <conditional name="sample_id_selector">
+                <param name="use_sample_id" type="select" label="Use a sample ID column for leakage-aware splitting?" help="Select yes to choose a column that groups related records (e.g., patient_id or slide_id).">
+                    <option value="no" selected="true">No column selected</option>
+                    <option value="yes">Yes</option>
                 </param>
-            </when>
-            <when value="regression">
-                <param name="regression_models" type="select" multiple="true" label="Only Select Regression Models if you don't want to compare all models">
-                    <option value="lr">Linear Regression</option>
-                    <option value="lasso">Lasso Regression</option>
-                    <option value="ridge">Ridge Regression</option>
-                    <option value="en">Elastic Net</option>
-                    <option value="lar">Least Angle Regression</option>
-                    <option value="llar">Lasso Least Angle Regression</option>
-                    <option value="omp">Orthogonal Matching Pursuit</option>
-                    <option value="br">Bayesian Ridge</option>
-                    <option value="ard">Automatic Relevance Determination</option>
-                    <option value="par">Passive Aggressive Regressor</option>
-                    <option value="ransac">Random Sample Consensus</option>
-                    <option value="tr">TheilSen Regressor</option>
-                    <option value="huber">Huber Regressor</option>
-                    <option value="kr">Kernel Ridge</option>
-                    <option value="svm">Support Vector Regression</option>
-                    <option value="knn">K Neighbors Regressor</option>
-                    <option value="dt">Decision Tree Regressor</option>
-                    <option value="rf">Random Forest Regressor</option>
-                    <option value="et">Extra Trees Regressor</option>
-                    <option value="ada">AdaBoost Regressor</option>
-                    <option value="gbr">Gradient Boosting Regressor</option>
-                    <option value="mlp">MLP Regressor</option>
-                    <option value="xgboost">Extreme Gradient Boosting</option>
-                    <option value="lightgbm">Light Gradient Boosting Machine</option>
-                    <option value="catboost">CatBoost Regressor</option>
+                <when value="yes">
+                    <param name="sample_id_column" type="data_column" data_ref="input_file" use_header_names="true" label="Sample ID column" help="All rows with the same ID stay in the same split to reduce leakage. Used for group-aware splitting when no separate test file is provided, and for group-aware cross-validation when enabled." />
+                </when>
+                <when value="no">
+                    <!-- No sample ID column -->
+                </when>
+            </conditional>
+        </section>
+        <section name="model_hyperparameter_configuration" title="Model, Weights, and Hyperparameters Configuration" expanded="true">
+            <conditional name="model_selection">
+                <param name="model_type" type="select" label="Task type">
+                    <option value="classification">classification</option>
+                    <option value="regression">regression</option>
                 </param>
-                <param name="best_model_metric" type="select" label="Select metric to pick the best model" help="PyCaret will rank models by this metric. Default is R².">
-                    <option value="R2" selected="true">R²</option>
-                    <option value="MAE">MAE</option>
-                    <option value="MSE">MSE</option>
-                    <option value="RMSE">RMSE</option>
-                    <option value="RMSLE">RMSLE</option>
-                    <option value="MAPE">MAPE</option>
-                </param>
-            </when>
-        </conditional>
-        <param name="tune_model" type="boolean" truevalue="True" falsevalue="False" label="Tune hyperparameters" help="Hyperparameter tuning on the best model" />
-        <param name="random_seed" type="integer" value="42" label="Random Seed" help="Random seed for reproducibility." />
-        <conditional name="advanced_settings">
-            <param name="customize_defaults" type="select" label="Customize Default Settings?" help="Select yes if you want to customize the default settings of the experiment.">
-                <option value="false" selected="true">No</option>
-                <option value="true">Yes</option>
-            </param>
-            <when value="true">
-                <param name="train_size" type="float" value="0.7" min="0.1" max="0.9" label="Train Size" help="Proportion of the input dataset to include in the train split." />
-                <param name="normalize" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Normalize Data" help="Whether to normalize data before training." />
-                <param name="feature_selection" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Feature Selection" help="Whether to perform feature selection." />
-                <conditional name="cross_validation">
-                    <param name="enable_cross_validation" type="select" label="Enable Cross Validation?" help="Select whether to enable cross-validation." >
-                        <option value="false" >No</option>
-                        <option value="true" selected="true">Yes</option>
+                <when value="classification">
+                    <param name="classification_models" type="select" multiple="true" label="Candidate classification models" help="Leave blank to compare all supported classification models.">
+                        <option value="lr">Logistic Regression</option>
+                        <option value="knn">K Neighbors Classifier</option>
+                        <option value="nb">Naive Bayes</option>
+                        <option value="dt">Decision Tree Classifier</option>
+                        <option value="svm">SVM - Linear Kernel</option>
+                        <option value="rbfsvm">SVM - Radial Kernel</option>
+                        <option value="gpc">Gaussian Process Classifier</option>
+                        <option value="mlp">MLP Classifier</option>
+                        <option value="ridge">Ridge Classifier</option>
+                        <option value="rf">Random Forest Classifier</option>
+                        <option value="qda">Quadratic Discriminant Analysis</option>
+                        <option value="ada">Ada Boost Classifier</option>
+                        <option value="gbc">Gradient Boosting Classifier</option>
+                        <option value="lda">Linear Discriminant Analysis</option>
+                        <option value="et">Extra Trees Classifier</option>
+                        <option value="xgboost">Extreme Gradient Boosting</option>
+                        <option value="lightgbm">Light Gradient Boosting Machine</option>
+                        <option value="catboost">CatBoost Classifier</option>
                     </param>
-                    <when value="true">
-                        <param name="cross_validation_folds" type="integer" value="10" min="2" max="20" label="Cross Validation Folds" help="Number of folds to use for cross-validation." />
-                    </when>
-                    <when value="false">
-                        <!-- No additional parameters to show if the user selects 'No' -->
-                    </when>
-                </conditional>
-                <param name="remove_outliers" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Remove Outliers" help="Whether to remove outliers from the input dataset before training." />
-                <param name="remove_multicollinearity" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Remove Multicollinearity" help="Whether to remove multicollinear features before training." />
-                <param name="polynomial_features" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Polynomial Features" help="Whether to create polynomial features before training." />
-                <param name="fix_imbalance" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Fix Imbalance" help="ONLY for classfication! Whether to use SMOTE or similar methods to fix imbalance in the input dataset." />
-                <param name="probability_threshold" type="float" min="0.0" max="1.0" value="0.5" label="Classification Probability Threshold" help="Only applies to classification. Probability above which a prediction is considered positive. Default is 0.5." />
-            </when>
-            <when value="false">
-                <!-- No additional parameters to show if the user selects 'No' -->
-            </when>
-        </conditional>
+                    <param name="best_model_metric" type="select" label="Metric used to pick the best model" help="PyCaret will rank models by this metric. Default is Accuracy.">
+                        <option value="Accuracy" selected="true">Accuracy</option>
+                        <option value="AUC">ROC-AUC</option>
+                        <option value="Precision">Precision</option>
+                        <option value="Recall">Recall</option>
+                        <option value="F1">F1</option>
+                        <option value="Kappa">Cohen’s Kappa</option>
+                        <option value="Log Loss">Log Loss (lower is better)</option>
+                        <option value="PR-AUC-Weighted">PR-AUC (weighted)</option>
+                    </param>
+                </when>
+                <when value="regression">
+                    <param name="regression_models" type="select" multiple="true" label="Candidate regression models" help="Leave blank to compare all supported regression models.">
+                        <option value="lr">Linear Regression</option>
+                        <option value="lasso">Lasso Regression</option>
+                        <option value="ridge">Ridge Regression</option>
+                        <option value="en">Elastic Net</option>
+                        <option value="lar">Least Angle Regression</option>
+                        <option value="llar">Lasso Least Angle Regression</option>
+                        <option value="omp">Orthogonal Matching Pursuit</option>
+                        <option value="br">Bayesian Ridge</option>
+                        <option value="ard">Automatic Relevance Determination</option>
+                        <option value="par">Passive Aggressive Regressor</option>
+                        <option value="ransac">Random Sample Consensus</option>
+                        <option value="tr">TheilSen Regressor</option>
+                        <option value="huber">Huber Regressor</option>
+                        <option value="kr">Kernel Ridge</option>
+                        <option value="svm">Support Vector Regression</option>
+                        <option value="knn">K Neighbors Regressor</option>
+                        <option value="dt">Decision Tree Regressor</option>
+                        <option value="rf">Random Forest Regressor</option>
+                        <option value="et">Extra Trees Regressor</option>
+                        <option value="ada">AdaBoost Regressor</option>
+                        <option value="gbr">Gradient Boosting Regressor</option>
+                        <option value="mlp">MLP Regressor</option>
+                        <option value="xgboost">Extreme Gradient Boosting</option>
+                        <option value="lightgbm">Light Gradient Boosting Machine</option>
+                        <option value="catboost">CatBoost Regressor</option>
+                    </param>
+                    <param name="best_model_metric" type="select" label="Metric used to pick the best model" help="PyCaret will rank models by this metric. Default is R².">
+                        <option value="R2" selected="true">R²</option>
+                        <option value="MAE">MAE</option>
+                        <option value="MSE">MSE</option>
+                        <option value="RMSE">RMSE</option>
+                        <option value="RMSLE">RMSLE</option>
+                        <option value="MAPE">MAPE</option>
+                    </param>
+                </when>
+            </conditional>
+            <param name="tune_model" type="boolean" truevalue="True" falsevalue="False" label="Tune hyperparameters" help="Hyperparameter tuning on the best model" />
+        </section>
+        <section name="customize_defaults_section" title="Customize Default Settings" expanded="false">
+            <param name="random_seed" type="integer" value="42" label="Random seed" help="Random seed for reproducibility." />
+            <param name="train_size" type="float" value="0.7" min="0.1" max="0.9" label="Train Size" help="Proportion of the input dataset to include in the train split." />
+            <param name="normalize" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Normalize Data" help="Whether to normalize data before training." />
+            <param name="feature_selection" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Feature Selection" help="Whether to perform feature selection." />
+            <conditional name="cross_validation">
+                <param name="enable_cross_validation" type="select" label="Enable Cross Validation?" help="Select whether to enable cross-validation." >
+                    <option value="false" >No</option>
+                    <option value="true" selected="true">Yes</option>
+                </param>
+                <when value="true">
+                    <param name="cross_validation_folds" type="integer" value="10" min="2" max="20" label="Cross Validation Folds" help="Number of folds to use for cross-validation." />
+                </when>
+                <when value="false">
+                    <!-- No additional parameters to show if the user selects 'No' -->
+                </when>
+            </conditional>
+            <param name="remove_outliers" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Remove Outliers" help="Whether to remove outliers from the input dataset before training." />
+            <param name="remove_multicollinearity" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Remove Multicollinearity" help="Whether to remove multicollinear features before training." />
+            <param name="polynomial_features" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Polynomial Features" help="Whether to create polynomial features before training." />
+            <param name="fix_imbalance" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Fix Imbalance" help="ONLY for classfication! Whether to use SMOTE or similar methods to fix imbalance in the input dataset." />
+            <param name="probability_threshold" type="float" min="0.0" max="1.0" value="0.5" label="Classification Probability Threshold" help="Only applies to classification. Probability above which a prediction is considered positive. Default is 0.5." />
+        </section>
     </inputs>
     <outputs>
-        <data name="model" format="h5" from_work_dir="pycaret_model.h5" label="${tool.name} best model on ${on_string}" />
+        <data name="model" format="h5" from_work_dir="pycaret_model.h5" label="${tool.name} best model on ${on_string}" hidden="true" />
         <data name="best_model_csv" format="csv" from_work_dir="best_model.csv" label="${tool.name} The parameters of the best model on ${on_string}" hidden="true" />
         <data name="comparison_result" format="html" from_work_dir="comparison_result.html" label="${tool.name} analysis report on ${on_string}" />
     </outputs>
@@ -217,15 +210,14 @@
             <param name="model_selection|model_type" value="classification"/>
             <param name="model_selection|best_model_metric" value="F1"/>
             <param name="random_seed" value="42"/>
-            <param name="advanced_settings|customize_defaults" value="true"/>
-            <param name="advanced_settings|train_size" value="0.8"/>
-            <param name="advanced_settings|normalize" value="true"/>
-            <param name="advanced_settings|feature_selection" value="true"/>
-            <param name="advanced_settings|cross_validation|enable_cross_validation" value="true"/>
-            <param name="advanced_settings|cross_validation|cross_validation_folds" value="5"/>
-            <param name="advanced_settings|remove_outliers" value="true"/>
-            <param name="advanced_settings|remove_multicollinearity" value="true"/>
-            <param name="advanced_settings|probability_threshold" value="0.4" />
+            <param name="train_size" value="0.8"/>
+            <param name="normalize" value="true"/>
+            <param name="feature_selection" value="true"/>
+            <param name="cross_validation|enable_cross_validation" value="true"/>
+            <param name="cross_validation|cross_validation_folds" value="5"/>
+            <param name="remove_outliers" value="true"/>
+            <param name="remove_multicollinearity" value="true"/>
+            <param name="probability_threshold" value="0.4" />
             <output name="model" file="expected_model_classification_customized.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
@@ -243,14 +235,13 @@
             <param name="target_feature" value="11"/> 
             <param name="model_selection|model_type" value="classification"/>
             <param name="random_seed" value="42"/>
-            <param name="advanced_settings|customize_defaults" value="true"/>
-            <param name="advanced_settings|train_size" value="0.8"/>
-            <param name="advanced_settings|normalize" value="true"/>
-            <param name="advanced_settings|feature_selection" value="true"/>
-            <param name="advanced_settings|cross_validation|enable_cross_validation" value="false"/>
-            <param name="advanced_settings|remove_outliers" value="true"/>
-            <param name="advanced_settings|remove_multicollinearity" value="true"/>
-            <param name="advanced_settings|probability_threshold" value="0.6" />
+            <param name="train_size" value="0.8"/>
+            <param name="normalize" value="true"/>
+            <param name="feature_selection" value="true"/>
+            <param name="cross_validation|enable_cross_validation" value="false"/>
+            <param name="remove_outliers" value="true"/>
+            <param name="remove_multicollinearity" value="true"/>
+            <param name="probability_threshold" value="0.6" />
             <output name="model" file="expected_model_classification_customized_cross_off.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>

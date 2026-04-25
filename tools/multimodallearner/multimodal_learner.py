@@ -49,6 +49,7 @@ def parse_args(argv=None):
     parser.add_argument("--output_json", default="results.json")
     parser.add_argument("--output_html", default="report.html")
     parser.add_argument("--output_config", default=None)
+    parser.add_argument("--output_model_archive", default="trained_model.zip")
     parser.add_argument("--images_zip", nargs="*", default=None,
                         help="One or more ZIP files that contain image assets")
     parser.add_argument("--missing_image_strategy", default="false",
