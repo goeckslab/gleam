@@ -170,29 +170,52 @@ def _resolve_confusion_labels(
     return [str(label) for label in labels[:n_classes]]
 
 
+def _class_index(raw_label) -> Optional[int]:
+    """Return a class index for integer-like labels, otherwise None."""
+    if isinstance(raw_label, bool):
+        return None
+    if isinstance(raw_label, int):
+        return raw_label
+    if isinstance(raw_label, float):
+        return int(raw_label) if raw_label.is_integer() else None
+
+    raw_str = str(raw_label).strip()
+    if not raw_str:
+        return None
+    try:
+        idx_val = float(raw_str)
+    except Exception:
+        return None
+    if idx_val.is_integer():
+        return int(idx_val)
+    return None
+
+
 def _resolve_display_labels(raw_labels: List, friendly_labels: Optional[List[str]]) -> List[str]:
     """Map encoded class ids like 0/1 back to friendly labels when available."""
     if not friendly_labels:
         return [str(label) for label in raw_labels]
 
-    friendly_lookup = {str(label) for label in friendly_labels}
+    friendly_labels = [str(label) for label in friendly_labels]
+    raw_indices = [_class_index(raw_label) for raw_label in raw_labels]
+    if (
+        raw_indices
+        and all(idx is not None for idx in raw_indices)
+        and set(raw_indices) == set(range(len(raw_indices)))
+        and max(raw_indices) < len(friendly_labels)
+    ):
+        return [friendly_labels[idx] for idx in raw_indices]
+
+    friendly_lookup = set(friendly_labels)
     display_labels: List[str] = []
-    for raw_label in raw_labels:
+    for raw_label, idx in zip(raw_labels, raw_indices):
         raw_str = str(raw_label)
         if raw_str in friendly_lookup:
             display_labels.append(raw_str)
             continue
 
-        idx = None
-        try:
-            idx_val = float(raw_str)
-            if idx_val.is_integer():
-                idx = int(idx_val)
-        except Exception:
-            idx = None
-
         if idx is not None and 0 <= idx < len(friendly_labels):
-            display_labels.append(str(friendly_labels[idx]))
+            display_labels.append(friendly_labels[idx])
         else:
             display_labels.append(raw_str)
 
