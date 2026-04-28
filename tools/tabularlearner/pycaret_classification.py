@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from base_model_trainer import BaseModelTrainer
 from dashboard import generate_classifier_explainer_dashboard
 from pycaret.classification import ClassificationExperiment
+from pycaret.utils.generic import get_label_encoder
 from sklearn.metrics import (
     auc,
     confusion_matrix,
@@ -139,17 +140,39 @@ class ClassificationModelTrainer(BaseModelTrainer):
 
         X_test = self.exp.X_test_transformed.copy()
         y_test = self.exp.y_test_transformed
-        explainer = ClassifierExplainer(self.best_model, X_test, y_test)
+        label_encoder = None
+        try:
+            label_encoder = get_label_encoder(self.exp.pipeline)
+        except Exception as exc:
+            LOG.debug("Could not load label encoder for explainer labels: %s", exc)
+        explainer_labels = list(label_encoder.classes_) if label_encoder is not None else None
+        explainer = ClassifierExplainer(
+            self.best_model,
+            X_test,
+            y_test,
+            labels=explainer_labels,
+        )
 
         # a dict to hold the raw Figure objects or callables
         self.explainer_plots: Dict[str, go.Figure] = {}
 
         y_true, y_pred, label_values, y_scores = self._get_test_predictions()
+        y_true_display = self._decode_labels_for_display(y_true)
+        y_pred_display = self._decode_labels_for_display(y_pred)
+        label_values_display = pd.unique(
+            pd.concat(
+                [
+                    pd.Series(y_true_display),
+                    pd.Series(y_pred_display),
+                ],
+                ignore_index=True,
+            )
+        ).tolist()
 
         # — Classification report (Plotly table) —
         try:
             fig_report = self._build_classification_report_fig(
-                y_true, y_pred, label_values
+                y_true_display, y_pred_display, label_values_display
             )
             if fig_report is not None:
                 self.explainer_plots["class_report"] = fig_report
@@ -158,7 +181,9 @@ class ClassificationModelTrainer(BaseModelTrainer):
 
         # — Confusion matrix with actual labels —
         try:
-            fig_cm = self._build_confusion_matrix_fig(y_true, y_pred, label_values)
+            fig_cm = self._build_confusion_matrix_fig(
+                y_true_display, y_pred_display, label_values_display
+            )
             if fig_cm is not None:
                 self.explainer_plots["confusion_matrix"] = fig_cm
         except Exception as e:
@@ -329,6 +354,43 @@ class ClassificationModelTrainer(BaseModelTrainer):
                 y_scores = None
         label_values = pd.unique(pd.concat([y_true, y_pred], ignore_index=True))
         return y_true, y_pred, label_values.tolist(), y_scores
+
+    def _decode_labels_for_display(self, values):
+        """Map transformed class ids back to the original target labels for plots."""
+        try:
+            label_encoder = get_label_encoder(self.exp.pipeline)
+        except Exception as exc:
+            LOG.debug("Could not load label encoder for display labels: %s", exc)
+            label_encoder = None
+
+        if label_encoder is None:
+            return values
+
+        def _decode_array(arr):
+            arr = np.asarray(arr, dtype=object)
+            flat = arr.reshape(-1)
+            decoded = flat.copy()
+            mask = pd.notna(flat)
+            if not mask.any():
+                return arr
+            try:
+                decoded_vals = label_encoder.inverse_transform(flat[mask])
+            except Exception as exc:
+                LOG.debug("Could not inverse-transform class labels for display: %s", exc)
+                return arr
+            decoded[mask] = decoded_vals
+            return decoded.reshape(arr.shape)
+
+        if isinstance(values, pd.Series):
+            decoded = _decode_array(values.to_numpy())
+            return pd.Series(decoded, index=values.index, name=values.name)
+
+        decoded = _decode_array(values)
+        if isinstance(values, list):
+            return decoded.tolist()
+        if np.isscalar(values):
+            return decoded.reshape(-1)[0]
+        return decoded
 
     def _threshold_suffix(self) -> str:
         """
