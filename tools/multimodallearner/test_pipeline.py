@@ -40,9 +40,12 @@ def run_autogluon_test_experiment(
     df_test_internal = data_ctx.get("test_internal")
     df_test_external = data_ctx.get("test_external")
     threshold = None
+    threshold_metadata = None
     if ag_config is not None:
         threshold = ag_config.get("threshold", threshold)
+        threshold_metadata = ag_config.get("threshold_metadata", threshold_metadata)
     threshold = data_ctx.get("threshold", threshold)
+    threshold_metadata = data_ctx.get("threshold_metadata", threshold_metadata)
 
     if problem_type is None:
         # Prefer inferring from training data and predictor metadata
@@ -70,6 +73,7 @@ def run_autogluon_test_experiment(
         "ag_eval": ag_by_split,
         "fit_summary": summary,
         "roc_curves": roc_curves,
+        "threshold_metadata": threshold_metadata,
     }
     logger.info("Evaluation complete; splits: %s", list(raw_metrics.keys()))
     return result

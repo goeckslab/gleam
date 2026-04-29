@@ -103,8 +103,13 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
   #if $customize_defaults_section.batch_size
     --batch_size $customize_defaults_section.batch_size
   #end if
-  #if $customize_defaults_section.threshold
-    --threshold $customize_defaults_section.threshold
+  #if $customize_defaults_section.binary_threshold_policy.mode == "auto"
+    --threshold_metric auto
+  #else
+    --threshold_metric '$customize_defaults_section.binary_threshold_policy.threshold_metric'
+    #if $customize_defaults_section.binary_threshold_policy.threshold not in ("", None)
+      --threshold $customize_defaults_section.binary_threshold_policy.threshold
+    #end if
   #end if
   #if $customize_defaults_section.hyperparameters
     --hyperparameters '$customize_defaults_section.hyperparameters'
@@ -293,7 +298,29 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
       <param name="epochs" type="integer" optional="true" label="Max epochs"/>
       <param name="learning_rate" type="float" optional="true" label="Learning rate"/>
       <param name="batch_size" type="integer" optional="true" label="Batch size"/>
-      <param name="threshold" type="float" optional="true" min="0" max="1" label="Binary classification threshold"/>
+      <conditional name="binary_threshold_policy">
+        <param name="mode" type="select" label="Binary classification threshold">
+          <option value="auto" selected="true">Auto: choose metric and threshold automatically</option>
+          <option value="manual">Manual: customize threshold behavior</option>
+        </param>
+        <when value="auto"/>
+        <when value="manual">
+          <param name="threshold_metric" type="select" label="Threshold optimization metric"
+                 help="Used only when no manual threshold value is provided. The threshold is optimized on the validation split.">
+            <option value="auto" selected="true">Auto</option>
+            <option value="f1">F1</option>
+            <option value="balanced_accuracy">Balanced Accuracy</option>
+            <option value="mcc">Matthews Correlation Coefficient</option>
+            <option value="accuracy">Accuracy</option>
+            <option value="precision">Precision</option>
+            <option value="recall">Recall</option>
+            <option value="youden_j">Youden's J</option>
+          </param>
+          <param name="threshold" type="float" optional="true" min="0" max="1"
+                 label="Manual threshold value"
+                 help="If provided, this exact threshold is used and the optimization metric is ignored."/>
+        </when>
+      </conditional>
       <param name="hyperparameters" type="text" optional="true" label="Extra AutoGluon hyperparameters (JSON or YAML string)"/>
     </section>
   </inputs>
@@ -329,7 +356,8 @@ mkdir -p "$TORCH_HOME" "$HUGGINGFACE_HUB_CACHE" &&
       <param name="test_dataset_conditional|has_test_dataset" value="yes"/>
       <param name="test_dataset_conditional|input_test" value="test.csv"/>
       <param name="images_zip_repeat_0|images_zip" value="images.zip"/>
-      <param name="threshold" value="0.4"/>
+      <param name="binary_threshold_policy|mode" value="manual"/>
+      <param name="binary_threshold_policy|threshold" value="0.4"/>
       <output name="output_json">
         <assert_contents>
           <has_text text="&quot;threshold&quot;: 0.4"/>

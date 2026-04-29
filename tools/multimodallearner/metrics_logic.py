@@ -6,6 +6,7 @@ import pandas as pd
 from sklearn.metrics import (
     accuracy_score,
     average_precision_score,
+    balanced_accuracy_score,
     cohen_kappa_score,
     confusion_matrix,
     f1_score,
@@ -23,6 +24,49 @@ from sklearn.metrics import (
 
 
 # -------------------- Transparent Metrics (task-aware) -------------------- #
+
+THRESHOLD_METRIC_OPTIONS = {
+    "accuracy": "Accuracy",
+    "balanced_accuracy": "Balanced Accuracy",
+    "f1": "F1",
+    "mcc": "Matthews Correlation Coefficient",
+    "precision": "Precision",
+    "recall": "Recall",
+    "youden_j": "Youden's J",
+}
+
+_THRESHOLD_METRIC_ALIASES = {
+    "acc": "accuracy",
+    "accuracy": "accuracy",
+    "balanced accuracy": "balanced_accuracy",
+    "balanced_accuracy": "balanced_accuracy",
+    "f1": "f1",
+    "f1-score": "f1",
+    "f1_score": "f1",
+    "matthews_correlation_coefficient": "mcc",
+    "mcc": "mcc",
+    "precision": "precision",
+    "recall": "recall",
+    "sensitivity": "recall",
+    "tpr": "recall",
+    "youden": "youden_j",
+    "youden_j": "youden_j",
+    "youden's j": "youden_j",
+}
+
+
+def resolve_threshold_metric(threshold_metric: Optional[str], eval_metric: Optional[str] = None) -> str:
+    """Resolve the metric used to optimize a binary decision threshold."""
+    requested = str(threshold_metric or "auto").strip().lower()
+    if requested and requested != "auto":
+        metric = _THRESHOLD_METRIC_ALIASES.get(requested)
+        if metric:
+            return metric
+        valid = ", ".join(sorted(THRESHOLD_METRIC_OPTIONS))
+        raise ValueError(f"Unsupported threshold optimization metric '{threshold_metric}'. Valid choices: auto, {valid}")
+
+    eval_requested = str(eval_metric or "").strip().lower()
+    return _THRESHOLD_METRIC_ALIASES.get(eval_requested, "f1")
 
 def _safe_y_proba_to_array(y_proba) -> Optional[np.ndarray]:
     """Convert predictor.predict_proba output (array/DataFrame/dict) to np.ndarray or None."""
@@ -145,6 +189,130 @@ def _compute_binary_metrics(
         metrics["MCC"] = np.nan
 
     return metrics
+
+
+def _score_threshold_metric(
+    metric: str,
+    y_true: pd.Series,
+    y_pred: pd.Series,
+    classes_sorted: np.ndarray,
+    pos_label,
+) -> float:
+    if metric == "accuracy":
+        return float(accuracy_score(y_true, y_pred))
+    if metric == "balanced_accuracy":
+        return float(balanced_accuracy_score(y_true, y_pred))
+    if metric == "f1":
+        return float(f1_score(y_true, y_pred, pos_label=pos_label, zero_division=0))
+    if metric == "mcc":
+        return float(matthews_corrcoef(y_true, y_pred))
+    if metric == "precision":
+        return float(precision_score(y_true, y_pred, pos_label=pos_label, zero_division=0))
+    if metric == "recall":
+        return float(recall_score(y_true, y_pred, pos_label=pos_label, zero_division=0))
+    if metric == "youden_j":
+        cm = confusion_matrix(y_true, y_pred, labels=classes_sorted)
+        tnr = _specificity_from_cm(cm)
+        tpr = recall_score(y_true, y_pred, pos_label=pos_label, zero_division=0)
+        return float(tpr + tnr - 1.0)
+    raise ValueError(f"Unsupported threshold optimization metric '{metric}'")
+
+
+def optimize_binary_threshold(
+    predictor,
+    df: pd.DataFrame,
+    target_col: str,
+    threshold_metric: Optional[str] = "auto",
+    eval_metric: Optional[str] = None,
+) -> dict:
+    """Optimize a binary decision threshold on a validation dataframe."""
+    metric = resolve_threshold_metric(threshold_metric, eval_metric=eval_metric)
+    metric_label = THRESHOLD_METRIC_OPTIONS.get(metric, metric)
+    if df is None or len(df) == 0:
+        return {
+            "threshold": 0.5,
+            "threshold_metric": metric,
+            "threshold_metric_display": metric_label,
+            "threshold_metric_value": None,
+            "threshold_source": "Default 0.5 (validation split unavailable)",
+            "threshold_reason": "Validation data was unavailable.",
+        }
+
+    y_true = df[target_col].reset_index(drop=True)
+    features = df.drop(columns=[target_col], errors="ignore")
+    try:
+        y_proba = _safe_y_proba_to_array(predictor.predict_proba(features))
+    except Exception as exc:
+        return {
+            "threshold": 0.5,
+            "threshold_metric": metric,
+            "threshold_metric_display": metric_label,
+            "threshold_metric_value": None,
+            "threshold_source": "Default 0.5 (validation probabilities unavailable)",
+            "threshold_reason": f"Validation probabilities could not be computed: {exc}",
+        }
+
+    classes_sorted, pos_label, pos_scores = _get_binary_scores(y_true, y_proba, predictor)
+    if pos_scores is None or len(pos_scores) == 0:
+        return {
+            "threshold": 0.5,
+            "threshold_metric": metric,
+            "threshold_metric_display": metric_label,
+            "threshold_metric_value": None,
+            "threshold_source": "Default 0.5 (validation probabilities unavailable)",
+            "threshold_reason": "Positive-class validation probabilities were unavailable.",
+        }
+
+    pos_scores = np.asarray(pos_scores, dtype=float)
+    finite_scores = pos_scores[np.isfinite(pos_scores)]
+    if finite_scores.size == 0:
+        return {
+            "threshold": 0.5,
+            "threshold_metric": metric,
+            "threshold_metric_display": metric_label,
+            "threshold_metric_value": None,
+            "threshold_source": "Default 0.5 (validation probabilities unavailable)",
+            "threshold_reason": "Positive-class validation probabilities were not finite.",
+        }
+
+    candidates = np.unique(np.concatenate(([0.0, 1.0], np.clip(finite_scores, 0.0, 1.0))))
+    if candidates.size > 5000:
+        candidates = np.unique(np.concatenate(([0.0, 1.0], np.quantile(finite_scores, np.linspace(0.0, 1.0, 5001)))))
+
+    neg_label = classes_sorted[0]
+    scores = []
+    for threshold in candidates:
+        y_pred = pd.Series(np.where(pos_scores >= float(threshold), pos_label, neg_label)).reset_index(drop=True)
+        try:
+            score = _score_threshold_metric(metric, y_true, y_pred, classes_sorted, pos_label)
+        except Exception:
+            score = np.nan
+        scores.append(score)
+
+    scores_arr = np.asarray(scores, dtype=float)
+    if np.all(np.isnan(scores_arr)):
+        threshold = 0.5
+        metric_value = None
+        source = f"Default 0.5 ({metric_label} could not be optimized)"
+        reason = f"No finite {metric_label} scores were available across candidate thresholds."
+    else:
+        best_score = float(np.nanmax(scores_arr))
+        best_candidates = candidates[np.isclose(scores_arr, best_score, equal_nan=False)]
+        threshold = float(best_candidates[np.argmin(np.abs(best_candidates - 0.5))])
+        metric_value = best_score
+        source = "Optimized on validation split"
+        reason = None
+
+    return {
+        "threshold": threshold,
+        "threshold_metric": metric,
+        "threshold_metric_display": metric_label,
+        "threshold_metric_value": metric_value,
+        "threshold_source": source,
+        "threshold_reason": reason,
+        "threshold_positive_label": str(pos_label),
+        "threshold_candidate_count": int(candidates.size),
+    }
 
 
 def _compute_multiclass_metrics(

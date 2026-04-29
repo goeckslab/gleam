@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import torch
 from autogluon.multimodal import MultiModalPredictor
-from metrics_logic import compute_metrics_for_split, evaluate_all_transparency
+from metrics_logic import compute_metrics_for_split, evaluate_all_transparency, optimize_binary_threshold
 from packaging.version import Version
 
 logger = logging.getLogger(__name__)
@@ -56,6 +56,60 @@ def normalize_eval_metric(eval_metric: Optional[str]) -> Optional[str]:
     if not metric or metric.lower() == "auto":
         return None
     return metric
+
+
+def _is_binary_target(df: Optional[pd.DataFrame], target_column: str) -> bool:
+    if df is None or target_column not in df.columns:
+        return False
+    try:
+        return int(df[target_column].nunique(dropna=True)) == 2
+    except Exception:
+        return False
+
+
+def _manual_threshold_metadata(threshold: float) -> dict:
+    return {
+        "threshold": float(threshold),
+        "threshold_metric": None,
+        "threshold_metric_display": "Not used",
+        "threshold_metric_value": None,
+        "threshold_source": "Manual",
+        "threshold_requested": float(threshold),
+    }
+
+
+def resolve_binary_threshold_for_run(
+    predictor,
+    df_train: Optional[pd.DataFrame],
+    df_val: Optional[pd.DataFrame],
+    target_column: str,
+    problem_type: Optional[str],
+    ag_config: dict,
+) -> dict:
+    """Resolve manual or validation-optimized binary threshold metadata."""
+    manual_threshold = ag_config.get("threshold_requested", ag_config.get("threshold"))
+    if manual_threshold is not None:
+        return _manual_threshold_metadata(float(manual_threshold))
+
+    if problem_type != "binary" and not _is_binary_target(df_train, target_column):
+        return {
+            "threshold": None,
+            "threshold_metric": ag_config.get("threshold_metric", "auto"),
+            "threshold_metric_display": "Not used",
+            "threshold_metric_value": None,
+            "threshold_source": "Not used",
+            "threshold_reason": "Threshold optimization applies only to binary classification.",
+        }
+
+    metadata = optimize_binary_threshold(
+        predictor=predictor,
+        df=df_val,
+        target_col=target_column,
+        threshold_metric=ag_config.get("threshold_metric", "auto"),
+        eval_metric=ag_config.get("eval_metric"),
+    )
+    metadata["threshold_requested"] = None
+    return metadata
 
 
 def _detect_autogluon_version() -> Optional[Version]:
@@ -779,6 +833,7 @@ def handle_missing_images(
 # ---------------------- AutoGluon config helpers ----------------------
 def autogluon_hyperparameters(
     threshold,
+    threshold_metric,
     time_limit,
     random_seed,
     epochs,
@@ -943,9 +998,11 @@ def autogluon_hyperparameters(
         "fit": fit_cfg,
         "hyperparameters": hp,
         "eval_metric": requested_eval_metric,
+        "threshold_metric": str(threshold_metric or "auto"),
     }
     if threshold is not None:
         config["threshold"] = float(threshold)
+        config["threshold_requested"] = float(threshold)
 
     return config
 
@@ -1025,10 +1082,27 @@ def run_autogluon_experiment(
         )
         predictor.fit(**fit_kwargs)
 
+    problem_type = getattr(predictor, "problem_type", None)
+    if isinstance(problem_type, str):
+        problem_type = problem_type.lower()
+    threshold_metadata = resolve_binary_threshold_for_run(
+        predictor=predictor,
+        df_train=df_train,
+        df_val=df_val,
+        target_column=target_column,
+        problem_type=problem_type,
+        ag_config=ag_config,
+    )
+    threshold = threshold_metadata.get("threshold")
+    if threshold is not None:
+        threshold = float(threshold)
+    ag_config["threshold_metadata"] = threshold_metadata
+
     return predictor, {
         "train": df_train,
         "val": df_val,
         "test_internal": df_test_internal,
         "test_external": test_dataset,
         "threshold": threshold,
+        "threshold_metadata": threshold_metadata,
     }
