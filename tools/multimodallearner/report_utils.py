@@ -23,6 +23,71 @@ def _escape(s: Any) -> str:
     return html.escape(str(s))
 
 
+def _metric_name(metric: Any) -> Optional[str]:
+    if metric is None:
+        return None
+    if isinstance(metric, str):
+        metric = metric.strip()
+        if not metric or metric.lower() == "auto":
+            return None
+        return metric
+    for attr in ("name", "__name__"):
+        try:
+            val = getattr(metric, attr, None)
+        except Exception:
+            val = None
+        if val:
+            return str(val)
+    return str(metric)
+
+
+def _predictor_eval_metric_name(predictor) -> Optional[str]:
+    candidates = []
+    for attr in ("eval_metric", "_eval_metric_name"):
+        try:
+            candidates.append(getattr(predictor, attr, None))
+        except Exception:
+            continue
+
+    try:
+        learner = getattr(predictor, "_learner", None)
+    except Exception:
+        learner = None
+    if learner is not None:
+        for attr in ("eval_metric", "_eval_metric_name"):
+            try:
+                candidates.append(getattr(learner, attr, None))
+            except Exception:
+                continue
+
+    for candidate in candidates:
+        name = _metric_name(candidate)
+        if name:
+            return name
+    return None
+
+
+def _ag_eval_metric_name(eval_results: Optional[dict]) -> Optional[str]:
+    ag_eval = (eval_results or {}).get("ag_eval", {})
+    if not isinstance(ag_eval, dict):
+        return None
+    for split_scores in ag_eval.values():
+        if isinstance(split_scores, dict) and len(split_scores) == 1:
+            return _metric_name(next(iter(split_scores.keys())))
+    return None
+
+
+def _resolve_report_eval_metric(args, predictor, eval_results: Optional[dict]) -> str:
+    requested = _metric_name(getattr(args, "eval_metric", None))
+    if requested:
+        return requested
+    return (
+        _predictor_eval_metric_name(predictor)
+        or _ag_eval_metric_name(eval_results)
+        or "AutoGluon default"
+    )
+
+
 def _write_predictor_path(predictor):
     try:
         pred_path = getattr(predictor, "path", None)
@@ -347,6 +412,7 @@ def write_outputs(
     cfg_yaml = _load_config_yaml(args, predictor)
     backbone_replacements = _build_backbone_replacements(cfg_yaml, ag_config, args)
     fit_summary_obj = _replace_local_backbone_strings(fit_summary_obj, backbone_replacements)
+    resolved_eval_metric = _resolve_report_eval_metric(args, predictor, eval_results)
 
     df_train = data_ctx.get("train")
     df_val = data_ctx.get("val")
@@ -392,7 +458,8 @@ def write_outputs(
                 "threshold": args.threshold,
                 "threshold_test": args.threshold,
                 "preset": args.preset,
-                "eval_metric": args.eval_metric,
+                "eval_metric": resolved_eval_metric,
+                "eval_metric_requested": args.eval_metric,
                 "folds": {
                     "raw_folds": raw_folds,
                     "ag_folds": ag_folds,
@@ -433,7 +500,7 @@ def write_outputs(
         threshold_rows.append(("Decision threshold (Test)", f"{float(args.threshold):.3f}"))
     extra_run_rows = [
         ("Target column", label_col),
-        ("Model evaluation metric", args.eval_metric or "AutoGluon default"),
+        ("Model evaluation metric", resolved_eval_metric),
         ("Experiment quality", args.preset or "AutoGluon default"),
     ] + threshold_rows + runtime_rows + config_rows
 

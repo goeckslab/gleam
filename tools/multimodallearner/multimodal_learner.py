@@ -76,7 +76,7 @@ def parse_args(argv=None):
     parser.add_argument("--sample_id_column", default=None)
     parser.add_argument("--preset", choices=["medium_quality", "high_quality", "best_quality"],
                         default="medium_quality")
-    parser.add_argument("--eval_metric", default="roc_auc")
+    parser.add_argument("--eval_metric", default="auto")
     parser.add_argument("--hyperparameters", default=None)
 
     args, unknown = parser.parse_known_args(argv)

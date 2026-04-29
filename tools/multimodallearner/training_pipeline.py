@@ -48,6 +48,16 @@ _HP_ALIAS_KEYS = [
 _AG_OPTIM_NAMESPACE_CUTOFF = Version("1.4.0")
 
 
+def normalize_eval_metric(eval_metric: Optional[str]) -> Optional[str]:
+    """Return an AutoGluon eval_metric value, treating 'auto' as the default."""
+    if eval_metric is None:
+        return None
+    metric = str(eval_metric).strip()
+    if not metric or metric.lower() == "auto":
+        return None
+    return metric
+
+
 def _detect_autogluon_version() -> Optional[Version]:
     try:
         ag_mod = importlib.import_module("autogluon")
@@ -479,8 +489,9 @@ def build_mm_hparams(args, df_train: pd.DataFrame, image_columns: Optional[List[
 
     # Set eval metric through model config
     model_block = hp.setdefault("model", {})
-    if args.eval_metric:
-        model_block.setdefault("metric_learning", {})["metric"] = str(args.eval_metric)
+    requested_eval_metric = normalize_eval_metric(args.eval_metric)
+    if requested_eval_metric:
+        model_block.setdefault("metric_learning", {})["metric"] = requested_eval_metric
 
     if text_cols and Version(torch.__version__) < Version("2.6"):
         safe_ckpt = "distilbert-base-uncased"
@@ -605,7 +616,11 @@ def train_predictor(
     Train a MultiModalPredictor, honoring common knobs (presets, eval_metric, etc.).
     """
     logger.info("Starting AutoGluon MultiModal training...")
-    predictor = MultiModalPredictor(label=args.label_column, path=None)
+    predictor = MultiModalPredictor(
+        label=args.label_column,
+        path=None,
+        eval_metric=normalize_eval_metric(args.eval_metric),
+    )
     column_types = {}
 
     mm_fit_kwargs = dict(
@@ -858,8 +873,9 @@ def autogluon_hyperparameters(
             optim_cfg["train_batch_size"] = bs
 
     model_cfg = {}
-    if eval_metric:
-        model_cfg.setdefault("metric_learning", {})["metric"] = str(eval_metric)
+    requested_eval_metric = normalize_eval_metric(eval_metric)
+    if requested_eval_metric:
+        model_cfg.setdefault("metric_learning", {})["metric"] = requested_eval_metric
     if backbone_image:
         model_cfg.setdefault("timm_image", {})["checkpoint_name"] = str(backbone_image)
     if backbone_text:
@@ -926,6 +942,7 @@ def autogluon_hyperparameters(
     config = {
         "fit": fit_cfg,
         "hyperparameters": hp,
+        "eval_metric": requested_eval_metric,
     }
     if threshold is not None:
         config["threshold"] = float(threshold)
@@ -959,7 +976,11 @@ def run_autogluon_experiment(
     df_val = train_dataset[train_dataset["split"].isin(["val", "validation"])].copy()
     df_test_internal = train_dataset[train_dataset["split"] == "test"].copy()
 
-    predictor = MultiModalPredictor(label=target_column, path=None)
+    predictor = MultiModalPredictor(
+        label=target_column,
+        path=None,
+        eval_metric=ag_config.get("eval_metric"),
+    )
     column_types = {c: "image_path" for c in (image_columns or [])}
 
     fit_kwargs = {
@@ -997,7 +1018,11 @@ def run_autogluon_experiment(
         retry_hyperparameters = _with_single_gpu(hyperparameters)
         fit_kwargs["hyperparameters"] = retry_hyperparameters
         ag_config["hyperparameters"] = retry_hyperparameters
-        predictor = MultiModalPredictor(label=target_column, path=None)
+        predictor = MultiModalPredictor(
+            label=target_column,
+            path=None,
+            eval_metric=ag_config.get("eval_metric"),
+        )
         predictor.fit(**fit_kwargs)
 
     return predictor, {
