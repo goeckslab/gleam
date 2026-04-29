@@ -68,6 +68,7 @@ def resolve_threshold_metric(threshold_metric: Optional[str], eval_metric: Optio
     eval_requested = str(eval_metric or "").strip().lower()
     return _THRESHOLD_METRIC_ALIASES.get(eval_requested, "f1")
 
+
 def _safe_y_proba_to_array(y_proba) -> Optional[np.ndarray]:
     """Convert predictor.predict_proba output (array/DataFrame/dict) to np.ndarray or None."""
     if y_proba is None:

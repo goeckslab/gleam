@@ -620,7 +620,7 @@ def write_outputs(
     # Drop AutoGluon-injected ROC AUC line from the Test Performance Summary
     filtered_test_scores = {k: v for k, v in test_scores.items() if k != "AG_roc_auc"}
     metric_rows = "".join(
-        f"<tr><td>{k.replace('_',' ').replace('(TNR)','(TNR)').replace('(Sensitivity/TPR)', '(Sensitivity/TPR)')}</td>"
+        f"<tr><td>{k.replace('_', ' ').replace('(TNR)', '(TNR)').replace('(Sensitivity/TPR)', '(Sensitivity/TPR)')}</td>"
         f"<td>{_fmt_val(v)}</td></tr>"
         for k, v in filtered_test_scores.items()
     )
@@ -1236,8 +1236,8 @@ def build_warnings_html(warnings_list: List[str], notes_list: List[str]) -> str:
     n_html = "".join(f"<li>{_escape(n)}</li>" for n in notes_list)
     return f"""
     <h3>Warnings & Notices</h3>
-    {'<h4>Warnings</h4><ul>'+w_html+'</ul>' if warnings_list else ''}
-    {'<h4>Notices</h4><ul>'+n_html+'</ul>' if notes_list else ''}
+    {'<h4>Warnings</h4><ul>' + w_html + '</ul>' if warnings_list else ''}
+    {'<h4>Notices</h4><ul>' + n_html + '</ul>' if notes_list else ''}
     """
 
 

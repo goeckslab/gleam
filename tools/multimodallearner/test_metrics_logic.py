@@ -1,5 +1,4 @@
 import pandas as pd
-
 from metrics_logic import optimize_binary_threshold, resolve_threshold_metric
 
 
