@@ -23,6 +23,129 @@ def _escape(s: Any) -> str:
     return html.escape(str(s))
 
 
+def _metric_name(metric: Any) -> Optional[str]:
+    if metric is None:
+        return None
+    if isinstance(metric, str):
+        metric = metric.strip()
+        if not metric or metric.lower() == "auto":
+            return None
+        return metric
+    for attr in ("name", "__name__"):
+        try:
+            val = getattr(metric, attr, None)
+        except Exception:
+            val = None
+        if val:
+            return str(val)
+    return str(metric)
+
+
+def _predictor_eval_metric_name(predictor) -> Optional[str]:
+    candidates = []
+    for attr in ("eval_metric", "_eval_metric_name"):
+        try:
+            candidates.append(getattr(predictor, attr, None))
+        except Exception:
+            continue
+
+    try:
+        learner = getattr(predictor, "_learner", None)
+    except Exception:
+        learner = None
+    if learner is not None:
+        for attr in ("eval_metric", "_eval_metric_name"):
+            try:
+                candidates.append(getattr(learner, attr, None))
+            except Exception:
+                continue
+
+    for candidate in candidates:
+        name = _metric_name(candidate)
+        if name:
+            return name
+    return None
+
+
+def _ag_eval_metric_name(eval_results: Optional[dict]) -> Optional[str]:
+    ag_eval = (eval_results or {}).get("ag_eval", {})
+    if not isinstance(ag_eval, dict):
+        return None
+    for split_scores in ag_eval.values():
+        if isinstance(split_scores, dict) and len(split_scores) == 1:
+            return _metric_name(next(iter(split_scores.keys())))
+    return None
+
+
+def _resolve_report_eval_metric(args, predictor, eval_results: Optional[dict]) -> str:
+    requested = _metric_name(getattr(args, "eval_metric", None))
+    if requested:
+        return requested
+    return (
+        _predictor_eval_metric_name(predictor)
+        or _ag_eval_metric_name(eval_results)
+        or "AutoGluon default"
+    )
+
+
+def _threshold_metadata(args, eval_results: Optional[dict], data_ctx: Optional[dict], ag_config: Optional[dict]) -> dict:
+    for src in (
+        (eval_results or {}).get("threshold_metadata"),
+        (data_ctx or {}).get("threshold_metadata"),
+        (ag_config or {}).get("threshold_metadata"),
+    ):
+        if isinstance(src, dict):
+            return src
+    threshold = getattr(data_ctx, "get", lambda *_: None)("threshold") if data_ctx is not None else None
+    if threshold is None:
+        threshold = (ag_config or {}).get("threshold") if isinstance(ag_config, dict) else None
+    if threshold is None:
+        threshold = getattr(args, "threshold", None)
+    if threshold is None:
+        return {}
+    return {
+        "threshold": threshold,
+        "threshold_source": "Manual",
+        "threshold_metric_display": "Not used",
+        "threshold_metric_value": None,
+    }
+
+
+def _format_threshold_value(metadata: dict) -> Optional[str]:
+    if not metadata:
+        return None
+    display = metadata.get("threshold_display")
+    if display:
+        return str(display)
+    threshold = metadata.get("threshold")
+    if threshold is None:
+        return None
+    return f"{float(threshold):.3f}"
+
+
+def _build_threshold_rows(problem_type: str, metadata: dict) -> List[tuple[str, Any]]:
+    if problem_type != "binary" or not metadata:
+        return []
+
+    threshold_display = _format_threshold_value(metadata)
+    if threshold_display is None:
+        return []
+
+    metric_display = metadata.get("threshold_metric_display") or metadata.get("threshold_metric") or "Not used"
+    rows: List[tuple[str, Any]] = [
+        ("Decision threshold (Test)", threshold_display),
+        ("Threshold source", metadata.get("threshold_source") or "Unknown"),
+        ("Threshold optimization metric", metric_display),
+    ]
+    metric_value = metadata.get("threshold_metric_value")
+    if metric_value is not None:
+        rows.append((f"Validation {metric_display} at threshold", f"{float(metric_value):.3f}"))
+    reason = metadata.get("threshold_reason")
+    if reason:
+        rows.append(("Threshold note", reason))
+    return rows
+
+
 def _write_predictor_path(predictor):
     try:
         pred_path = getattr(predictor, "path", None)
@@ -347,6 +470,9 @@ def write_outputs(
     cfg_yaml = _load_config_yaml(args, predictor)
     backbone_replacements = _build_backbone_replacements(cfg_yaml, ag_config, args)
     fit_summary_obj = _replace_local_backbone_strings(fit_summary_obj, backbone_replacements)
+    resolved_eval_metric = _resolve_report_eval_metric(args, predictor, eval_results)
+    threshold_info = _threshold_metadata(args, eval_results, data_ctx, ag_config)
+    resolved_threshold = threshold_info.get("threshold")
 
     df_train = data_ctx.get("train")
     df_val = data_ctx.get("val")
@@ -389,10 +515,17 @@ def write_outputs(
                 "roc_curves": roc_curves,
                 "problem_type": problem_type,
                 "predictor_path": getattr(predictor, "path", None),
-                "threshold": args.threshold,
-                "threshold_test": args.threshold,
+                "threshold": resolved_threshold,
+                "threshold_test": resolved_threshold,
+                "threshold_source": threshold_info.get("threshold_source"),
+                "threshold_metric": threshold_info.get("threshold_metric"),
+                "threshold_metric_display": threshold_info.get("threshold_metric_display"),
+                "threshold_metric_value": threshold_info.get("threshold_metric_value"),
+                "threshold_requested": threshold_info.get("threshold_requested", getattr(args, "threshold", None)),
+                "threshold_metadata": threshold_info,
                 "preset": args.preset,
-                "eval_metric": args.eval_metric,
+                "eval_metric": resolved_eval_metric,
+                "eval_metric_requested": args.eval_metric,
                 "folds": {
                     "raw_folds": raw_folds,
                     "ag_folds": ag_folds,
@@ -428,12 +561,10 @@ def write_outputs(
 
     config_rows = _summarize_config(cfg_yaml, args, ag_config=ag_config)
     runtime_rows = _build_runtime_metadata_rows(cfg_yaml, args, ag_config=ag_config)
-    threshold_rows = []
-    if problem_type == "binary" and args.threshold is not None:
-        threshold_rows.append(("Decision threshold (Test)", f"{float(args.threshold):.3f}"))
+    threshold_rows = _build_threshold_rows(problem_type, threshold_info)
     extra_run_rows = [
         ("Target column", label_col),
-        ("Model evaluation metric", args.eval_metric or "AutoGluon default"),
+        ("Model evaluation metric", resolved_eval_metric),
         ("Experiment quality", args.preset or "AutoGluon default"),
     ] + threshold_rows + runtime_rows + config_rows
 
@@ -466,7 +597,7 @@ def write_outputs(
         tmpdir=tempfile.mkdtemp(),
         seed=int(args.random_seed),
         perf_table_html=train_tab_perf_html,
-        threshold=args.threshold,
+        threshold=resolved_threshold,
     )
 
     test_html_template, plots = build_test_html_and_plots(
@@ -475,7 +606,7 @@ def write_outputs(
         df_test,
         label_col,
         tempfile.mkdtemp(),
-        threshold=args.threshold,
+        threshold=resolved_threshold,
     )
 
     def _fmt_val(v):
@@ -489,7 +620,7 @@ def write_outputs(
     # Drop AutoGluon-injected ROC AUC line from the Test Performance Summary
     filtered_test_scores = {k: v for k, v in test_scores.items() if k != "AG_roc_auc"}
     metric_rows = "".join(
-        f"<tr><td>{k.replace('_',' ').replace('(TNR)','(TNR)').replace('(Sensitivity/TPR)', '(Sensitivity/TPR)')}</td>"
+        f"<tr><td>{k.replace('_', ' ').replace('(TNR)', '(TNR)').replace('(Sensitivity/TPR)', '(Sensitivity/TPR)')}</td>"
         f"<td>{_fmt_val(v)}</td></tr>"
         for k, v in filtered_test_scores.items()
     )
@@ -501,8 +632,8 @@ def write_outputs(
     ignored_features_html = "" if is_multimodal else build_ignored_features_html(predictor, df_train_full)
     presets_hparams_html = build_presets_hparams_html(predictor, backbone_replacements)
     notices: List[str] = []
-    if args.threshold is not None and problem_type == "binary":
-        notices.append(f"Using decision threshold = {float(args.threshold):.3f} on Test.")
+    if resolved_threshold is not None and problem_type == "binary":
+        notices.append(f"Using decision threshold = {float(resolved_threshold):.3f} on Test.")
     warnings_html = build_warnings_html([], notices)
     repro_html = build_reproducibility_html(args, {}, getattr(predictor, "path", None))
 
@@ -1105,8 +1236,8 @@ def build_warnings_html(warnings_list: List[str], notes_list: List[str]) -> str:
     n_html = "".join(f"<li>{_escape(n)}</li>" for n in notes_list)
     return f"""
     <h3>Warnings & Notices</h3>
-    {'<h4>Warnings</h4><ul>'+w_html+'</ul>' if warnings_list else ''}
-    {'<h4>Notices</h4><ul>'+n_html+'</ul>' if notes_list else ''}
+    {'<h4>Warnings</h4><ul>' + w_html + '</ul>' if warnings_list else ''}
+    {'<h4>Notices</h4><ul>' + n_html + '</ul>' if notes_list else ''}
     """
 
 

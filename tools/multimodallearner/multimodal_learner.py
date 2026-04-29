@@ -37,6 +37,37 @@ from utils import (
 logger = logging.getLogger(__name__)
 
 
+def _summarize_threshold_metadata(folds_info):
+    infos = [
+        fold.get("threshold_metadata")
+        for fold in (folds_info or [])
+        if isinstance(fold, dict) and isinstance(fold.get("threshold_metadata"), dict)
+    ]
+    if not infos:
+        return None
+
+    summary = dict(infos[-1])
+    values = []
+    for info in infos:
+        try:
+            threshold = info.get("threshold")
+            if threshold is not None:
+                values.append(float(threshold))
+        except Exception:
+            continue
+    if values:
+        threshold_arr = pd.Series(values, dtype=float)
+        summary["threshold"] = float(threshold_arr.median())
+        summary["threshold_mean"] = float(threshold_arr.mean())
+        summary["threshold_std"] = float(threshold_arr.std(ddof=0))
+        summary["threshold_fold_count"] = int(len(values))
+        if len(values) > 1:
+            if any(str(info.get("threshold_source", "")).startswith("Optimized") for info in infos):
+                summary["threshold_source"] = "Optimized per validation fold"
+            summary["threshold_display"] = f"{threshold_arr.mean():.3f} ± {threshold_arr.std(ddof=0):.3f}"
+    return summary
+
+
 # ------------------------------------------------------------------
 # Argument parsing (unchanged from your original, only minor fixes)
 # ------------------------------------------------------------------
@@ -70,13 +101,14 @@ def parse_args(argv=None):
                         help="DataLoader workers for evaluation; defaults to --num_workers.")
     parser.add_argument("--backbone_image", type=str, default="swin_base_patch4_window7_224.ms_in22k_ft_in1k")
     parser.add_argument("--backbone_text", type=str, default="microsoft/deberta-v3-base")
+    parser.add_argument("--threshold_metric", default="auto")
     parser.add_argument("--validation_size", type=float, default=0.2)
     parser.add_argument("--split_probabilities", type=float, nargs=3,
                         default=[0.7, 0.1, 0.2], metavar=("train", "val", "test"))
     parser.add_argument("--sample_id_column", default=None)
     parser.add_argument("--preset", choices=["medium_quality", "high_quality", "best_quality"],
                         default="medium_quality")
-    parser.add_argument("--eval_metric", default="roc_auc")
+    parser.add_argument("--eval_metric", default="auto")
     parser.add_argument("--hyperparameters", default=None)
 
     args, unknown = parser.parse_known_args(argv)
@@ -191,6 +223,7 @@ def run_cross_validation(
                 "predictor_path": getattr(predictor_fold, "path", None),
                 "raw_metrics": raw_metrics_fold,
                 "ag_eval": ag_by_split_fold,
+                "threshold_metadata": eval_results.get("threshold_metadata"),
             }
         )
 
@@ -351,6 +384,10 @@ def main():
         logger.warning("Could not inspect target column '%s' for threshold validation; proceeding without binary check.", args.target_column)
 
     if threshold_for_run is not None:
+        if not (0.0 <= float(threshold_for_run) <= 1.0):
+            parser_error = f"--threshold must be in [0, 1], got {threshold_for_run}"
+            logger.error(parser_error)
+            sys.exit(2)
         if target_looks_binary:
             threshold_for_run = float(threshold_for_run)
             logger.info("Applying custom decision threshold %.4f for binary evaluation.", threshold_for_run)
@@ -369,6 +406,7 @@ def main():
     # ------------------------------------------------------------------
     ag_config = autogluon_hyperparameters(
         threshold=args.threshold,
+        threshold_metric=args.threshold_metric,
         time_limit=args.time_limit,
         random_seed=args.random_seed,
         epochs=args.epochs,
@@ -410,6 +448,7 @@ def main():
             "raw_metrics": raw_metrics,
             "ag_eval": ag_by_split,
             "fit_summary": None,
+            "threshold_metadata": _summarize_threshold_metadata(folds_info),
         }
     else:
         # Drop sample-id column before training so it does not leak into modeling.
