@@ -393,24 +393,52 @@ def generate_threshold_plot(
         hovertemplate="Threshold=%{x:.3f}<br>Queue Rate=%{y:.3f}<extra></extra>"
     ))
 
-    # F1*-optimal threshold marker (dashed vertical line)
-    fig.add_vline(
-        x=t_star,
-        line_width=2,
-        line_dash="dash",
-        line_color="black",
-        annotation_text=f"t* = {t_star:.2f}",
-        annotation_position="top"
+    def _add_threshold_marker(x_value: float, text: str, color: str, dash: str | None, y_pos: float) -> None:
+        x_value = float(np.clip(x_value, 0.0, 1.0))
+        fig.add_shape(
+            type="line",
+            xref="x",
+            yref="paper",
+            x0=x_value,
+            x1=x_value,
+            y0=0,
+            y1=1,
+            line=dict(color=color, width=2, dash=dash or "solid"),
+        )
+        fig.add_annotation(
+            x=x_value,
+            y=y_pos,
+            xref="x",
+            yref="paper",
+            text=text,
+            showarrow=False,
+            xanchor="left" if x_value < 0.8 else "right",
+            yanchor="top",
+            bgcolor="rgba(255,255,255,0.92)",
+            bordercolor=color,
+            borderwidth=1,
+            borderpad=3,
+            font=dict(size=12, color="#24364f"),
+        )
+
+    user_t = float(user_threshold) if user_threshold is not None else None
+    markers_are_close = user_t is not None and abs(float(t_star) - user_t) < 0.04
+    _add_threshold_marker(
+        t_star,
+        f"t* = {t_star:.2f}",
+        "black",
+        "dash",
+        0.98 if markers_are_close else 0.96,
     )
 
     # User threshold (solid red line) if provided
-    if user_threshold is not None:
-        fig.add_vline(
-            x=float(user_threshold),
-            line_width=2,
-            line_color="red",
-            annotation_text=f"threshold = {float(user_threshold):.2f}",
-            annotation_position="top"
+    if user_t is not None:
+        _add_threshold_marker(
+            user_t,
+            f"threshold = {user_t:.2f}",
+            "red",
+            None,
+            0.88 if markers_are_close else 0.98,
         )
 
     fig.update_layout(
@@ -437,7 +465,7 @@ def generate_threshold_plot(
             xanchor="right",
             x=1.0
         ),
-        margin=dict(l=60, r=20, t=40, b=50),
+        margin=dict(l=60, r=20, t=60, b=50),
         plot_bgcolor="white",
         paper_bgcolor="white",
     )
@@ -1677,6 +1705,7 @@ def assemble_full_html_report(
     tabs = build_tabbed_html(summary_html, train_html, test_full, feature_html, explainer_html=None)
 
     html_out = get_html_template()
+    html_out += "<h1>Multimodal Learner Experiment Report</h1>"
 
     # 🔧 Ensure Plotly JS is available (we render plots with include_plotlyjs=False)
     html_out += '\n<script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>\n'

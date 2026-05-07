@@ -1263,7 +1263,7 @@ class LudwigDirectBackend:
     ) -> Path:
         """Assemble an HTML report from visualizations under train_val/ and test/ folders."""
         cwd = Path.cwd()
-        report_name = title.lower().replace(" ", "_") + "_report.html"
+        report_name = "image_classification_results_report.html"
         report_path = cwd / report_name
         output_dir = Path(output_dir)
         output_type = None

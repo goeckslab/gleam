@@ -231,7 +231,7 @@ def get_html_template():
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Image Learner Report</title>
+  <title>Image Learner Experiment Report</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -559,16 +559,16 @@ def json_to_html_table(json_data) -> str:
 def build_tabbed_html(metrics_html: str, train_val_html: str, test_html: str) -> str:
     """
     Build a 3-tab interface:
-      - Config and Overall Performance Summary
-      - Train/Validation Results
-      - Test Results
+      - Experiment Summary
+      - Validation Summary
+      - Test Summary
     Includes a persistent "Help" button that toggles the metrics modal.
     """
     return f"""
 <div class="tabs">
-  <div class="tab active" onclick="showTab('metrics')">Config and Overall Performance Summary</div>
-  <div class="tab" onclick="showTab('trainval')">Training and Validation Results</div>
-  <div class="tab" onclick="showTab('test')">Test Results</div>
+  <div class="tab active" onclick="showTab('metrics')">Experiment Summary</div>
+  <div class="tab" onclick="showTab('trainval')">Validation Summary</div>
+  <div class="tab" onclick="showTab('test')">Test Summary</div>
   <button id="openMetricsHelp" class="help-btn" title="Open metrics help">Help</button>
 </div>
 

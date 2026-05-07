@@ -137,9 +137,6 @@ def _build_threshold_rows(problem_type: str, metadata: dict) -> List[tuple[str, 
         ("Threshold source", metadata.get("threshold_source") or "Unknown"),
         ("Threshold optimization metric", metric_display),
     ]
-    metric_value = metadata.get("threshold_metric_value")
-    if metric_value is not None:
-        rows.append((f"Validation {metric_display} at threshold", f"{float(metric_value):.3f}"))
     reason = metadata.get("threshold_reason")
     if reason:
         rows.append(("Threshold note", reason))
@@ -703,7 +700,7 @@ def get_html_template() -> str:
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Galaxy-Ludwig Report</title>
+  <title>Multimodal Learner Experiment Report</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -975,8 +972,8 @@ def build_tabbed_html(
     """
     tabs = [
         '<div class="tabs">',
-        '<div class="tab active" onclick="showTab(\'summary\')">Model Metric Summary and Config</div>',
-        '<div class="tab" onclick="showTab(\'train\')">Train and Validation Summary</div>',
+        '<div class="tab active" onclick="showTab(\'summary\')">Experiment Summary</div>',
+        '<div class="tab" onclick="showTab(\'train\')">Validation Summary</div>',
         '<div class="tab" onclick="showTab(\'test\')">Test Summary</div>',
     ]
     if explainer_html:

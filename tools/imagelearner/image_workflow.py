@@ -472,7 +472,7 @@ class ImageLearnerCLI:
                 self.backend.generate_plots(self.args.output_dir)
                 # Build HTML report (robust to missing metrics)
                 report_file = self.backend.generate_html_report(
-                    "Image Classification Results",
+                    "Image Learner Experiment Report",
                     self.args.output_dir,
                     backend_args,
                     split_info,
@@ -498,7 +498,7 @@ class ImageLearnerCLI:
                     self._create_minimal_outputs(self.args.output_dir, csv_path)
                     # Even in fallback, produce an HTML shell so tests find required text
                     report_file = self.backend.generate_html_report(
-                        "Image Classification Results",
+                        "Image Learner Experiment Report",
                         self.args.output_dir,
                         backend_args,
                         split_info,

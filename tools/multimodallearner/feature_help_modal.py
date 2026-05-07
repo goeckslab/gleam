@@ -10,8 +10,8 @@ def get_metrics_help_modal() -> str:
     <h2>How to read this Multimodal Learner report</h2>
     <div class="metrics-guide">
       <h3>Tabs & layout</h3>
-      <p><strong>Model Metric Summary and Config:</strong> Top-level metrics and the key run settings (target column, backbones, presets).</p>
-      <p><strong>Train and Validation Summary:</strong> Learning curves plus combined ROC/PR/Calibration (binary), and any remaining diagnostics.</p>
+      <p><strong>Experiment Summary:</strong> Top-level metrics and the key run settings (target column, backbones, presets).</p>
+      <p><strong>Validation Summary:</strong> Learning curves plus combined ROC/PR/Calibration (binary), and any remaining diagnostics.</p>
       <p><strong>Test Summary:</strong> Test metrics table followed by the ROC/PR charts with your chosen threshold marked, and the Prediction Confidence histogram.</p>
 
       <h3>Dataset Overview</h3>

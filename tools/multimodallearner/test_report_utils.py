@@ -62,4 +62,4 @@ def test_build_threshold_rows_describes_optimized_threshold():
     assert ("Decision threshold (Test)", "0.350") in rows
     assert ("Threshold source", "Optimized on validation split") in rows
     assert ("Threshold optimization metric", "F1") in rows
-    assert ("Validation F1 at threshold", "0.800") in rows
+    assert ("Validation F1 at threshold", "0.800") not in rows
