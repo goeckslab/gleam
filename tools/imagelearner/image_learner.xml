@@ -402,9 +402,9 @@
             <param name="model_hyperparameter_configuration|task_selection|validation_metric_multiclass" value="accuracy" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Config and Overall Performance Summary" />
-                    <has_text text="Training and Validation Results" />
-                    <has_text text="Test Results" />
+                    <has_text text="Experiment Summary" />
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
                 </assert_contents>
             </output>
             <output name="output_artifacts_zip" ftype="zip">
@@ -421,9 +421,9 @@
             <param name="model_hyperparameter_configuration|model_name" value="resnet18" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Config and Overall Performance Summary" />
-                    <has_text text="Training and Validation Results" />
-                    <has_text text="Test Results" />
+                    <has_text text="Experiment Summary" />
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
                 </assert_contents>
             </output>
             <output name="output_artifacts_zip" ftype="zip">
@@ -439,9 +439,9 @@
             <param name="model_hyperparameter_configuration|model_name" value="caformer_s18" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Config and Overall Performance Summary" />
-                    <has_text text="Training and Validation Results" />
-                    <has_text text="Test Results" />
+                    <has_text text="Experiment Summary" />
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
                 </assert_contents>
             </output>
             <output name="output_artifacts_zip" ftype="zip">
@@ -460,8 +460,8 @@
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Test Performance Summary" />
-                    <has_text text="Training and Validation Results" />
-                    <has_text text="Test Results" />
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
                 </assert_contents>
             </output>
             <output name="output_artifacts_zip" ftype="zip">
@@ -480,9 +480,9 @@
             <param name="image_resize" value="384x384" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Config and Overall Performance Summary" />
-                    <has_text text="Training and Validation Results" />
-                    <has_text text="Test Results" />
+                    <has_text text="Experiment Summary" />
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
                 </assert_contents>
             </output>
             <output name="output_artifacts_zip" ftype="zip" />
@@ -497,7 +497,7 @@
                 <assert_contents>
                     <has_text text="Results Summary" />
                     <has_text text="Train/Validation Results" />
-                    <has_text text="Test Results" />
+                    <has_text text="Test Summary" />
                     <has_text text="ROC-AUC Curves" />
                 </assert_contents>
             </output>
@@ -514,7 +514,7 @@
                 <assert_contents>
                     <has_text text="Results Summary" />
                     <has_text text="Train/Validation Results" />
-                    <has_text text="Test Results" />
+                    <has_text text="Test Summary" />
                     <has_text text="ROC-AUC Curves" />
                     <has_text text="Micro-average ROC" />
                 </assert_contents>
@@ -530,9 +530,9 @@
             <param name="model_hyperparameter_configuration|task_selection|validation_metric_multiclass" value="accuracy" />
             <output name="output_report">
                 <assert_contents>
-                    <has_text text="Config and Overall Performance Summary" />
-                    <has_text text="Training and Validation Results" />
-                    <has_text text="Test Results" />
+                    <has_text text="Experiment Summary" />
+                    <has_text text="Validation Summary" />
+                    <has_text text="Test Summary" />
                     <has_text text="Threshold" />
                     <has_text text="0.60" />
                 </assert_contents>

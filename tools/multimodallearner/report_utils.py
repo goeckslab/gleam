@@ -972,8 +972,8 @@ def build_tabbed_html(
     """
     tabs = [
         '<div class="tabs">',
-        '<div class="tab active" onclick="showTab(\'summary\')">Model Metric Summary and Config</div>',
-        '<div class="tab" onclick="showTab(\'train\')">Train and Validation Summary</div>',
+        '<div class="tab active" onclick="showTab(\'summary\')">Experiment Summary</div>',
+        '<div class="tab" onclick="showTab(\'train\')">Validation Summary</div>',
         '<div class="tab" onclick="showTab(\'test\')">Test Summary</div>',
     ]
     if explainer_html:
