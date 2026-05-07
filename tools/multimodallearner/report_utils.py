@@ -137,9 +137,6 @@ def _build_threshold_rows(problem_type: str, metadata: dict) -> List[tuple[str, 
         ("Threshold source", metadata.get("threshold_source") or "Unknown"),
         ("Threshold optimization metric", metric_display),
     ]
-    metric_value = metadata.get("threshold_metric_value")
-    if metric_value is not None:
-        rows.append((f"Validation {metric_display} at threshold", f"{float(metric_value):.3f}"))
     reason = metadata.get("threshold_reason")
     if reason:
         rows.append(("Threshold note", reason))

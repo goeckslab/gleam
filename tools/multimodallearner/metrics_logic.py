@@ -486,14 +486,15 @@ def evaluate_all_transparency(
     roc_curves: Dict[str, dict] = {}
     splits = []
 
-    # IMPORTANT: do NOT apply threshold to Train/Val
+    # Use the selected binary decision threshold consistently across all splits.
+    # Probability-dependent metrics such as ROC-AUC and PR-AUC still use raw scores.
     if train_df is not None and len(train_df):
         train_metrics, train_curve = compute_metrics_for_split(
             predictor,
             train_df,
             target_col,
             problem_type,
-            threshold=None,
+            threshold=threshold,
             return_curve=True,
         )
         split_results["Train"] = train_metrics
@@ -506,7 +507,7 @@ def evaluate_all_transparency(
             val_df,
             target_col,
             problem_type,
-            threshold=None,
+            threshold=threshold,
             return_curve=True,
         )
         split_results["Validation"] = val_metrics
