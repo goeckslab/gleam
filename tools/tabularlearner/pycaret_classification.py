@@ -8,7 +8,8 @@ import plotly.graph_objects as go
 from base_model_trainer import BaseModelTrainer
 from dashboard import generate_classifier_explainer_dashboard
 from pycaret.classification import ClassificationExperiment
-from pycaret.utils.generic import get_label_encoder
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
 from sklearn.metrics import (
     auc,
     confusion_matrix,
@@ -82,12 +83,9 @@ class ClassificationModelTrainer(BaseModelTrainer):
             "threshold",
             "pr",
             "error",
-            "class_report",
             "learning",
             "calibration",
             "vc",
-            "dimension",
-            "manifold",
             "rfe",
             "feature",
             "feature_all",
@@ -142,10 +140,14 @@ class ClassificationModelTrainer(BaseModelTrainer):
         y_test = self.exp.y_test_transformed
         label_encoder = None
         try:
+            from pycaret.utils.generic import get_label_encoder
+
             label_encoder = get_label_encoder(self.exp.pipeline)
         except Exception as exc:
             LOG.debug("Could not load label encoder for explainer labels: %s", exc)
-        explainer_labels = list(label_encoder.classes_) if label_encoder is not None else None
+        explainer_labels = (
+            list(label_encoder.classes_) if label_encoder is not None else None
+        )
         explainer = ClassifierExplainer(
             self.best_model,
             X_test,
@@ -157,7 +159,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
         self.explainer_plots: Dict[str, go.Figure] = {}
 
         y_true, y_pred, label_values, y_scores = self._get_test_predictions()
-        y_true_display = self._decode_labels_for_display(y_true)
+        y_true_display = self._get_original_test_labels_for_display(y_true)
         y_pred_display = self._decode_labels_for_display(y_pred)
         label_values_display = pd.unique(
             pd.concat(
@@ -188,6 +190,20 @@ class ClassificationModelTrainer(BaseModelTrainer):
                 self.explainer_plots["confusion_matrix"] = fig_cm
         except Exception as e:
             LOG.warning(f"Could not generate Plotly confusion matrix: {e}")
+
+        try:
+            fig_dimension = self._build_dimension_reduction_fig()
+            if fig_dimension is not None:
+                self.explainer_plots["dimension"] = fig_dimension
+        except Exception as e:
+            LOG.warning(f"Could not generate custom dimensionality plot: {e}")
+
+        try:
+            fig_manifold = self._build_tsne_fig()
+            if fig_manifold is not None:
+                self.explainer_plots["manifold"] = fig_manifold
+        except Exception as e:
+            LOG.warning(f"Could not generate custom t-SNE plot: {e}")
 
         # --- Threshold-aware overrides for CM / ROC / PR ---
         prob_thresh = getattr(self, "probability_threshold", None)
@@ -357,40 +373,193 @@ class ClassificationModelTrainer(BaseModelTrainer):
 
     def _decode_labels_for_display(self, values):
         """Map transformed class ids back to the original target labels for plots."""
-        try:
-            label_encoder = get_label_encoder(self.exp.pipeline)
-        except Exception as exc:
-            LOG.debug("Could not load label encoder for display labels: %s", exc)
-            label_encoder = None
+        return self._decode_class_labels_for_display(values)
 
-        if label_encoder is None:
-            return values
-
-        def _decode_array(arr):
-            arr = np.asarray(arr, dtype=object)
-            flat = arr.reshape(-1)
-            decoded = flat.copy()
-            mask = pd.notna(flat)
-            if not mask.any():
-                return arr
+    def _get_original_test_labels_for_display(self, fallback):
+        """Return original test labels for report plots when PyCaret exposes them."""
+        candidates = []
+        if self.test_data is not None and self.target in self.test_data.columns:
+            candidates.append(self.test_data[self.target])
+        for key in ("y_test", "y_test_transformed"):
             try:
-                decoded_vals = label_encoder.inverse_transform(flat[mask])
-            except Exception as exc:
-                LOG.debug("Could not inverse-transform class labels for display: %s", exc)
-                return arr
-            decoded[mask] = decoded_vals
-            return decoded.reshape(arr.shape)
+                candidates.append(self.exp.get_config(key))
+            except Exception:
+                candidates.append(getattr(self.exp, key, None))
 
-        if isinstance(values, pd.Series):
-            decoded = _decode_array(values.to_numpy())
-            return pd.Series(decoded, index=values.index, name=values.name)
+        fallback_len = len(fallback) if fallback is not None else None
+        for candidate in candidates:
+            if candidate is None:
+                continue
+            series = pd.Series(candidate).reset_index(drop=True)
+            if fallback_len is not None and len(series) != fallback_len:
+                continue
+            return self._decode_labels_for_display(series)
 
-        decoded = _decode_array(values)
-        if isinstance(values, list):
-            return decoded.tolist()
-        if np.isscalar(values):
-            return decoded.reshape(-1)[0]
-        return decoded
+        return self._decode_labels_for_display(fallback)
+
+    def _get_embedding_data_for_display(self, max_rows=None):
+        X = self._get_exp_config(["X_train_transformed", "X_train"])
+        y = self._get_exp_config(["y_train", "y_train_transformed"])
+        if X is None or y is None:
+            return None, None
+
+        X_df = pd.DataFrame(X).reset_index(drop=True)
+        X_df = X_df.select_dtypes(include=[np.number])
+        if X_df.empty:
+            return None, None
+        X_df = X_df.replace([np.inf, -np.inf], np.nan)
+        X_df = X_df.fillna(X_df.median(numeric_only=True)).fillna(0)
+
+        y_series = pd.Series(y).reset_index(drop=True)
+        row_count = min(len(X_df), len(y_series))
+        X_df = X_df.iloc[:row_count].reset_index(drop=True)
+        y_series = y_series.iloc[:row_count].reset_index(drop=True)
+        y_series = self._decode_labels_for_display(y_series)
+
+        if max_rows is not None and len(X_df) > max_rows:
+            sample_idx = (
+                X_df.sample(n=max_rows, random_state=self.random_seed)
+                .sort_index()
+                .index
+            )
+            X_df = X_df.loc[sample_idx].reset_index(drop=True)
+            y_series = y_series.loc[sample_idx].reset_index(drop=True)
+
+        return X_df, y_series
+
+    def _get_exp_config(self, keys):
+        for key in keys:
+            try:
+                value = self.exp.get_config(key)
+            except Exception:
+                value = getattr(self.exp, key, None)
+            if value is not None:
+                return value
+        return None
+
+    def _plot_labeled_scatter(self, fig, x, y, labels, hover_text=None):
+        labels = pd.Series(labels).reset_index(drop=True)
+
+        def _label_sort_key(lbl):
+            try:
+                return (0, float(lbl))
+            except Exception:
+                return (1, str(lbl))
+
+        for label in sorted(pd.unique(labels), key=_label_sort_key):
+            mask = labels == label
+            if pd.isna(label):
+                mask = labels.isna()
+                label_name = "NaN"
+            else:
+                label_name = str(label)
+            customdata = None
+            if hover_text is not None:
+                customdata = np.asarray(hover_text)[mask.to_numpy()]
+            fig.add_scatter(
+                x=np.asarray(x)[mask.to_numpy()],
+                y=np.asarray(y)[mask.to_numpy()],
+                mode="markers",
+                name=label_name,
+                customdata=customdata,
+                marker=dict(size=7, opacity=0.72),
+                hovertemplate=(
+                    "Label=%{fullData.name}<br>"
+                    "x=%{x:.3f}<br>"
+                    "y=%{y:.3f}<extra></extra>"
+                    if hover_text is None
+                    else "%{customdata}<br>Label=%{fullData.name}<extra></extra>"
+                ),
+            )
+
+    def _build_dimension_reduction_fig(self):
+        X_df, labels = self._get_embedding_data_for_display(max_rows=1500)
+        if X_df is None or len(X_df) < 2:
+            return None
+
+        variances = X_df.var(axis=0).sort_values(ascending=False)
+        selected_cols = list(variances.head(min(5, len(variances))).index)
+        X_selected = X_df[selected_cols].copy()
+        denom = X_selected.max(axis=0) - X_selected.min(axis=0)
+        denom = denom.replace(0, 1)
+        X_norm = (X_selected - X_selected.min(axis=0)) / denom
+
+        feature_count = len(selected_cols)
+        angles = np.linspace(0, 2 * np.pi, feature_count, endpoint=False)
+        anchors = np.column_stack((np.cos(angles), np.sin(angles)))
+        weights = X_norm.to_numpy(dtype=float)
+        weight_sum = weights.sum(axis=1)
+        weight_sum[weight_sum == 0] = 1
+        coords = weights.dot(anchors) / weight_sum[:, None]
+
+        fig = go.Figure()
+        self._plot_labeled_scatter(fig, coords[:, 0], coords[:, 1], labels)
+        circle = np.linspace(0, 2 * np.pi, 180)
+        fig.add_scatter(
+            x=np.cos(circle),
+            y=np.sin(circle),
+            mode="lines",
+            line=dict(color="#9a9a9a", width=1),
+            showlegend=False,
+            hoverinfo="skip",
+        )
+        for i, (x_coord, y_coord) in enumerate(anchors):
+            fig.add_scatter(
+                x=[x_coord],
+                y=[y_coord],
+                mode="markers+text",
+                marker=dict(color="#777777", size=8),
+                text=[str(selected_cols[i])],
+                textposition="top center",
+                showlegend=False,
+                hovertemplate=f"Feature={selected_cols[i]}<extra></extra>",
+            )
+        fig.update_layout(
+            title=f"RadViz for {feature_count} Features",
+            xaxis=dict(visible=False, scaleanchor="y", scaleratio=1),
+            yaxis=dict(visible=False),
+            legend_title_text=f"Label ({self.target})",
+        )
+        _apply_report_layout(fig)
+        return fig
+
+    def _build_tsne_fig(self):
+        X_df, labels = self._get_embedding_data_for_display(max_rows=1500)
+        if X_df is None or len(X_df) < 4:
+            return None
+
+        perplexity = min(30, max(2, (len(X_df) - 1) // 3))
+        pca_components = min(50, X_df.shape[1], len(X_df) - 1)
+        X_values = X_df.to_numpy(dtype=float)
+        if pca_components >= 2 and X_df.shape[1] > pca_components:
+            X_values = PCA(
+                n_components=pca_components,
+                random_state=self.random_seed,
+            ).fit_transform(X_values)
+
+        embedding = TSNE(
+            n_components=2,
+            perplexity=perplexity,
+            init="pca",
+            learning_rate="auto",
+            random_state=self.random_seed,
+        ).fit_transform(X_values)
+
+        fig = go.Figure()
+        self._plot_labeled_scatter(
+            fig,
+            embedding[:, 0],
+            embedding[:, 1],
+            labels,
+        )
+        fig.update_layout(
+            title=f"t-SNE Manifold for {len(X_df)} Samples",
+            xaxis_title="t-SNE 1",
+            yaxis_title="t-SNE 2",
+            legend_title_text=f"Label ({self.target})",
+        )
+        _apply_report_layout(fig)
+        return fig
 
     def _threshold_suffix(self) -> str:
         """

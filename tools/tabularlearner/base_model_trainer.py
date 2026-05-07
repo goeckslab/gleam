@@ -546,7 +546,6 @@ class BaseModelTrainer:
                 "rfe",
                 "threshold",
                 "percentage_above_below",
-                "class_report",
                 "pr_auc",
                 "roc_auc",
             ]
@@ -568,6 +567,59 @@ class BaseModelTrainer:
     def encode_image_to_base64(self, img_path: str) -> str:
         with open(img_path, "rb") as img_file:
             return base64.b64encode(img_file.read()).decode("utf-8")
+
+    def _decode_class_labels_for_display(self, values):
+        """Map PyCaret-encoded class labels back to the original target values."""
+        if self.task_type != "classification" or self.exp is None:
+            return values
+
+        try:
+            from pycaret.utils.generic import get_label_encoder
+
+            label_encoder = get_label_encoder(self.exp.pipeline)
+        except Exception as exc:
+            LOG.debug("Could not load label encoder for display labels: %s", exc)
+            label_encoder = None
+
+        if label_encoder is None:
+            return values
+
+        def _decode_array(arr):
+            arr = np.asarray(arr, dtype=object)
+            flat = arr.reshape(-1)
+            decoded = flat.copy()
+            mask = pd.notna(flat)
+            if not mask.any():
+                return arr
+
+            encoded_vals = flat[mask]
+            try:
+                decoded_vals = label_encoder.inverse_transform(encoded_vals)
+            except Exception:
+                try:
+                    numeric_vals = pd.to_numeric(encoded_vals, errors="raise")
+                    encoded_vals = numeric_vals.astype(int)
+                    decoded_vals = label_encoder.inverse_transform(encoded_vals)
+                except Exception as exc:
+                    LOG.debug(
+                        "Could not inverse-transform class labels for display: %s",
+                        exc,
+                    )
+                    return arr
+
+            decoded[mask] = decoded_vals
+            return decoded.reshape(arr.shape)
+
+        if isinstance(values, pd.Series):
+            decoded = _decode_array(values.to_numpy())
+            return pd.Series(decoded, index=values.index, name=values.name)
+
+        decoded = _decode_array(values)
+        if isinstance(values, list):
+            return decoded.tolist()
+        if np.isscalar(values):
+            return decoded.reshape(-1)[0]
+        return decoded
 
     def _build_dataset_overview(self):
         """
@@ -597,10 +649,11 @@ class BaseModelTrainer:
                     return val
             return None
 
-        # Prefer PyCaret-configured splits; fall back to raw inputs.
+        # Prefer original-label PyCaret splits; fall back to transformed labels
+        # only when originals are unavailable.
         X_train = _get_from_config(["X_train_transformed", "X_train"])
-        y_train = _get_from_config(["y_train_transformed", "y_train"])
-        y_test_cfg = _get_from_config(["y_test_transformed", "y_test"])
+        y_train = _get_from_config(["y_train", "y_train_transformed"])
+        y_test_cfg = _get_from_config(["y_test", "y_test_transformed"])
 
         if y_train is None and self.data is not None and self.target in self.data.columns:
             y_train = self.data[self.target]
@@ -626,12 +679,13 @@ class BaseModelTrainer:
             except Exception as exc:
                 LOG.warning("Could not derive validation split for dataset overview: %s", exc)
 
-        # Test labels: prefer PyCaret transformed holdout (single file) or external test.
+        # Test labels: prefer external/raw labels, then PyCaret original labels,
+        # then transformed labels.
         if self.test_data is not None:
-            if y_test_cfg is not None:
-                y_test = y_test_cfg
-            elif self.target in self.test_data.columns:
+            if self.target in self.test_data.columns:
                 y_test = self.test_data[self.target]
+            elif y_test_cfg is not None:
+                y_test = y_test_cfg
             else:
                 y_test = None
         else:
@@ -641,6 +695,14 @@ class BaseModelTrainer:
             "Train": _safe_series(y_train_fold),
             "Validation": _safe_series(y_val_fold),
             "Test": _safe_series(y_test),
+        }
+        split_map = {
+            name: (
+                self._decode_class_labels_for_display(series)
+                if series is not None
+                else None
+            )
+            for name, series in split_map.items()
         }
         available = {k: v for k, v in split_map.items() if v is not None and not v.empty}
         if not available:
@@ -1470,7 +1532,22 @@ class BaseModelTrainer:
             summary_plots = ["learning", "vc", "parameter", "residuals"]
 
         for name in summary_plots:
-            if name in self.plots:
+            fig_or_fn = self.explainer_plots.pop(name, None)
+            if fig_or_fn is not None:
+                fig = self._resolve_plot_callable(
+                    name, fig_or_fn, section="summary/explainer"
+                )
+                if fig is None:
+                    continue
+                title = plot_title_map.get(
+                    name, name.replace("_", " ").title()
+                )
+                summary_html += (
+                    "<hr>"
+                    f"<h2>{title}</h2>"
+                    + add_plot_to_html(fig)
+                )
+            elif name in self.plots:
                 summary_html += "<hr>"
                 b64 = encode_image_to_base64(self.plots[name])
                 title = plot_title_map.get(
@@ -1558,7 +1635,6 @@ class BaseModelTrainer:
             if self.task_type == "classification" and (
                 name in {
                     "pr_auc",
-                    "class_report",
                 }
             ):
                 if name in rendered_test_plots:
