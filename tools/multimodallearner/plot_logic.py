@@ -1677,6 +1677,7 @@ def assemble_full_html_report(
     tabs = build_tabbed_html(summary_html, train_html, test_full, feature_html, explainer_html=None)
 
     html_out = get_html_template()
+    html_out += "<h1>Multimodal Learner Experiment Report</h1>"
 
     # 🔧 Ensure Plotly JS is available (we render plots with include_plotlyjs=False)
     html_out += '\n<script src="https://cdn.plot.ly/plotly-2.30.0.min.js"></script>\n'

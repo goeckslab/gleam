@@ -231,7 +231,7 @@ def get_html_template():
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Image Learner Report</title>
+  <title>Image Learner Experiment Report</title>
   <style>
     body {
       font-family: Arial, sans-serif;

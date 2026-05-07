@@ -703,7 +703,7 @@ def get_html_template() -> str:
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Galaxy-Ludwig Report</title>
+  <title>Multimodal Learner Experiment Report</title>
   <style>
     body {
       font-family: Arial, sans-serif;
