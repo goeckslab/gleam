@@ -181,8 +181,8 @@
             <param name="feature_selection" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Feature Selection" help="Whether to perform feature selection." />
             <conditional name="cross_validation">
                 <param name="enable_cross_validation" type="select" label="Enable Cross Validation?" help="Select whether to enable cross-validation." >
-                    <option value="false" >No</option>
-                    <option value="true" selected="true">Yes</option>
+                    <option value="false" selected="true">No</option>
+                    <option value="true">Yes</option>
                 </param>
                 <when value="true">
                     <param name="cross_validation_folds" type="integer" value="10" min="2" max="20" label="Cross Validation Folds" help="Number of folds to use for cross-validation." />
@@ -201,7 +201,7 @@
     <outputs>
         <data name="model" format="h5" from_work_dir="pycaret_model.h5" label="${tool.name} best model on ${on_string}" hidden="true" />
         <data name="best_model_csv" format="csv" from_work_dir="best_model.csv" label="${tool.name} The parameters of the best model on ${on_string}" hidden="true" />
-        <data name="comparison_result" format="html" from_work_dir="comparison_result.html" label="${tool.name} analysis report on ${on_string}" />
+        <data name="comparison_result" format="html" from_work_dir="comparison_result.html" label="Tabular Learner Experiment Report" />
     </outputs>
     <tests>
         <test>
@@ -256,6 +256,7 @@
             <param name="input_file" value="pcr.tsv"/>
             <param name="target_feature" value="11"/> 
             <param name="model_selection|model_type" value="classification"/>
+            <param name="model_selection|classification_models" value="lightgbm"/>
             <param name="random_seed" value="42"/>
             <param name="tune_model" value="true"/>
             <output name="model" file="expected_model_classification.h5" compare="sim_size"/>
@@ -278,6 +279,7 @@
             <param name="input_file" value="pcr.tsv"/>
             <param name="target_feature" value="11"/> 
             <param name="model_selection|model_type" value="classification"/>
+            <param name="model_selection|classification_models" value="lightgbm"/>
             <param name="random_seed" value="42"/>
             <output name="model" file="expected_model_classification.h5" compare="sim_size"/>
             <output name="comparison_result"> 
@@ -299,6 +301,7 @@
             <param name="input_file" value="auto-mpg.tsv"/>
             <param name="target_feature" value="1"/> 
             <param name="model_selection|model_type" value="regression"/>
+            <param name="model_selection|regression_models" value="gbr"/>
             <param name="model_selection|best_model_metric" value="RMSE"/>
             <param name="random_seed" value="42"/>
             <output name="model" file="expected_model_regression.h5" compare="sim_size" />
