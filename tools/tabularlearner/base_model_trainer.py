@@ -1343,6 +1343,16 @@ class BaseModelTrainer:
             )
             return None
 
+    @staticmethod
+    def _format_parameter_label(parameter):
+        """
+        Convert model parameter keys like 'fit_intercept' to readable report
+        labels like 'Fit Intercept'.
+        """
+        parts = str(parameter).replace("__", " ").replace("_", " ").split()
+        return " ".join(part if part.isupper() else part.capitalize()
+                        for part in parts)
+
     def save_html_report(self):
         LOG.info("Saving HTML report")
 
@@ -1436,10 +1446,19 @@ class BaseModelTrainer:
         self.test_result_df.to_csv(
             Path(self.output_dir) / "test_results.csv", index=False
         )
-        pd.DataFrame(
+        best_model_params_df = pd.DataFrame(
             self.best_model.get_params().items(),
             columns=["Parameter", "Value"]
-        ).to_csv(Path(self.output_dir) / "best_model.csv", index=False)
+        )
+        best_model_params_df.to_csv(
+            Path(self.output_dir) / "best_model.csv", index=False
+        )
+        best_model_params_display_df = best_model_params_df.copy()
+        best_model_params_display_df["Parameter"] = (
+            best_model_params_display_df["Parameter"].map(
+                self._format_parameter_label
+            )
+        )
 
         if self.tuning_results is not None:
             self.tuning_results.to_csv(
@@ -1506,10 +1525,7 @@ class BaseModelTrainer:
             # — Hyperparameters
             + "<h2>Best Model Hyperparameters</h2>"
             + '<div class="table-wrapper">'
-            + pd.DataFrame(
-                self.best_model.get_params().items(),
-                columns=["Parameter", "Value"]
-            ).to_html(
+            + best_model_params_display_df.to_html(
                 index=False,
                 classes=["table", "sortable", "table-hyperparams"],
             )
