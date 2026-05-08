@@ -180,15 +180,15 @@
             <param name="normalize" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Normalize Data" help="Whether to normalize data before training." />
             <param name="feature_selection" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Feature Selection" help="Whether to perform feature selection." />
             <conditional name="cross_validation">
-                <param name="enable_cross_validation" type="select" label="Enable Cross Validation?" help="Select whether to enable cross-validation." >
+                <param name="enable_cross_validation" type="select" value="false" label="Enable Cross Validation?" help="Select whether to enable cross-validation." >
                     <option value="false" selected="true">No</option>
                     <option value="true">Yes</option>
                 </param>
-                <when value="true">
-                    <param name="cross_validation_folds" type="integer" value="10" min="2" max="20" label="Cross Validation Folds" help="Number of folds to use for cross-validation." />
-                </when>
                 <when value="false">
                     <!-- No additional parameters to show if the user selects 'No' -->
+                </when>
+                <when value="true">
+                    <param name="cross_validation_folds" type="integer" value="10" min="2" max="20" label="Cross Validation Folds" help="Number of folds to use for cross-validation." />
                 </when>
             </conditional>
             <param name="remove_outliers" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Remove Outliers" help="Whether to remove outliers from the input dataset before training." />
