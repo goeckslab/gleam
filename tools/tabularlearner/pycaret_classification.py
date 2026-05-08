@@ -266,7 +266,6 @@ class ClassificationModelTrainer(BaseModelTrainer):
             ("pr_auc", explainer.plot_pr_auc),
             ("lift_curve", explainer.plot_lift_curve),
             ("confusion_matrix", explainer.plot_confusion_matrix),
-            ("threshold", explainer.plot_precision),  # percentage vs probability
             ("cumulative_precision", explainer.plot_cumulative_precision),
         ]:
             if key in self.explainer_plots:
