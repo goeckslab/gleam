@@ -131,7 +131,7 @@
                         <option value="F1">F1</option>
                         <option value="Kappa">Cohen’s Kappa</option>
                         <option value="Log Loss">Log Loss (lower is better)</option>
-                        <option value="PR-AUC-Weighted">PR-AUC (weighted)</option>
+                        <option value="PR-AUC">PR-AUC</option>
                     </param>
                 </when>
                 <when value="regression">

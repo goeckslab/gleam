@@ -11,11 +11,12 @@ from feature_help_modal import get_feature_metrics_help_modal
 from feature_importance import FeatureImportanceAnalyzer
 from sklearn.metrics import (
     accuracy_score,
-    average_precision_score,
+    auc,
     confusion_matrix,
     f1_score,
     matthews_corrcoef,
     precision_score,
+    precision_recall_curve,
     recall_score,
     roc_auc_score,
 )
@@ -30,6 +31,79 @@ from utils import (
 
 logging.basicConfig(level=logging.DEBUG)
 LOG = logging.getLogger(__name__)
+
+
+def _weighted_ovr_pr_auc(y_true, y_score, labels=None):
+    """
+    Compute PR-AUC from precision-recall curves.
+
+    Binary tasks use the positive-class probability curve. Multiclass tasks use
+    one-vs-rest curves per class and return a support-weighted mean.
+    """
+    y_true_series = pd.Series(y_true).reset_index(drop=True)
+    if labels is not None:
+        class_labels = list(labels)
+    else:
+        class_labels = list(pd.unique(y_true_series))
+        try:
+            class_labels = sorted(class_labels)
+        except Exception:
+            pass
+    if len(class_labels) < 2:
+        return np.nan
+
+    scores = np.asarray(y_score)
+    if len(scores) != len(y_true_series):
+        return np.nan
+
+    if len(class_labels) == 2:
+        try:
+            pos_label = 1 if 1 in class_labels else sorted(class_labels)[-1]
+        except Exception:
+            pos_label = class_labels[-1]
+        if scores.ndim == 2:
+            if scores.shape[1] < 2:
+                scores = scores.ravel()
+            else:
+                try:
+                    pos_idx = class_labels.index(pos_label)
+                except ValueError:
+                    pos_idx = scores.shape[1] - 1
+                pos_idx = min(pos_idx, scores.shape[1] - 1)
+                scores = scores[:, pos_idx]
+        precision, recall, _ = precision_recall_curve(
+            (y_true_series == pos_label).astype(int),
+            scores,
+        )
+        return auc(recall, precision)
+
+    if scores.ndim != 2 or scores.shape[1] < len(class_labels):
+        return np.nan
+
+    weighted_total = 0.0
+    support_total = 0
+    for class_idx, class_label in enumerate(class_labels):
+        if class_idx >= scores.shape[1]:
+            break
+        y_true_bin = (y_true_series == class_label).astype(int)
+        if len(pd.unique(y_true_bin)) < 2:
+            continue
+        precision, recall, _ = precision_recall_curve(
+            y_true_bin,
+            scores[:, class_idx],
+        )
+        support = int(y_true_bin.sum())
+        weighted_total += auc(recall, precision) * support
+        support_total += support
+
+    return weighted_total / support_total if support_total else np.nan
+
+
+def pr_auc_curve_score(y_true, y_score):
+    """
+    PR-AUC scorer matching the report's Precision-Recall curve logic.
+    """
+    return _weighted_ovr_pr_auc(y_true, y_score)
 
 
 class BaseModelTrainer:
@@ -469,11 +543,10 @@ class BaseModelTrainer:
         LOG.info("Training and selecting the best model")
         if self.task_type == "classification":
             self.exp.add_metric(
-                id="PR-AUC-Weighted",
-                name="PR-AUC-Weighted",
+                id="PR-AUC",
+                name="PR-AUC",
                 target="pred_proba",
-                score_func=average_precision_score,
-                average="weighted",
+                score_func=pr_auc_curve_score,
             )
         # Build arguments for compare_models()
         compare_kwargs = {}
@@ -506,6 +579,9 @@ class BaseModelTrainer:
 
         if self.task_type == "classification":
             self.results.rename(columns={"AUC": "ROC-AUC"}, inplace=True)
+            self.results.rename(
+                columns={"PR-AUC-Weighted": "PR-AUC"}, inplace=True
+            )
 
         prob_thresh = getattr(self, "probability_threshold", None)
         if self.task_type == "classification" and (
@@ -522,6 +598,10 @@ class BaseModelTrainer:
             self.test_result_df.rename(
                 columns={"AUC": "ROC-AUC"}, inplace=True
             )
+            self.test_result_df.rename(
+                columns={"PR-AUC-Weighted": "PR-AUC"}, inplace=True
+            )
+            self._replace_test_pr_auc()
 
     def save_model(self):
         hdf5_path = Path(self.output_dir) / "pycaret_model.h5"
@@ -842,9 +922,6 @@ class BaseModelTrainer:
             y_scores = np.asarray(y_scores)
             if y_scores.ndim > 1 and y_scores.shape[1] == 1:
                 y_scores = y_scores.ravel()
-            if getattr(self.exp, "is_multiclass", False) and y_scores.ndim > 1:
-                # Avoid passing multiclass score matrices to ROC/PR utilities
-                y_scores = None
 
         return {
             "y_true": y_true_series,
@@ -852,6 +929,7 @@ class BaseModelTrainer:
             "y_scores": y_scores,
             "pos_label": pos_label,
             "neg_label": neg_label,
+            "classes": classes,
         }
 
     def _get_cv_generator(self, y_series):
@@ -967,19 +1045,18 @@ class BaseModelTrainer:
         n_jobs = getattr(self, "n_jobs", None)
 
         y_scores = None
-        if not getattr(self.exp, "is_multiclass", False):
-            try:
-                proba = cross_val_predict(
-                    self.best_model,
-                    X_df,
-                    y_series,
-                    cv=cv_gen,
-                    method="predict_proba",
-                    n_jobs=n_jobs,
-                )
-                y_scores = np.asarray(proba)
-            except Exception as exc:
-                LOG.debug("Could not compute CV probabilities: %s", exc)
+        try:
+            proba = cross_val_predict(
+                self.best_model,
+                X_df,
+                y_series,
+                cv=cv_gen,
+                method="predict_proba",
+                n_jobs=n_jobs,
+            )
+            y_scores = np.asarray(proba)
+        except Exception as exc:
+            LOG.debug("Could not compute CV probabilities: %s", exc)
 
         y_pred = None
         if (
@@ -1024,16 +1101,52 @@ class BaseModelTrainer:
                 pos_idx = min(pos_idx, y_scores.shape[1] - 1)
                 y_scores = y_scores[:, pos_idx]
 
-        if y_scores is not None and getattr(self.exp, "is_multiclass", False):
-            y_scores = None
-
         return {
             "y_true": y_series,
             "y_pred": pd.Series(y_pred).reset_index(drop=True),
             "y_scores": y_scores,
             "pos_label": pos_label,
             "neg_label": neg_label,
+            "classes": classes,
         }
+
+    def _get_test_predictions_for_report(self):
+        """
+        Collect predictions/probabilities for the held-out test split.
+        """
+        def _get_from_config(keys):
+            for key in keys:
+                try:
+                    val = self.exp.get_config(key)
+                except Exception:
+                    val = getattr(self.exp, key, None)
+                if val is not None:
+                    return val
+            return None
+
+        X_test = _get_from_config(["X_test_transformed", "X_test"])
+        y_test = _get_from_config(["y_test_transformed", "y_test"])
+        if (X_test is None or y_test is None) and self.test_data is not None:
+            try:
+                X_test = self.test_data.drop(columns=[self.target])
+                y_test = self.test_data[self.target]
+            except Exception as exc:
+                LOG.warning(
+                    "Could not prepare external test data for performance summary: %s",
+                    exc,
+                )
+
+        if X_test is None or y_test is None:
+            return None
+
+        try:
+            return self._predict_with_thresholds(X_test, y_test)
+        except Exception as exc:
+            LOG.warning(
+                "Could not score Test split for performance summary: %s",
+                exc,
+            )
+            return None
 
     def _get_split_predictions_for_report(self):
         """
@@ -1055,8 +1168,6 @@ class BaseModelTrainer:
 
         X_train = _get_from_config(["X_train_transformed", "X_train"])
         y_train = _get_from_config(["y_train_transformed", "y_train"])
-        X_holdout = _get_from_config(["X_test_transformed", "X_test"])
-        y_holdout = _get_from_config(["y_test_transformed", "y_test"])
 
         predictions = {}
 
@@ -1083,29 +1194,9 @@ class BaseModelTrainer:
                 exc,
             )
 
-        # Test metrics (holdout from single file, or provided test file)
-        X_test = X_holdout
-        y_test = y_holdout
-        if (X_test is None or y_test is None) and self.test_data is not None:
-            try:
-                X_test = self.test_data.drop(columns=[self.target])
-                y_test = self.test_data[self.target]
-            except Exception as exc:
-                LOG.warning(
-                    "Could not prepare external test data for performance summary: %s",
-                    exc,
-                )
-
-        if X_test is not None and y_test is not None:
-            try:
-                test_preds = self._predict_with_thresholds(X_test, y_test)
-                if test_preds is not None:
-                    predictions["Test"] = test_preds
-            except Exception as exc:
-                LOG.warning(
-                    "Could not score Test split for performance summary: %s",
-                    exc,
-                )
+        test_preds = self._get_test_predictions_for_report()
+        if test_preds is not None:
+            predictions["Test"] = test_preds
         return predictions
 
     def _compute_metric_value(self, metric_name, preds, split_name):
@@ -1136,6 +1227,18 @@ class BaseModelTrainer:
             if metric_name == "ROC-AUC":
                 if y_scores is None:
                     return None
+                if is_multiclass:
+                    y_scores_arr = np.asarray(y_scores)
+                    if y_scores_arr.ndim != 2:
+                        return None
+                    classes = preds.get("classes")
+                    kwargs = {
+                        "multi_class": "ovr",
+                        "average": "weighted",
+                    }
+                    if classes and len(classes) == y_scores_arr.shape[1]:
+                        kwargs["labels"] = classes
+                    return roc_auc_score(y_true, y_scores_arr, **kwargs)
                 y_true_bin = _format_binary_labels(y_true)
                 if len(pd.unique(y_true_bin)) < 2:
                     return None
@@ -1180,12 +1283,7 @@ class BaseModelTrainer:
                         y_true, y_pred, average="weighted", zero_division=0
                     )
             if metric_name == "PR-AUC":
-                if y_scores is None:
-                    return None
-                y_true_bin = _format_binary_labels(y_true)
-                if len(pd.unique(y_true_bin)) < 2:
-                    return None
-                return average_precision_score(y_true_bin, y_scores)
+                return self._compute_pr_auc_from_predictions(preds)
             if metric_name == "Specificity":
                 labels = pd.unique(pd.concat([y_true, y_pred], ignore_index=True))
                 if len(labels) != 2:
@@ -1217,6 +1315,55 @@ class BaseModelTrainer:
             )
             return None
         return None
+
+    def _compute_pr_auc_from_predictions(self, preds):
+        """
+        Compute PR-AUC from the same precision-recall curve definition used
+        by the report plot.
+        """
+        if preds is None:
+            return None
+
+        y_scores = preds.get("y_scores")
+        if y_scores is None:
+            return None
+
+        y_true = preds["y_true"]
+        classes = preds.get("classes")
+        try:
+            pr_auc = _weighted_ovr_pr_auc(y_true, y_scores, labels=classes)
+            if np.isnan(pr_auc):
+                return None
+            return pr_auc
+        except Exception as exc:
+            LOG.warning("Could not compute PR-AUC from curve data: %s", exc)
+            return None
+
+    def _replace_test_pr_auc(self):
+        """
+        Replace PyCaret's custom PR-AUC output with the report's curve-based
+        PR-AUC for the held-out test split.
+        """
+        if not isinstance(self.test_result_df, pd.DataFrame):
+            return
+        if (
+            "PR-AUC" not in self.test_result_df.columns
+            and "PR-AUC-Weighted" not in self.test_result_df.columns
+        ):
+            return
+
+        preds = self._get_test_predictions_for_report()
+        pr_auc = self._compute_pr_auc_from_predictions(preds)
+        if pr_auc is None:
+            LOG.warning(
+                "Could not replace PR-AUC-Weighted; test PR-AUC was unavailable."
+            )
+            return
+
+        self.test_result_df["PR-AUC"] = pr_auc
+        self.test_result_df.drop(
+            columns=["PR-AUC-Weighted"], errors="ignore", inplace=True
+        )
 
     def _build_performance_summary_table(self):
         """
@@ -1293,11 +1440,17 @@ class BaseModelTrainer:
             row.append(_fmt(train_val))
 
             # Validation from the cross-validation summary first row; fallback to computed CV.
-            val_val = _validation_metric(metric)
-            if val_val is None:
+            # PR-AUC is computed from probabilities so it matches the report's PR curve.
+            if metric == "PR-AUC":
                 val_val = self._compute_metric_value(
                     metric, split_predictions.get("Validation"), "Validation"
                 )
+            else:
+                val_val = _validation_metric(metric)
+                if val_val is None:
+                    val_val = self._compute_metric_value(
+                        metric, split_predictions.get("Validation"), "Validation"
+                    )
             row.append(_fmt(val_val))
 
             # Test
