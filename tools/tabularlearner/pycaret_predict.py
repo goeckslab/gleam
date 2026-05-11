@@ -4,14 +4,81 @@ import tempfile
 
 import h5py
 import joblib
+import numpy as np
 import pandas as pd
 from pycaret.classification import ClassificationExperiment
 from pycaret.regression import RegressionExperiment
-from sklearn.metrics import average_precision_score
-from utils import encode_image_to_base64, get_html_closing, get_html_template
+from sklearn.metrics import auc, precision_recall_curve
+from utils import (
+    build_tabbed_html,
+    encode_image_to_base64,
+    get_html_closing,
+    get_html_template,
+)
 
 
 LOG = logging.getLogger(__name__)
+
+
+def _weighted_ovr_pr_auc(y_true, y_score, labels=None):
+    y_true_series = pd.Series(y_true).reset_index(drop=True)
+    if labels is not None:
+        class_labels = list(labels)
+    else:
+        class_labels = list(pd.unique(y_true_series))
+        try:
+            class_labels = sorted(class_labels)
+        except Exception:
+            pass
+    if len(class_labels) < 2:
+        return np.nan
+
+    scores = np.asarray(y_score)
+    if len(scores) != len(y_true_series):
+        return np.nan
+
+    if len(class_labels) == 2:
+        try:
+            pos_label = 1 if 1 in class_labels else sorted(class_labels)[-1]
+        except Exception:
+            pos_label = class_labels[-1]
+        if scores.ndim == 2:
+            if scores.shape[1] < 2:
+                scores = scores.ravel()
+            else:
+                try:
+                    pos_idx = class_labels.index(pos_label)
+                except ValueError:
+                    pos_idx = scores.shape[1] - 1
+                scores = scores[:, min(pos_idx, scores.shape[1] - 1)]
+        precision, recall, _ = precision_recall_curve(
+            (y_true_series == pos_label).astype(int),
+            scores,
+        )
+        return auc(recall, precision)
+
+    if scores.ndim != 2 or scores.shape[1] < len(class_labels):
+        return np.nan
+
+    weighted_total = 0.0
+    support_total = 0
+    for class_idx, class_label in enumerate(class_labels):
+        y_true_bin = (y_true_series == class_label).astype(int)
+        if len(pd.unique(y_true_bin)) < 2:
+            continue
+        precision, recall, _ = precision_recall_curve(
+            y_true_bin,
+            scores[:, class_idx],
+        )
+        support = int(y_true_bin.sum())
+        weighted_total += auc(recall, precision) * support
+        support_total += support
+
+    return weighted_total / support_total if support_total else np.nan
+
+
+def pr_auc_curve_score(y_true, y_score):
+    return _weighted_ovr_pr_auc(y_true, y_score)
 
 
 class PyCaretModelEvaluator:
@@ -44,15 +111,14 @@ class ClassificationEvaluator(PyCaretModelEvaluator):
         if self.target:
             exp = ClassificationExperiment()
             names = data.columns.to_list()
-            LOG.error(f"Column names: {names}")
+            LOG.info(f"Column names: {names}")
             target_index = int(self.target) - 1
             target_name = names[target_index]
             exp.setup(data, target=target_name, test_data=data, index=False)
-            exp.add_metric(id='PR-AUC-Weighted',
-                           name='PR-AUC-Weighted',
+            exp.add_metric(id='PR-AUC',
+                           name='PR-AUC',
                            target='pred_proba',
-                           score_func=average_precision_score,
-                           average='weighted')
+                           score_func=pr_auc_curve_score)
             predictions = exp.predict_model(self.model)
             metrics = exp.pull()
             plots = ['confusion_matrix', 'auc', 'threshold', 'pr',
@@ -137,25 +203,18 @@ def generate_html_report(plots, metrics):
 
     metrics_html = metrics.to_html(index=False, classes="table")
 
-    html_content = f"""
-    {get_html_template()}
-    <h1>Model Evaluation Report</h1>
-    <div class="tabs">
-        <div class="tab" onclick="openTab(event, 'metrics')">Metrics</div>
-        <div class="tab" onclick="openTab(event, 'plots')">Plots</div>
-    </div>
-    <div id="metrics" class="tab-content">
-        <h2>Metrics</h2>
-        <table>
-            {metrics_html}
-        </table>
-    </div>
-    <div id="plots" class="tab-content">
-        <h2>Plots</h2>
-        {plots_html}
-    </div>
-    {get_html_closing()}
-    """
+    html_content = (
+        get_html_template()
+        + "<h1>Model Evaluation Report</h1>"
+        + build_tabbed_html(
+            "<h2>Metrics</h2><div class='table-wrapper'>" + metrics_html + "</div>",
+            "<h2>Plots</h2>" + plots_html,
+            None,
+            summary_tab_label="Metrics",
+            test_tab_label="Plots",
+        )
+        + get_html_closing()
+    )
 
     # Save HTML report
     with open("evaluation_report.html", "w") as html_file:

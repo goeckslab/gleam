@@ -703,10 +703,10 @@ class BaseModelTrainer:
 
     def _build_dataset_overview(self):
         """
-        Build an HTML table showing label counts with labels as rows and splits
-        (Train / Validation / Test) as columns. Each cell shows count and
-        percentage of that split. Returns empty string for regression or when
-        no label data is available.
+        Build an HTML table showing label counts for the data used by the
+        report. When cross-validation is enabled, validation metrics are based
+        on out-of-fold predictions across the training/CV pool, not a single
+        fixed validation split.
         """
         if self.task_type != "classification":
             return ""
@@ -731,7 +731,6 @@ class BaseModelTrainer:
 
         # Prefer original-label PyCaret splits; fall back to transformed labels
         # only when originals are unavailable.
-        X_train = _get_from_config(["X_train_transformed", "X_train"])
         y_train = _get_from_config(["y_train", "y_train_transformed"])
         y_test_cfg = _get_from_config(["y_test", "y_test_transformed"])
 
@@ -739,25 +738,6 @@ class BaseModelTrainer:
             y_train = self.data[self.target]
 
         y_train_series = _safe_series(y_train)
-
-        # Build a cross-validation generator to derive a validation subset size.
-        cv_gen = self._get_cv_generator(y_train_series)
-        y_train_fold = y_train_series
-        y_val_fold = None
-        if cv_gen is not None and y_train_series is not None:
-            try:
-                # Use the first fold to approximate Train/Validation split sizes.
-                splitter = cv_gen.split(
-                    pd.DataFrame(X_train).reset_index(drop=True)
-                    if X_train is not None
-                    else y_train_series,
-                    y_train_series,
-                )
-                train_idx, val_idx = next(iter(splitter))
-                y_train_fold = y_train_series.iloc[train_idx].reset_index(drop=True)
-                y_val_fold = y_train_series.iloc[val_idx].reset_index(drop=True)
-            except Exception as exc:
-                LOG.warning("Could not derive validation split for dataset overview: %s", exc)
 
         # Test labels: prefer external/raw labels, then PyCaret original labels,
         # then transformed labels.
@@ -771,9 +751,10 @@ class BaseModelTrainer:
         else:
             y_test = y_test_cfg
 
+        validation_enabled = getattr(self, "cross_validation", None) is not False
+        train_label = "Training / CV Pool" if validation_enabled else "Train"
         split_map = {
-            "Train": _safe_series(y_train_fold),
-            "Validation": _safe_series(y_val_fold),
+            train_label: _safe_series(y_train_series),
             "Test": _safe_series(y_test),
         }
         split_map = {
@@ -807,7 +788,7 @@ class BaseModelTrainer:
         rows = []
         for label in labels:
             row = ["NaN" if pd.isna(label) else str(label)]
-            for split_name in ["Train", "Validation", "Test"]:
+            for split_name in split_map:
                 cnt, total = _count_for_label(split_map.get(split_name), label)
                 if cnt is None or total is None:
                     cell = "—"
@@ -817,11 +798,18 @@ class BaseModelTrainer:
                 row.append(cell)
             rows.append(row)
 
-        df = pd.DataFrame(rows, columns=["Label", "Train", "Validation", "Test"])
+        df = pd.DataFrame(rows, columns=["Label", *split_map.keys()])
         df.sort_values("Label", inplace=True)
 
+        note = (
+            "<p><em>Validation metrics use out-of-fold predictions across the "
+            "training/CV pool.</em></p>"
+            if validation_enabled
+            else ""
+        )
         return (
             "<h2>Dataset Overview</h2>"
+            + note
             + '<div class="table-wrapper">'
             + df.to_html(
                 index=False,
@@ -1581,15 +1569,20 @@ class BaseModelTrainer:
             elif key in {
                 "Normalize",
                 "Feature Selection",
-                "Cross Validation",
                 "Remove Outliers",
                 "Remove Multicollinearity",
                 "Polynomial Features",
                 "Fix Imbalance",
             }:
                 dv = bool(v)
+            elif key == "Cross Validation":
+                dv = True if v is None else bool(v)
             elif key == "Cross Validation Folds":
-                dv = v if v is not None else "None"
+                cv_enabled = all_params.get("cross_validation")
+                if cv_enabled is False:
+                    dv = "None"
+                else:
+                    dv = v if v is not None else 10
             elif key == "Models":
                 dv = ", ".join(map(str, v)) if isinstance(
                     v, (list, tuple)
