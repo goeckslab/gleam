@@ -217,6 +217,7 @@ def build_tabbed_html(
     feature_html: str,
     explainer_html: Optional[str] = None,
     config_html: Optional[str] = None,
+    summary_tab_label: str = "Validation Summary",
 ) -> str:
     """
     Render the tabbed sections and an always-visible Help button.
@@ -233,11 +234,11 @@ def build_tabbed_html(
             '<div class="tab active" onclick="showTab(\'config\')">Experiment Summary</div>'
         )
         tabs.append(
-            '<div class="tab" onclick="showTab(\'summary\')">Validation Summary</div>'
+            f'<div class="tab" onclick="showTab(\'summary\')">{summary_tab_label}</div>'
         )
     else:
         tabs.append(
-            '<div class="tab active" onclick="showTab(\'summary\')">Validation Summary</div>'
+            f'<div class="tab active" onclick="showTab(\'summary\')">{summary_tab_label}</div>'
         )
     tabs.extend([
         '<div class="tab" onclick="showTab(\'test\')">Test Summary</div>',

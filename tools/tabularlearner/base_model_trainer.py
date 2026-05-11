@@ -1374,14 +1374,7 @@ class BaseModelTrainer:
             return ""
 
         split_predictions = self._get_split_predictions_for_report()
-        validation_best_row = None
-        try:
-            if isinstance(self.results, pd.DataFrame) and not self.results.empty:
-                validation_best_row = self.results.iloc[0]
-        except Exception:
-            validation_best_row = None
-
-        if not split_predictions and validation_best_row is None:
+        if not split_predictions:
             return ""
 
         metric_names = [
@@ -1395,17 +1388,6 @@ class BaseModelTrainer:
             "MCC",
         ]
 
-        validation_column_map = {
-            "Accuracy": ["Accuracy"],
-            "ROC-AUC": ["ROC-AUC", "AUC"],
-            "Precision": ["Precision", "Prec.", "Prec"],
-            "Recall": ["Recall"],
-            "F1-Score": ["F1-Score", "F1"],
-            "PR-AUC": ["PR-AUC", "PR-AUC-Weighted", "PRC"],
-            "Specificity": ["Specificity"],
-            "MCC": ["MCC"],
-        }
-
         def _fmt(value):
             if value is None:
                 return "—"
@@ -1418,19 +1400,8 @@ class BaseModelTrainer:
             except Exception:
                 return str(value)
 
-        def _validation_metric(metric_name):
-            if validation_best_row is None:
-                return None
-            cols = validation_column_map.get(metric_name, [])
-            for col in cols:
-                if col in validation_best_row:
-                    try:
-                        return validation_best_row[col]
-                    except Exception:
-                        return None
-            return None
-
         rows = []
+        validation_preds = split_predictions.get("Validation")
         for metric in metric_names:
             row = [metric]
             # Train
@@ -1439,18 +1410,12 @@ class BaseModelTrainer:
             )
             row.append(_fmt(train_val))
 
-            # Validation from the cross-validation summary first row; fallback to computed CV.
-            # PR-AUC is computed from probabilities so it matches the report's PR curve.
-            if metric == "PR-AUC":
-                val_val = self._compute_metric_value(
-                    metric, split_predictions.get("Validation"), "Validation"
-                )
-            else:
-                val_val = _validation_metric(metric)
-                if val_val is None:
-                    val_val = self._compute_metric_value(
-                        metric, split_predictions.get("Validation"), "Validation"
-                    )
+            # Validation is shown only when validation predictions exist. This
+            # avoids mixing selected-model metrics with PyCaret comparison rows
+            # when cross-validation is disabled.
+            val_val = self._compute_metric_value(
+                metric, validation_preds, "Validation"
+            )
             row.append(_fmt(val_val))
 
             # Test
@@ -1470,6 +1435,60 @@ class BaseModelTrainer:
             )
             + "</div>"
         )
+
+    @staticmethod
+    def _prepare_model_comparison_display_df(df, metric_prefix=""):
+        """
+        Prepare PyCaret comparison output for the HTML report.
+
+        This table must remain a direct PyCaret model-comparison table. Do not
+        inject selected-model metrics here; those belong in Best Model
+        Performance, where all split metrics are computed from the same
+        prediction bundles.
+        """
+        display_df = df.copy()
+        display_df.drop(
+            columns=[
+                "TT (Ec)",
+                "TT (Sec)",
+                "PR-AUC",
+                "PR-AUC-Weighted",
+                "PRC",
+            ],
+            errors="ignore",
+            inplace=True,
+        )
+        if metric_prefix:
+            metric_columns = {
+                "Accuracy",
+                "ROC-AUC",
+                "AUC",
+                "Precision",
+                "Prec.",
+                "Prec",
+                "Recall",
+                "F1-Score",
+                "F1",
+                "Kappa",
+                "MCC",
+                "Log Loss",
+                "LogLoss",
+                "MAE",
+                "MSE",
+                "RMSE",
+                "R2",
+                "RMSLE",
+                "MAPE",
+            }
+            display_df.rename(
+                columns={
+                    col: f"{metric_prefix}{col}"
+                    for col in display_df.columns
+                    if col in metric_columns
+                },
+                inplace=True,
+            )
+        return display_df
 
     def _resolve_plot_callable(self, key, fig_or_fn, section):
         """
@@ -1622,8 +1641,14 @@ class BaseModelTrainer:
         # 5) Header
         header = f"<h2>Best Model: {best_model_name}</h2>"
 
-        # — Validation Summary & Configuration —
-        val_df = self.results.copy()
+        validation_enabled = getattr(self, "cross_validation", None) is not False
+        comparison_metric_prefix = "CV " if validation_enabled else "Comparison "
+
+        # — Model Comparison & Configuration —
+        val_df = self._prepare_model_comparison_display_df(
+            self.results,
+            metric_prefix=comparison_metric_prefix,
+        )
         dataset_overview_html = self._build_dataset_overview()
         performance_summary_html = self._build_performance_summary_table()
         # mapping raw plot keys to user-friendly titles
@@ -1642,30 +1667,23 @@ class BaseModelTrainer:
             "residuals": "Residuals Distribution",
             "error": "Prediction Error Distribution",
         }
-        val_df.drop(
-            columns=[
-                "TT (Ec)",
-                "TT (Sec)",
-                "PR-AUC",
-                "PR-AUC-Weighted",
-                "PRC",
-            ],
-            errors="ignore",
-            inplace=True,
+        summary_tab_label = "Model Comparison"
+        summary_heading = (
+            "Cross-Validation Model Comparison Across Candidate Models"
+            if validation_enabled
+            else "Model Comparison Across Candidate Models"
         )
         summary_html = (
-            "<h2>Cross-Validation Validation Summary Across Candidate Models</h2>"
+            f"<h2>{summary_heading}</h2>"
             + '<div class="table-wrapper">'
             + val_df.to_html(index=False, classes="table sortable")
             + "</div>"
         )
 
         if self.tuning_results is not None:
-            tuning_df = self.tuning_results.copy()
-            tuning_df.drop(
-                columns=["TT (Sec)", "PR-AUC", "PR-AUC-Weighted", "PRC"],
-                errors="ignore",
-                inplace=True,
+            tuning_df = self._prepare_model_comparison_display_df(
+                self.tuning_results,
+                metric_prefix=comparison_metric_prefix,
             )
             summary_html += (
                 f"<h2>{best_model_name}: Tuning Summary</h2>"
@@ -1948,6 +1966,7 @@ class BaseModelTrainer:
             feature_html,
             explainer_html=None,
             config_html=config_html,
+            summary_tab_label=summary_tab_label,
         )
         html += get_feature_metrics_help_modal()
         html += get_html_closing()
