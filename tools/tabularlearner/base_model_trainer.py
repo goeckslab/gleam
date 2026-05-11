@@ -1643,7 +1643,15 @@ class BaseModelTrainer:
             "error": "Prediction Error Distribution",
         }
         val_df.drop(
-            columns=["TT (Ec)", "TT (Sec)"], errors="ignore", inplace=True
+            columns=[
+                "TT (Ec)",
+                "TT (Sec)",
+                "PR-AUC",
+                "PR-AUC-Weighted",
+                "PRC",
+            ],
+            errors="ignore",
+            inplace=True,
         )
         summary_html = (
             "<h2>Cross-Validation Validation Summary Across Candidate Models</h2>"
@@ -1655,7 +1663,9 @@ class BaseModelTrainer:
         if self.tuning_results is not None:
             tuning_df = self.tuning_results.copy()
             tuning_df.drop(
-                columns=["TT (Sec)"], errors="ignore", inplace=True
+                columns=["TT (Sec)", "PR-AUC", "PR-AUC-Weighted", "PRC"],
+                errors="ignore",
+                inplace=True,
             )
             summary_html += (
                 f"<h2>{best_model_name}: Tuning Summary</h2>"
