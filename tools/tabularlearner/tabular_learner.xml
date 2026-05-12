@@ -180,9 +180,9 @@
             <param name="normalize" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Normalize Data" help="Whether to normalize data before training." />
             <param name="feature_selection" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Feature Selection" help="Whether to perform feature selection." />
             <conditional name="cross_validation">
-                <param name="enable_cross_validation" type="select" value="false" label="Enable Cross Validation?" help="Select whether to enable cross-validation." >
-                    <option value="false" selected="true">No</option>
-                    <option value="true">Yes</option>
+                <param name="enable_cross_validation" type="select" value="true" label="Enable Cross Validation?" help="Select whether to enable cross-validation." >
+                    <option value="true" selected="true">Yes</option>
+                    <option value="false">No</option>
                 </param>
                 <when value="false">
                     <!-- No additional parameters to show if the user selects 'No' -->
@@ -221,7 +221,7 @@
             <output name="model" file="expected_model_classification_customized.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
-                    <has_text text="Validation Summary" />
+                    <has_text text="Model Comparison" />
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                     <has_text text="Best Model Metric" />
@@ -245,7 +245,7 @@
             <output name="model" file="expected_model_classification_customized_cross_off.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
-                    <has_text text="Validation Summary" />
+                    <has_text text="Model Comparison" />
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                 </assert_contents>
@@ -258,11 +258,12 @@
             <param name="model_selection|model_type" value="classification"/>
             <param name="model_selection|classification_models" value="lightgbm"/>
             <param name="random_seed" value="42"/>
+            <param name="cross_validation|enable_cross_validation" value="false"/>
             <param name="tune_model" value="true"/>
             <output name="model" file="expected_model_classification.h5" compare="sim_size"/>
             <output name="comparison_result"> 
                 <assert_contents>
-                    <has_text text="Validation Summary" />
+                    <has_text text="Model Comparison" />
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                 </assert_contents>
@@ -281,10 +282,11 @@
             <param name="model_selection|model_type" value="classification"/>
             <param name="model_selection|classification_models" value="lightgbm"/>
             <param name="random_seed" value="42"/>
+            <param name="cross_validation|enable_cross_validation" value="false"/>
             <output name="model" file="expected_model_classification.h5" compare="sim_size"/>
             <output name="comparison_result"> 
                 <assert_contents>
-                    <has_text text="Validation Summary" />
+                    <has_text text="Model Comparison" />
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                 </assert_contents>
@@ -304,10 +306,11 @@
             <param name="model_selection|regression_models" value="gbr"/>
             <param name="model_selection|best_model_metric" value="RMSE"/>
             <param name="random_seed" value="42"/>
+            <param name="cross_validation|enable_cross_validation" value="false"/>
             <output name="model" file="expected_model_regression.h5" compare="sim_size" />
             <output name="comparison_result">
                 <assert_contents>
-                    <has_text text="Validation Summary" />
+                    <has_text text="Model Comparison" />
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                     <has_text text="Best Model Metric" />

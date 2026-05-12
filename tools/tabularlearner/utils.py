@@ -214,16 +214,16 @@ def get_html_closing() -> str:
 def build_tabbed_html(
     summary_html: str,
     test_html: str,
-    feature_html: str,
+    feature_html: Optional[str],
     explainer_html: Optional[str] = None,
     config_html: Optional[str] = None,
+    summary_tab_label: str = "Validation Summary",
+    test_tab_label: str = "Test Summary",
+    feature_tab_label: str = "Feature Importance",
 ) -> str:
     """
     Render the tabbed sections and an always-visible Help button.
     """
-    # CSS
-    css = get_html_template().split("<body>")[1].rsplit("</style>", 1)[0] + "</style>"
-
     # Tabs header
     tabs = ['<div class="tabs">']
     default_active = "summary"
@@ -233,16 +233,19 @@ def build_tabbed_html(
             '<div class="tab active" onclick="showTab(\'config\')">Experiment Summary</div>'
         )
         tabs.append(
-            '<div class="tab" onclick="showTab(\'summary\')">Validation Summary</div>'
+            f'<div class="tab" onclick="showTab(\'summary\')">{summary_tab_label}</div>'
         )
     else:
         tabs.append(
-            '<div class="tab active" onclick="showTab(\'summary\')">Validation Summary</div>'
+            f'<div class="tab active" onclick="showTab(\'summary\')">{summary_tab_label}</div>'
         )
     tabs.extend([
-        '<div class="tab" onclick="showTab(\'test\')">Test Summary</div>',
-        '<div class="tab" onclick="showTab(\'feature\')">Feature Importance</div>',
+        f'<div class="tab" onclick="showTab(\'test\')">{test_tab_label}</div>',
     ])
+    if feature_html is not None:
+        tabs.append(
+            f'<div class="tab" onclick="showTab(\'feature\')">{feature_tab_label}</div>'
+        )
     if explainer_html:
         tabs.append(
             '<div class="tab" onclick="showTab(\'explainer\')">Explainer Plots</div>'
@@ -261,7 +264,8 @@ def build_tabbed_html(
         f'<div id="summary" class="tab-content {"active" if default_active == "summary" else ""}">{summary_html}</div>'
     )
     contents.append(f'<div id="test" class="tab-content">{test_html}</div>')
-    contents.append(f'<div id="feature" class="tab-content">{feature_html}</div>')
+    if feature_html is not None:
+        contents.append(f'<div id="feature" class="tab-content">{feature_html}</div>')
     if explainer_html:
         contents.append(
             f'<div id="explainer" class="tab-content">{explainer_html}</div>'
@@ -280,7 +284,7 @@ function showTab(id) {
 </script>
 """
 
-    return css + "\n" + tabs_section + "\n" + content_section + "\n" + js
+    return tabs_section + "\n" + content_section + "\n" + js
 
 
 def customize_figure_layout(fig, margin_dict=None):

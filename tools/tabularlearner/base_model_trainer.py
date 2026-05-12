@@ -703,10 +703,10 @@ class BaseModelTrainer:
 
     def _build_dataset_overview(self):
         """
-        Build an HTML table showing label counts with labels as rows and splits
-        (Train / Validation / Test) as columns. Each cell shows count and
-        percentage of that split. Returns empty string for regression or when
-        no label data is available.
+        Build an HTML table showing label counts for the data used by the
+        report. When cross-validation is enabled, validation metrics are based
+        on out-of-fold predictions across the training/CV pool, not a single
+        fixed validation split.
         """
         if self.task_type != "classification":
             return ""
@@ -731,7 +731,6 @@ class BaseModelTrainer:
 
         # Prefer original-label PyCaret splits; fall back to transformed labels
         # only when originals are unavailable.
-        X_train = _get_from_config(["X_train_transformed", "X_train"])
         y_train = _get_from_config(["y_train", "y_train_transformed"])
         y_test_cfg = _get_from_config(["y_test", "y_test_transformed"])
 
@@ -739,25 +738,6 @@ class BaseModelTrainer:
             y_train = self.data[self.target]
 
         y_train_series = _safe_series(y_train)
-
-        # Build a cross-validation generator to derive a validation subset size.
-        cv_gen = self._get_cv_generator(y_train_series)
-        y_train_fold = y_train_series
-        y_val_fold = None
-        if cv_gen is not None and y_train_series is not None:
-            try:
-                # Use the first fold to approximate Train/Validation split sizes.
-                splitter = cv_gen.split(
-                    pd.DataFrame(X_train).reset_index(drop=True)
-                    if X_train is not None
-                    else y_train_series,
-                    y_train_series,
-                )
-                train_idx, val_idx = next(iter(splitter))
-                y_train_fold = y_train_series.iloc[train_idx].reset_index(drop=True)
-                y_val_fold = y_train_series.iloc[val_idx].reset_index(drop=True)
-            except Exception as exc:
-                LOG.warning("Could not derive validation split for dataset overview: %s", exc)
 
         # Test labels: prefer external/raw labels, then PyCaret original labels,
         # then transformed labels.
@@ -771,9 +751,10 @@ class BaseModelTrainer:
         else:
             y_test = y_test_cfg
 
+        validation_enabled = getattr(self, "cross_validation", None) is not False
+        train_label = "Training / CV Pool" if validation_enabled else "Train"
         split_map = {
-            "Train": _safe_series(y_train_fold),
-            "Validation": _safe_series(y_val_fold),
+            train_label: _safe_series(y_train_series),
             "Test": _safe_series(y_test),
         }
         split_map = {
@@ -807,7 +788,7 @@ class BaseModelTrainer:
         rows = []
         for label in labels:
             row = ["NaN" if pd.isna(label) else str(label)]
-            for split_name in ["Train", "Validation", "Test"]:
+            for split_name in split_map:
                 cnt, total = _count_for_label(split_map.get(split_name), label)
                 if cnt is None or total is None:
                     cell = "—"
@@ -817,11 +798,18 @@ class BaseModelTrainer:
                 row.append(cell)
             rows.append(row)
 
-        df = pd.DataFrame(rows, columns=["Label", "Train", "Validation", "Test"])
+        df = pd.DataFrame(rows, columns=["Label", *split_map.keys()])
         df.sort_values("Label", inplace=True)
 
+        note = (
+            "<p><em>Validation metrics use out-of-fold predictions across the "
+            "training/CV pool.</em></p>"
+            if validation_enabled
+            else ""
+        )
         return (
             "<h2>Dataset Overview</h2>"
+            + note
             + '<div class="table-wrapper">'
             + df.to_html(
                 index=False,
@@ -1374,14 +1362,7 @@ class BaseModelTrainer:
             return ""
 
         split_predictions = self._get_split_predictions_for_report()
-        validation_best_row = None
-        try:
-            if isinstance(self.results, pd.DataFrame) and not self.results.empty:
-                validation_best_row = self.results.iloc[0]
-        except Exception:
-            validation_best_row = None
-
-        if not split_predictions and validation_best_row is None:
+        if not split_predictions:
             return ""
 
         metric_names = [
@@ -1395,17 +1376,6 @@ class BaseModelTrainer:
             "MCC",
         ]
 
-        validation_column_map = {
-            "Accuracy": ["Accuracy"],
-            "ROC-AUC": ["ROC-AUC", "AUC"],
-            "Precision": ["Precision", "Prec.", "Prec"],
-            "Recall": ["Recall"],
-            "F1-Score": ["F1-Score", "F1"],
-            "PR-AUC": ["PR-AUC", "PR-AUC-Weighted", "PRC"],
-            "Specificity": ["Specificity"],
-            "MCC": ["MCC"],
-        }
-
         def _fmt(value):
             if value is None:
                 return "—"
@@ -1418,19 +1388,8 @@ class BaseModelTrainer:
             except Exception:
                 return str(value)
 
-        def _validation_metric(metric_name):
-            if validation_best_row is None:
-                return None
-            cols = validation_column_map.get(metric_name, [])
-            for col in cols:
-                if col in validation_best_row:
-                    try:
-                        return validation_best_row[col]
-                    except Exception:
-                        return None
-            return None
-
         rows = []
+        validation_preds = split_predictions.get("Validation")
         for metric in metric_names:
             row = [metric]
             # Train
@@ -1439,18 +1398,12 @@ class BaseModelTrainer:
             )
             row.append(_fmt(train_val))
 
-            # Validation from the cross-validation summary first row; fallback to computed CV.
-            # PR-AUC is computed from probabilities so it matches the report's PR curve.
-            if metric == "PR-AUC":
-                val_val = self._compute_metric_value(
-                    metric, split_predictions.get("Validation"), "Validation"
-                )
-            else:
-                val_val = _validation_metric(metric)
-                if val_val is None:
-                    val_val = self._compute_metric_value(
-                        metric, split_predictions.get("Validation"), "Validation"
-                    )
+            # Validation is shown only when validation predictions exist. This
+            # avoids mixing selected-model metrics with PyCaret comparison rows
+            # when cross-validation is disabled.
+            val_val = self._compute_metric_value(
+                metric, validation_preds, "Validation"
+            )
             row.append(_fmt(val_val))
 
             # Test
@@ -1470,6 +1423,60 @@ class BaseModelTrainer:
             )
             + "</div>"
         )
+
+    @staticmethod
+    def _prepare_model_comparison_display_df(df, metric_prefix=""):
+        """
+        Prepare PyCaret comparison output for the HTML report.
+
+        This table must remain a direct PyCaret model-comparison table. Do not
+        inject selected-model metrics here; those belong in Best Model
+        Performance, where all split metrics are computed from the same
+        prediction bundles.
+        """
+        display_df = df.copy()
+        display_df.drop(
+            columns=[
+                "TT (Ec)",
+                "TT (Sec)",
+                "PR-AUC",
+                "PR-AUC-Weighted",
+                "PRC",
+            ],
+            errors="ignore",
+            inplace=True,
+        )
+        if metric_prefix:
+            metric_columns = {
+                "Accuracy",
+                "ROC-AUC",
+                "AUC",
+                "Precision",
+                "Prec.",
+                "Prec",
+                "Recall",
+                "F1-Score",
+                "F1",
+                "Kappa",
+                "MCC",
+                "Log Loss",
+                "LogLoss",
+                "MAE",
+                "MSE",
+                "RMSE",
+                "R2",
+                "RMSLE",
+                "MAPE",
+            }
+            display_df.rename(
+                columns={
+                    col: f"{metric_prefix}{col}"
+                    for col in display_df.columns
+                    if col in metric_columns
+                },
+                inplace=True,
+            )
+        return display_df
 
     def _resolve_plot_callable(self, key, fig_or_fn, section):
         """
@@ -1562,15 +1569,20 @@ class BaseModelTrainer:
             elif key in {
                 "Normalize",
                 "Feature Selection",
-                "Cross Validation",
                 "Remove Outliers",
                 "Remove Multicollinearity",
                 "Polynomial Features",
                 "Fix Imbalance",
             }:
                 dv = bool(v)
+            elif key == "Cross Validation":
+                dv = True if v is None else bool(v)
             elif key == "Cross Validation Folds":
-                dv = v if v is not None else "None"
+                cv_enabled = all_params.get("cross_validation")
+                if cv_enabled is False:
+                    dv = "None"
+                else:
+                    dv = v if v is not None else 10
             elif key == "Models":
                 dv = ", ".join(map(str, v)) if isinstance(
                     v, (list, tuple)
@@ -1622,8 +1634,14 @@ class BaseModelTrainer:
         # 5) Header
         header = f"<h2>Best Model: {best_model_name}</h2>"
 
-        # — Validation Summary & Configuration —
-        val_df = self.results.copy()
+        validation_enabled = getattr(self, "cross_validation", None) is not False
+        comparison_metric_prefix = "CV " if validation_enabled else "Comparison "
+
+        # — Model Comparison & Configuration —
+        val_df = self._prepare_model_comparison_display_df(
+            self.results,
+            metric_prefix=comparison_metric_prefix,
+        )
         dataset_overview_html = self._build_dataset_overview()
         performance_summary_html = self._build_performance_summary_table()
         # mapping raw plot keys to user-friendly titles
@@ -1642,20 +1660,23 @@ class BaseModelTrainer:
             "residuals": "Residuals Distribution",
             "error": "Prediction Error Distribution",
         }
-        val_df.drop(
-            columns=["TT (Ec)", "TT (Sec)"], errors="ignore", inplace=True
+        summary_tab_label = "Model Comparison"
+        summary_heading = (
+            "Cross-Validation Model Comparison Across Candidate Models"
+            if validation_enabled
+            else "Model Comparison Across Candidate Models"
         )
         summary_html = (
-            "<h2>Cross-Validation Validation Summary Across Candidate Models</h2>"
+            f"<h2>{summary_heading}</h2>"
             + '<div class="table-wrapper">'
             + val_df.to_html(index=False, classes="table sortable")
             + "</div>"
         )
 
         if self.tuning_results is not None:
-            tuning_df = self.tuning_results.copy()
-            tuning_df.drop(
-                columns=["TT (Sec)"], errors="ignore", inplace=True
+            tuning_df = self._prepare_model_comparison_display_df(
+                self.tuning_results,
+                metric_prefix=comparison_metric_prefix,
             )
             summary_html += (
                 f"<h2>{best_model_name}: Tuning Summary</h2>"
@@ -1938,6 +1959,7 @@ class BaseModelTrainer:
             feature_html,
             explainer_html=None,
             config_html=config_html,
+            summary_tab_label=summary_tab_label,
         )
         html += get_feature_metrics_help_modal()
         html += get_html_closing()

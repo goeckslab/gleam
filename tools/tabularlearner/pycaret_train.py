@@ -159,8 +159,11 @@ def main():
     # Normalize cross-validation flags: --no_cross_validation overrides --cross_validation
     if args.no_cross_validation:
         args.cross_validation = False
-    # If --cross_validation was passed, args.cross_validation is True
-    # If neither was passed, args.cross_validation remains None
+    elif args.cross_validation is None:
+        args.cross_validation = True
+
+    if args.cross_validation and args.cross_validation_folds is None:
+        args.cross_validation_folds = 10
 
     # Build the model_kwargs dict from CLI args
     model_kwargs = {
