@@ -1435,6 +1435,19 @@ class BaseModelTrainer:
             rows.append(row)
 
         df = pd.DataFrame(rows, columns=columns)
+        note = (
+            "Note: Train and Test metrics are computed by scoring the selected "
+            "best model on the training/CV pool and held-out test set. "
+            "Validation metrics are computed from pooled out-of-fold "
+            "predictions for the selected best model. These values can differ "
+            "from PyCaret's candidate-model table, which reports internal "
+            "fold-summary metrics used for ranking."
+            if validation_enabled
+            else "Note: Train and Test metrics are computed by scoring the "
+            "selected best model on the training and held-out test data. No "
+            "final Validation column is shown because cross-validation is "
+            "disabled."
+        )
         return (
             "<h2>Best Model Performance</h2>"
             + '<div class="table-wrapper">'
@@ -1443,6 +1456,7 @@ class BaseModelTrainer:
                 classes=["table", "sortable", "table-perf-summary"],
             )
             + "</div>"
+            + f"<p class='report-footnote'>{note}</p>"
         )
 
     @staticmethod
