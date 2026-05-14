@@ -75,8 +75,8 @@
                 </param>
                 <when value="yes">
                     <param name="test_file" type="data" format="csv,tabular" label="Test dataset"
-                           help="If a test dataset is provided, the input dataset will be split into training and validation sets only.
-                                 If not, the tool will split your input into training, validation, and test automatically." />
+                           help="If a test dataset is provided, the training dataset is used as the training/CV pool and the test dataset is used for final test metrics.
+                                 If no test dataset is provided, Train Size controls the train/test split. When cross-validation is enabled, validation metrics use out-of-fold predictions from the training/CV pool." />
                 </when>
                 <when value="no">
                     <!-- Nothing extra shown -->
@@ -180,15 +180,15 @@
             <param name="normalize" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Normalize Data" help="Whether to normalize data before training." />
             <param name="feature_selection" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Feature Selection" help="Whether to perform feature selection." />
             <conditional name="cross_validation">
-                <param name="enable_cross_validation" type="select" value="true" label="Enable Cross Validation?" help="Select whether to enable cross-validation." >
-                    <option value="true" selected="true">Yes</option>
+                <param name="enable_cross_validation" type="select" value="true" label="Enable Cross Validation?" help="Enabled by default. When enabled, PyCaret ranks candidate models with cross-validation and the report shows final Validation metrics from out-of-fold predictions. Select No to use PyCaret holdout ranking and omit the final Validation column." >
+                    <option value="true" selected="true">Yes (default)</option>
                     <option value="false">No</option>
                 </param>
                 <when value="false">
                     <!-- No additional parameters to show if the user selects 'No' -->
                 </when>
                 <when value="true">
-                    <param name="cross_validation_folds" type="integer" value="10" min="2" max="20" label="Cross Validation Folds" help="Number of folds to use for cross-validation." />
+                    <param name="cross_validation_folds" type="integer" value="10" min="2" max="20" label="Cross Validation Folds" help="Number of folds to use for cross-validation. Default is 10." />
                 </when>
             </conditional>
             <param name="remove_outliers" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Remove Outliers" help="Whether to remove outliers from the input dataset before training." />
@@ -225,6 +225,8 @@
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                     <has_text text="Best Model Metric" />
+                    <has_text text="Internal Cross-Validation Summary Across Candidate Models" />
+                    <has_text text="Validation metrics use out-of-fold predictions across the training/CV pool" />
                     <has_text text="F1" />
                 </assert_contents>
             </output>
@@ -248,6 +250,8 @@
                     <has_text text="Model Comparison" />
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
+                    <has_text text="Internal Holdout Summary Across Candidate Models" />
+                    <has_text text="No final Validation column is shown." />
                 </assert_contents>
             </output>
             <output name="best_model_csv" value="expected_best_model_classification_customized_cross_off.csv" />
@@ -266,6 +270,7 @@
                     <has_text text="Model Comparison" />
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
+                    <has_text text="Internal Holdout Summary Across Candidate Models" />
                 </assert_contents>
             </output>
             <output name="best_model_csv">
@@ -289,6 +294,7 @@
                     <has_text text="Model Comparison" />
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
+                    <has_text text="Internal Holdout Summary Across Candidate Models" />
                 </assert_contents>
             </output>
             <output name="best_model_csv">
@@ -314,6 +320,8 @@
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                     <has_text text="Best Model Metric" />
+                    <has_text text="Internal Holdout Summary Across Candidate Models" />
+                    <has_text text="No final Validation column is shown." />
                     <has_text text="RMSE" />
                 </assert_contents>
             </output>

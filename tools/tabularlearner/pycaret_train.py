@@ -40,8 +40,8 @@ def main():
     parser.add_argument(
         "--cross_validation",
         action="store_true",
-        default=None,
-        help="Enable cross-validation for PyCaret setup",
+        default=True,
+        help="Enable cross-validation for PyCaret setup (default: enabled)",
     )
     parser.add_argument(
         "--no_cross_validation",
@@ -156,11 +156,10 @@ def main():
         except ValueError:
             n_jobs = 1
 
-    # Normalize cross-validation flags: --no_cross_validation overrides --cross_validation
+    # Normalize cross-validation flags: enabled by default, with
+    # --no_cross_validation as the explicit override.
     if args.no_cross_validation:
         args.cross_validation = False
-    elif args.cross_validation is None:
-        args.cross_validation = True
 
     if args.cross_validation and args.cross_validation_folds is None:
         args.cross_validation_folds = 10
