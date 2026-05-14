@@ -1829,26 +1829,44 @@ class BaseModelTrainer:
             if validation_enabled
             else "Internal Holdout Summary Across Candidate Models"
         )
-        model_selection_note = (
-            "Note: The candidate-model table reports PyCaret's internal "
-            "cross-validation metrics used to rank candidate models. Final "
-            "selected-model metrics are reported separately in Best Model "
-            "Performance."
-            if validation_enabled
-            else "Note: Cross-validation was disabled. The candidate-model "
-            "table reports PyCaret's internal holdout metrics used to rank "
-            "candidate models. "
-            "No final Validation column is shown."
-        )
-        tuning_note = (
-            "Note: The tuning table reports PyCaret's tuning output for the "
-            "selected model. It is separate from the final Train, Validation, "
-            "and Test metrics in Best Model Performance."
-            if validation_enabled
-            else "Note: The tuning table reports PyCaret's tuning output for "
-            "the selected model. It is separate from the final Train and Test "
-            "metrics in Best Model Performance."
-        )
+        if self.task_type == "classification":
+            model_selection_note = (
+                "Note: The candidate-model table reports PyCaret's internal "
+                "cross-validation metrics used to rank candidate models. Final "
+                "selected-model metrics are reported separately in Best Model "
+                "Performance."
+                if validation_enabled
+                else "Note: Cross-validation was disabled. The candidate-model "
+                "table reports PyCaret's internal holdout metrics used to rank "
+                "candidate models. "
+                "No final Validation column is shown."
+            )
+            tuning_note = (
+                "Note: The tuning table reports PyCaret's tuning output for the "
+                "selected model. It is separate from the final Train, Validation, "
+                "and Test metrics in Best Model Performance."
+                if validation_enabled
+                else "Note: The tuning table reports PyCaret's tuning output for "
+                "the selected model. It is separate from the final Train and Test "
+                "metrics in Best Model Performance."
+            )
+        else:
+            model_selection_note = (
+                "Note: The candidate-model table reports PyCaret's internal "
+                "cross-validation metrics used to rank candidate models. Final "
+                "selected-model holdout metrics are reported separately in Test "
+                "Summary."
+                if validation_enabled
+                else "Note: Cross-validation was disabled. The candidate-model "
+                "table reports PyCaret's internal holdout metrics used to rank "
+                "candidate models. Final selected-model holdout metrics are "
+                "reported separately in Test Summary."
+            )
+            tuning_note = (
+                "Note: The tuning table reports PyCaret's tuning output for the "
+                "selected model. It is separate from the final selected-model "
+                "holdout metrics in Test Summary."
+            )
         summary_html = (
             cv_fold_allocation_html
             + f"<h2>{summary_heading}</h2>"
