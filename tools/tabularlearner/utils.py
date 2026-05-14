@@ -74,6 +74,10 @@ def get_html_template() -> str:
           .table-perf-summary th:nth-child(n+2) {
               text-align: center;
           }
+          .table-cv-fold-allocation td,
+          .table-cv-fold-allocation th {
+              text-align: center;
+          }
           .table-setup-params td:nth-child(2),
           .table-setup-params th:nth-child(2) {
               text-align: center;

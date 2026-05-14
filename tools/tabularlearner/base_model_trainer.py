@@ -802,10 +802,10 @@ class BaseModelTrainer:
         df.sort_values("Label", inplace=True)
 
         note = (
-            "<p class='report-footnote'>Note: Validation metrics use "
-            "out-of-fold predictions across the training/CV pool, so Dataset "
-            "Overview shows the pool instead of a separate fixed validation "
-            "count.</p>"
+            "<p class='report-footnote'>Note: Because cross-validation "
+            "iteratively splits the training data into training and validation "
+            "folds, &ldquo;Training / CV Pool&rdquo; refers to one shared "
+            "dataset rather than separate fixed partitions.</p>"
             if validation_enabled
             else ""
         )
@@ -1096,9 +1096,7 @@ class BaseModelTrainer:
 
         df = pd.DataFrame(rows)
         note = (
-            "Note: Fold sizes are derived from the same cross-validation splitter "
-            "used for model selection and final out-of-fold validation metrics. "
-            "Sizes can differ by one sample, and group-aware folds can vary more "
+            "Note: Sizes can differ by one sample, and group-aware folds can vary more "
             "because rows with the same sample ID stay together."
         )
         return (
@@ -1564,19 +1562,6 @@ class BaseModelTrainer:
             rows.append(row)
 
         df = pd.DataFrame(rows, columns=columns)
-        note = (
-            "Note: Train and Test metrics are computed by scoring the selected "
-            "best model on the training/CV pool and held-out test set. "
-            "Validation metrics are computed from pooled out-of-fold "
-            "predictions for the selected best model. These values can differ "
-            "from PyCaret's candidate-model table, which reports internal "
-            "fold-summary metrics used for ranking."
-            if validation_enabled
-            else "Note: Train and Test metrics are computed by scoring the "
-            "selected best model on the training and held-out test data. No "
-            "final Validation column is shown because cross-validation is "
-            "disabled."
-        )
         return (
             "<h2>Best Model Performance</h2>"
             + '<div class="table-wrapper">'
@@ -1585,7 +1570,6 @@ class BaseModelTrainer:
                 classes=["table", "sortable", "table-perf-summary"],
             )
             + "</div>"
-            + f"<p class='report-footnote'>{note}</p>"
         )
 
     @staticmethod
@@ -1835,10 +1819,9 @@ class BaseModelTrainer:
         )
         if self.task_type == "classification":
             model_selection_note = (
-                "Note: The candidate-model table reports PyCaret's internal "
-                "cross-validation metrics used to rank candidate models. Final "
-                "selected-model metrics are reported separately in Best Model "
-                "Performance."
+                "Note: This table reports PyCaret's internal cross-validation "
+                "metrics used to rank candidate models. These values can "
+                "slightly differ from Best Model Performance table."
                 if validation_enabled
                 else "Note: Cross-validation was disabled. The candidate-model "
                 "table reports PyCaret's internal holdout metrics used to rank "
