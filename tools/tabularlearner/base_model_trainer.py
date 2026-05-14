@@ -1561,6 +1561,13 @@ class BaseModelTrainer:
             rows.append(row)
 
         df = pd.DataFrame(rows, columns=columns)
+        note = (
+            "Note: Train and Test metrics are computed by scoring the selected "
+            "best model on the training/CV pool and held-out test set. These "
+            "values can differ from PyCaret's candidate-model table."
+            if validation_enabled
+            else ""
+        )
         return (
             "<h2>Best Model Performance</h2>"
             + '<div class="table-wrapper">'
@@ -1569,6 +1576,7 @@ class BaseModelTrainer:
                 classes=["table", "sortable", "table-perf-summary"],
             )
             + "</div>"
+            + (f"<p class='report-footnote'>{note}</p>" if note else "")
         )
 
     @staticmethod
