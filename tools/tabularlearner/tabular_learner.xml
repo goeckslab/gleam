@@ -228,7 +228,7 @@
                     <has_text text="Cross-Validation Fold Allocation" />
                     <has_text text="Validation Samples" />
                     <has_text text="Internal Cross-Validation Summary Across Candidate Models" />
-                    <has_text text="Because cross-validation iteratively splits the training data into training and validation folds" />
+                    <has_text text="The Training / CV Pool column shows the total samples used for training and validation" />
                     <has_text text="These values can slightly differ from Best Model Performance table." />
                     <has_text text="F1" />
                 </assert_contents>

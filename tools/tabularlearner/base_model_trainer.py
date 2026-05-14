@@ -802,10 +802,9 @@ class BaseModelTrainer:
         df.sort_values("Label", inplace=True)
 
         note = (
-            "<p class='report-footnote'>Note: Because cross-validation "
-            "iteratively splits the training data into training and validation "
-            "folds, &ldquo;Training / CV Pool&rdquo; refers to one shared "
-            "dataset rather than separate fixed partitions.</p>"
+            "<p class='report-footnote'>Note: The Training / CV Pool column "
+            "shows the total samples used for training and validation rather "
+            "than separate fixed train and validation count columns.</p>"
             if validation_enabled
             else ""
         )
