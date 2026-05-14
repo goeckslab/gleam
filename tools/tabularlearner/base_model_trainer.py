@@ -1715,10 +1715,13 @@ class BaseModelTrainer:
             "Remove Outliers",
             "Remove Multicollinearity",
             "Polynomial Features",
-            "Fix Imbalance",
             "Models",
-            "Probability Threshold",
         ]
+        if self.task_type == "classification":
+            display_keys.extend([
+                "Fix Imbalance",
+                "Probability Threshold",
+            ])
         setup_rows = []
         for key in display_keys:
             pk = key.lower().replace(" ", "_")
@@ -1820,6 +1823,7 @@ class BaseModelTrainer:
             "class_report": "Per-Class Metrics",
             "pr_auc": "Precision-Recall Curve",
             "roc_auc": "Receiver Operating Characteristic AUC",
+            "predicted_vs_actual": "Predicted vs Actual",
             "residuals": "Residuals Distribution",
             "error": "Prediction Error Distribution",
         }
@@ -1922,7 +1926,7 @@ class BaseModelTrainer:
                 "percentage_above_below",
             ]
         else:
-            summary_plots = ["learning", "vc", "parameter", "residuals"]
+            summary_plots = ["learning", "vc", "parameter"]
 
         for name in summary_plots:
             fig_or_fn = self.explainer_plots.pop(name, None)
@@ -1977,6 +1981,7 @@ class BaseModelTrainer:
                     )
                 ).rename("Predicted")
                 df_tp = pd.concat([y_true, y_pred], axis=1)
+                df_tp["Residual"] = df_tp["True"] - df_tp["Predicted"]
                 test_html += "<h2>True vs Predicted Values</h2>"
                 test_html += (
                     '<div class="table-wrapper" '
@@ -1994,7 +1999,7 @@ class BaseModelTrainer:
 
         # 5a) Explainer-substituted plots in order
         if self.task_type == "regression":
-            test_order = ["residuals"]
+            test_order = ["predicted_vs_actual", "residuals"]
         else:
             test_order = [
                 "confusion_matrix",
@@ -2049,10 +2054,12 @@ class BaseModelTrainer:
             # regression: explicitly include the 'error' plot,
             # before skipping
             if self.task_type == "regression" and (
-                name == "error"
+                name in {"error", "residuals"}
             ):
+                if name in rendered_test_plots:
+                    continue
                 title = plot_title_map.get(
-                    "error", "Prediction Error Distribution"
+                    name, name.replace("_", " ").title()
                 )
                 b64 = encode_image_to_base64(path)
                 test_html += (

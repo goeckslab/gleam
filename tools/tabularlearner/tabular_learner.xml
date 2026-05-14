@@ -327,6 +327,8 @@
                     <has_text text="Best Model Metric" />
                     <has_text text="Internal Holdout Summary Across Candidate Models" />
                     <has_text text="Final selected-model holdout metrics are reported separately in Test Summary." />
+                    <has_text text="True vs Predicted Values" />
+                    <has_text text="Residual" />
                     <has_text text="RMSE" />
                 </assert_contents>
             </output>
