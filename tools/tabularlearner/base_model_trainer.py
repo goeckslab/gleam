@@ -1013,6 +1013,18 @@ class BaseModelTrainer:
         if len(X_df) != len(y_series):
             X_df = X_df.iloc[: len(y_series)].reset_index(drop=True)
 
+        cv_groups = getattr(self, "sample_id_series", None)
+        if cv_groups is not None:
+            cv_groups = pd.Series(cv_groups).reset_index(drop=True)
+            if len(cv_groups) != len(y_series):
+                LOG.warning(
+                    "Skipping group labels for validation metrics because "
+                    "group count (%s) does not match training rows (%s).",
+                    len(cv_groups),
+                    len(y_series),
+                )
+                cv_groups = None
+
         classes = list(getattr(self.best_model, "classes_", []))
         if len(classes) > 1:
             try:
@@ -1033,6 +1045,9 @@ class BaseModelTrainer:
 
         prob_thresh = getattr(self, "probability_threshold", None)
         n_jobs = getattr(self, "n_jobs", None)
+        cv_predict_kwargs = {"cv": cv_gen, "method": "predict_proba", "n_jobs": n_jobs}
+        if cv_groups is not None:
+            cv_predict_kwargs["groups"] = cv_groups
 
         y_scores = None
         try:
@@ -1040,9 +1055,7 @@ class BaseModelTrainer:
                 self.best_model,
                 X_df,
                 y_series,
-                cv=cv_gen,
-                method="predict_proba",
-                n_jobs=n_jobs,
+                **cv_predict_kwargs,
             )
             y_scores = np.asarray(proba)
         except Exception as exc:
@@ -1068,13 +1081,12 @@ class BaseModelTrainer:
             y_scores = y_scores[:, pos_idx]
         else:
             try:
+                cv_predict_kwargs["method"] = "predict"
                 y_pred = cross_val_predict(
                     self.best_model,
                     X_df,
                     y_series,
-                    cv=cv_gen,
-                    method="predict",
-                    n_jobs=n_jobs,
+                    **cv_predict_kwargs,
                 )
             except Exception as exc:
                 LOG.warning(
