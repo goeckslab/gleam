@@ -225,6 +225,8 @@
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                     <has_text text="Best Model Metric" />
+                    <has_text text="Cross-Validation Fold Allocation" />
+                    <has_text text="Validation Samples" />
                     <has_text text="Internal Cross-Validation Summary Across Candidate Models" />
                     <has_text text="Validation metrics use out-of-fold predictions across the training/CV pool" />
                     <has_text text="Validation metrics are computed from pooled out-of-fold predictions for the selected best model" />

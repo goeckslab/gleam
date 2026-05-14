@@ -927,9 +927,6 @@ class BaseModelTrainer:
         Build a cross-validation splitter that mirrors the experiment's
         configuration. Returns None when CV is disabled or not applicable.
         """
-        if self.task_type != "classification":
-            return None
-
         if getattr(self, "cross_validation", None) is False:
             return None
 
@@ -982,6 +979,138 @@ class BaseModelTrainer:
         except Exception as exc:
             LOG.warning("Could not build CV generator: %s", exc)
             return None
+
+    def _build_cv_fold_allocation_table(self):
+        """
+        Build an HTML table showing the train/validation sample allocation for
+        each cross-validation fold. This makes the fold sizes visible before
+        the PyCaret candidate-model summary.
+        """
+        if getattr(self, "cross_validation", None) is False:
+            return ""
+
+        def _get_from_config(keys):
+            for key in keys:
+                try:
+                    val = self.exp.get_config(key)
+                except Exception:
+                    val = getattr(self.exp, key, None)
+                if val is not None:
+                    return val
+            return None
+
+        X_train = _get_from_config(["X_train_transformed", "X_train"])
+        y_split = _get_from_config(["y_train_transformed", "y_train"])
+        y_display = _get_from_config(["y_train", "y_train_transformed"])
+        if X_train is None or y_split is None:
+            return ""
+
+        X_df = pd.DataFrame(X_train).reset_index(drop=True)
+        y_split_series = pd.Series(y_split).reset_index(drop=True)
+        y_display_series = pd.Series(
+            y_display if y_display is not None else y_split
+        ).reset_index(drop=True)
+        if (
+            X_df.empty
+            or y_split_series.empty
+            or len(X_df) != len(y_split_series)
+            or len(y_display_series) != len(y_split_series)
+        ):
+            LOG.warning(
+                "Skipping CV fold allocation table because training data and labels "
+                "could not be aligned."
+            )
+            return ""
+
+        cv_gen = self._get_cv_generator(y_split_series)
+        if cv_gen is None:
+            return ""
+
+        cv_groups = getattr(self, "sample_id_series", None)
+        if cv_groups is not None:
+            cv_groups = pd.Series(cv_groups).reset_index(drop=True)
+            if len(cv_groups) != len(y_split_series):
+                LOG.warning(
+                    "Skipping group counts in CV fold allocation table because "
+                    "group count (%s) does not match training rows (%s).",
+                    len(cv_groups),
+                    len(y_split_series),
+                )
+                cv_groups = None
+
+        try:
+            splits = list(cv_gen.split(X_df, y_split_series, groups=cv_groups))
+        except TypeError:
+            try:
+                splits = list(cv_gen.split(X_df, y_split_series))
+            except Exception as exc:
+                LOG.warning("Could not build CV fold allocation table: %s", exc)
+                return ""
+        except Exception as exc:
+            LOG.warning("Could not build CV fold allocation table: %s", exc)
+            return ""
+
+        if not splits:
+            return ""
+
+        rows = []
+        label_values = []
+        if self.task_type == "classification":
+            y_display_series = self._decode_class_labels_for_display(y_display_series)
+            label_values = pd.unique(y_display_series)
+            try:
+                label_values = sorted(label_values, key=lambda item: str(item))
+            except Exception:
+                label_values = list(label_values)
+
+        def _format_label_counts(indices):
+            if self.task_type != "classification":
+                return None
+            series = pd.Series(y_display_series).iloc[list(indices)].reset_index(drop=True)
+            parts = []
+            for label in label_values:
+                if pd.isna(label):
+                    count = int(series.isna().sum())
+                    label_text = "NaN"
+                else:
+                    count = int((series == label).sum())
+                    label_text = str(label)
+                parts.append(f"{label_text}: {count}")
+            return ", ".join(parts)
+
+        for fold_num, (train_idx, validation_idx) in enumerate(splits, start=1):
+            row = {
+                "Fold": fold_num,
+                "Train Samples": len(train_idx),
+                "Validation Samples": len(validation_idx),
+            }
+            if cv_groups is not None:
+                row["Train Groups"] = int(pd.Series(cv_groups).iloc[list(train_idx)].nunique(dropna=False))
+                row["Validation Groups"] = int(
+                    pd.Series(cv_groups).iloc[list(validation_idx)].nunique(dropna=False)
+                )
+            if self.task_type == "classification":
+                row["Train Label Counts"] = _format_label_counts(train_idx)
+                row["Validation Label Counts"] = _format_label_counts(validation_idx)
+            rows.append(row)
+
+        df = pd.DataFrame(rows)
+        note = (
+            "Note: Fold sizes are derived from the same cross-validation splitter "
+            "used for model selection and final out-of-fold validation metrics. "
+            "Sizes can differ by one sample, and group-aware folds can vary more "
+            "because rows with the same sample ID stay together."
+        )
+        return (
+            "<h2>Cross-Validation Fold Allocation</h2>"
+            + '<div class="table-wrapper">'
+            + df.to_html(
+                index=False,
+                classes=["table", "sortable", "table-cv-fold-allocation"],
+            )
+            + "</div>"
+            + f"<p class='report-footnote'>{note}</p>"
+        )
 
     def _get_cross_validated_predictions(self, X, y):
         """
@@ -1677,6 +1806,7 @@ class BaseModelTrainer:
         )
         dataset_overview_html = self._build_dataset_overview()
         performance_summary_html = self._build_performance_summary_table()
+        cv_fold_allocation_html = self._build_cv_fold_allocation_table()
         # mapping raw plot keys to user-friendly titles
         plot_title_map = {
             "learning": "Learning Curve",
@@ -1720,7 +1850,8 @@ class BaseModelTrainer:
             "metrics in Best Model Performance."
         )
         summary_html = (
-            f"<h2>{summary_heading}</h2>"
+            cv_fold_allocation_html
+            + f"<h2>{summary_heading}</h2>"
             + '<div class="table-wrapper">'
             + val_df.to_html(index=False, classes="table sortable")
             + "</div>"
