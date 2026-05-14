@@ -1093,7 +1093,18 @@ class BaseModelTrainer:
                 row["Validation Label Counts"] = _format_label_counts(validation_idx)
             rows.append(row)
 
+        column_order = ["Fold", "Train Samples"]
+        if self.task_type == "classification":
+            column_order.append("Train Label Counts")
+        column_order.append("Validation Samples")
+        if self.task_type == "classification":
+            column_order.append("Validation Label Counts")
+        if cv_groups is not None:
+            column_order.append("Train Groups")
+            column_order.append("Validation Groups")
+
         df = pd.DataFrame(rows)
+        df = df[[column for column in column_order if column in df.columns]]
         note = (
             "Note: Sizes can differ by one sample, and group-aware folds can vary more "
             "because rows with the same sample ID stay together."
