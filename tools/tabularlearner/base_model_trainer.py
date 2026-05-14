@@ -1684,11 +1684,21 @@ class BaseModelTrainer:
             "candidate models. "
             "No final Validation column is shown."
         )
+        tuning_note = (
+            "Note: The tuning table reports PyCaret's tuning output for the "
+            "selected model. It is separate from the final Train, Validation, "
+            "and Test metrics in Best Model Performance."
+            if validation_enabled
+            else "Note: The tuning table reports PyCaret's tuning output for "
+            "the selected model. It is separate from the final Train and Test "
+            "metrics in Best Model Performance."
+        )
         summary_html = (
             f"<h2>{summary_heading}</h2>"
             + '<div class="table-wrapper">'
             + val_df.to_html(index=False, classes="table sortable")
             + "</div>"
+            + f"<p class='report-footnote'>{model_selection_note}</p>"
         )
 
         if self.tuning_results is not None:
@@ -1700,9 +1710,8 @@ class BaseModelTrainer:
                 + '<div class="table-wrapper">'
                 + tuning_df.to_html(index=False, classes="table sortable")
                 + "</div>"
+                + f"<p class='report-footnote'>{tuning_note}</p>"
             )
-
-        summary_html += f"<p class='report-footnote'>{model_selection_note}</p>"
 
         config_html = (
             header

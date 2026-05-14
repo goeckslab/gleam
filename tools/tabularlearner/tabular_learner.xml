@@ -271,6 +271,7 @@
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                     <has_text text="Internal Holdout Summary Across Candidate Models" />
+                    <has_text text="The tuning table reports PyCaret's tuning output for the selected model" />
                 </assert_contents>
             </output>
             <output name="best_model_csv">
