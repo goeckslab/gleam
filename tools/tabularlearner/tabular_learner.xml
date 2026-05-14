@@ -221,7 +221,7 @@
             <output name="model" file="expected_model_classification_customized.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
-                    <has_text text="Model Comparison" />
+                    <has_text text="Validation Summary" />
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                     <has_text text="Best Model Metric" />
@@ -250,7 +250,7 @@
             <output name="model" file="expected_model_classification_customized_cross_off.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
-                    <has_text text="Model Comparison" />
+                    <has_text text="Validation Summary" />
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                     <has_text text="Internal Holdout Summary Across Candidate Models" />
@@ -271,7 +271,7 @@
             <output name="model" file="expected_model_classification.h5" compare="sim_size"/>
             <output name="comparison_result"> 
                 <assert_contents>
-                    <has_text text="Model Comparison" />
+                    <has_text text="Validation Summary" />
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                     <has_text text="Internal Holdout Summary Across Candidate Models" />
@@ -296,7 +296,7 @@
             <output name="model" file="expected_model_classification.h5" compare="sim_size"/>
             <output name="comparison_result"> 
                 <assert_contents>
-                    <has_text text="Model Comparison" />
+                    <has_text text="Validation Summary" />
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                     <has_text text="Internal Holdout Summary Across Candidate Models" />
@@ -321,7 +321,7 @@
             <output name="model" file="expected_model_regression.h5" compare="sim_size" />
             <output name="comparison_result">
                 <assert_contents>
-                    <has_text text="Model Comparison" />
+                    <has_text text="Validation Summary" />
                     <has_text text="Test Summary" />
                     <has_text text="Feature Importance" />
                     <has_text text="Best Model Metric" />

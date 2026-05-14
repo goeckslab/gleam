@@ -1823,7 +1823,7 @@ class BaseModelTrainer:
             "residuals": "Residuals Distribution",
             "error": "Prediction Error Distribution",
         }
-        summary_tab_label = "Model Comparison"
+        summary_tab_label = "Validation Summary"
         summary_heading = (
             "Internal Cross-Validation Summary Across Candidate Models"
             if validation_enabled
