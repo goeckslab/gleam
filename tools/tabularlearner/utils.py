@@ -86,6 +86,12 @@ def get_html_template() -> str:
           .table-fi-scope th:nth-child(2) {
               text-align: center;
           }
+          .report-footnote {
+              margin: -0.5rem 0 1rem;
+              color: #666;
+              font-size: 0.88rem;
+              line-height: 1.35;
+          }
 
           .plot {
               text-align: center;

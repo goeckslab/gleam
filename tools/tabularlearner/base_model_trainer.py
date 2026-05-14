@@ -802,20 +802,22 @@ class BaseModelTrainer:
         df.sort_values("Label", inplace=True)
 
         note = (
-            "<p><em>Validation metrics use out-of-fold predictions across the "
-            "training/CV pool.</em></p>"
+            "<p class='report-footnote'>Note: Validation metrics use "
+            "out-of-fold predictions across the training/CV pool, so Dataset "
+            "Overview shows the pool instead of a separate fixed validation "
+            "count.</p>"
             if validation_enabled
             else ""
         )
         return (
             "<h2>Dataset Overview</h2>"
-            + note
             + '<div class="table-wrapper">'
             + df.to_html(
                 index=False,
                 classes=["table", "sortable", "table-dataset-overview"],
             )
             + "</div>"
+            + note
         )
 
     def _predict_with_thresholds(self, X, y_true):
@@ -1388,6 +1390,12 @@ class BaseModelTrainer:
             except Exception:
                 return str(value)
 
+        validation_enabled = getattr(self, "cross_validation", None) is not False
+        columns = ["Metric", "Train"]
+        if validation_enabled:
+            columns.append("Validation")
+        columns.append("Test")
+
         rows = []
         validation_preds = split_predictions.get("Validation")
         for metric in metric_names:
@@ -1398,13 +1406,14 @@ class BaseModelTrainer:
             )
             row.append(_fmt(train_val))
 
-            # Validation is shown only when validation predictions exist. This
-            # avoids mixing selected-model metrics with PyCaret comparison rows
-            # when cross-validation is disabled.
-            val_val = self._compute_metric_value(
-                metric, validation_preds, "Validation"
-            )
-            row.append(_fmt(val_val))
+            # Validation belongs only to final evaluation when user-facing
+            # cross-validation is enabled. PyCaret model-selection metrics are
+            # reported separately in the Model Comparison tab.
+            if validation_enabled:
+                val_val = self._compute_metric_value(
+                    metric, validation_preds, "Validation"
+                )
+                row.append(_fmt(val_val))
 
             # Test
             test_val = self._compute_metric_value(
@@ -1413,7 +1422,7 @@ class BaseModelTrainer:
             row.append(_fmt(test_val))
             rows.append(row)
 
-        df = pd.DataFrame(rows, columns=["Metric", "Train", "Validation", "Test"])
+        df = pd.DataFrame(rows, columns=columns)
         return (
             "<h2>Best Model Performance</h2>"
             + '<div class="table-wrapper">'
@@ -1635,12 +1644,10 @@ class BaseModelTrainer:
         header = f"<h2>Best Model: {best_model_name}</h2>"
 
         validation_enabled = getattr(self, "cross_validation", None) is not False
-        comparison_metric_prefix = "CV " if validation_enabled else "Comparison "
 
         # — Model Comparison & Configuration —
         val_df = self._prepare_model_comparison_display_df(
             self.results,
-            metric_prefix=comparison_metric_prefix,
         )
         dataset_overview_html = self._build_dataset_overview()
         performance_summary_html = self._build_performance_summary_table()
@@ -1662,9 +1669,20 @@ class BaseModelTrainer:
         }
         summary_tab_label = "Model Comparison"
         summary_heading = (
-            "Cross-Validation Model Comparison Across Candidate Models"
+            "Internal Cross-Validation Summary Across Candidate Models"
             if validation_enabled
-            else "Model Comparison Across Candidate Models"
+            else "Internal Holdout Summary Across Candidate Models"
+        )
+        model_selection_note = (
+            "Note: The candidate-model table reports PyCaret's internal "
+            "cross-validation metrics used to rank candidate models. Final "
+            "selected-model metrics are reported separately in Best Model "
+            "Performance."
+            if validation_enabled
+            else "Note: Cross-validation was disabled. The candidate-model "
+            "table reports PyCaret's internal holdout metrics used to rank "
+            "candidate models. "
+            "No final Validation column is shown."
         )
         summary_html = (
             f"<h2>{summary_heading}</h2>"
@@ -1676,7 +1694,6 @@ class BaseModelTrainer:
         if self.tuning_results is not None:
             tuning_df = self._prepare_model_comparison_display_df(
                 self.tuning_results,
-                metric_prefix=comparison_metric_prefix,
             )
             summary_html += (
                 f"<h2>{best_model_name}: Tuning Summary</h2>"
@@ -1684,6 +1701,8 @@ class BaseModelTrainer:
                 + tuning_df.to_html(index=False, classes="table sortable")
                 + "</div>"
             )
+
+        summary_html += f"<p class='report-footnote'>{model_selection_note}</p>"
 
         config_html = (
             header
