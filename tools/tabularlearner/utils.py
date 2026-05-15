@@ -74,6 +74,10 @@ def get_html_template() -> str:
           .table-perf-summary th:nth-child(n+2) {
               text-align: center;
           }
+          .table-cv-fold-allocation td,
+          .table-cv-fold-allocation th {
+              text-align: center;
+          }
           .table-setup-params td:nth-child(2),
           .table-setup-params th:nth-child(2) {
               text-align: center;
@@ -85,6 +89,12 @@ def get_html_template() -> str:
           .table-fi-scope td:nth-child(2),
           .table-fi-scope th:nth-child(2) {
               text-align: center;
+          }
+          .report-footnote {
+              margin: -0.5rem 0 1rem;
+              color: #666;
+              font-size: 0.88rem;
+              line-height: 1.35;
           }
 
           .plot {

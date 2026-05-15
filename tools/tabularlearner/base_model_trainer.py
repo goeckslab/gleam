@@ -802,20 +802,21 @@ class BaseModelTrainer:
         df.sort_values("Label", inplace=True)
 
         note = (
-            "<p><em>Validation metrics use out-of-fold predictions across the "
-            "training/CV pool.</em></p>"
+            "<p class='report-footnote'>Note: The Training / CV Pool column "
+            "shows the total samples used for training and validation rather "
+            "than separate fixed train and validation count columns.</p>"
             if validation_enabled
             else ""
         )
         return (
             "<h2>Dataset Overview</h2>"
-            + note
             + '<div class="table-wrapper">'
             + df.to_html(
                 index=False,
                 classes=["table", "sortable", "table-dataset-overview"],
             )
             + "</div>"
+            + note
         )
 
     def _predict_with_thresholds(self, X, y_true):
@@ -925,9 +926,6 @@ class BaseModelTrainer:
         Build a cross-validation splitter that mirrors the experiment's
         configuration. Returns None when CV is disabled or not applicable.
         """
-        if self.task_type != "classification":
-            return None
-
         if getattr(self, "cross_validation", None) is False:
             return None
 
@@ -981,6 +979,177 @@ class BaseModelTrainer:
             LOG.warning("Could not build CV generator: %s", exc)
             return None
 
+    def _build_cv_fold_allocation_table(self):
+        """
+        Build an HTML table showing the train/validation sample allocation for
+        each cross-validation fold. This makes the fold sizes visible before
+        the PyCaret candidate-model summary.
+        """
+        if getattr(self, "cross_validation", None) is False:
+            return ""
+
+        def _get_from_config(keys):
+            for key in keys:
+                try:
+                    val = self.exp.get_config(key)
+                except Exception:
+                    val = getattr(self.exp, key, None)
+                if val is not None:
+                    return val
+            return None
+
+        # Prefer the original training/CV pool. Transformed training features
+        # can have fewer rows when preprocessing removes samples, for example
+        # with remove_outliers=True, which makes them unsuitable for reporting
+        # the user-visible CV fold allocation.
+        X_train = _get_from_config(["X_train", "X_train_transformed"])
+        y_split = _get_from_config(["y_train", "y_train_transformed"])
+        y_display = _get_from_config(["y_train", "y_train_transformed"])
+        if (
+            y_split is None
+            and self.data is not None
+            and self.target in self.data.columns
+        ):
+            y_split = self.data[self.target]
+            y_display = y_split
+        if y_split is None:
+            return ""
+
+        y_split_series = pd.Series(y_split).reset_index(drop=True)
+        y_display_series = pd.Series(
+            y_display if y_display is not None else y_split
+        ).reset_index(drop=True)
+        if y_split_series.empty:
+            return ""
+
+        if len(y_display_series) != len(y_split_series):
+            LOG.warning(
+                "Using split labels for CV fold allocation display because display "
+                "labels could not be aligned."
+            )
+            y_display_series = y_split_series
+
+        X_df = None
+        if X_train is not None:
+            try:
+                candidate_X = pd.DataFrame(X_train).reset_index(drop=True)
+                if len(candidate_X) == len(y_split_series):
+                    X_df = candidate_X
+            except Exception:
+                X_df = None
+        if (
+            X_df is None
+            and self.data is not None
+            and self.target in self.data.columns
+            and len(self.data) == len(y_split_series)
+        ):
+            X_df = self.data.drop(columns=[self.target]).reset_index(drop=True)
+        if X_df is None:
+            LOG.warning(
+                "Using row indices for CV fold allocation table because training "
+                "features could not be aligned with labels."
+            )
+            X_df = pd.DataFrame({"_row": range(len(y_split_series))})
+
+        cv_gen = self._get_cv_generator(y_split_series)
+        if cv_gen is None:
+            return ""
+
+        cv_groups = getattr(self, "sample_id_series", None)
+        if cv_groups is not None:
+            cv_groups = pd.Series(cv_groups).reset_index(drop=True)
+            if len(cv_groups) != len(y_split_series):
+                LOG.warning(
+                    "Skipping group counts in CV fold allocation table because "
+                    "group count (%s) does not match training rows (%s).",
+                    len(cv_groups),
+                    len(y_split_series),
+                )
+                cv_groups = None
+
+        try:
+            splits = list(cv_gen.split(X_df, y_split_series, groups=cv_groups))
+        except TypeError:
+            try:
+                splits = list(cv_gen.split(X_df, y_split_series))
+            except Exception as exc:
+                LOG.warning("Could not build CV fold allocation table: %s", exc)
+                return ""
+        except Exception as exc:
+            LOG.warning("Could not build CV fold allocation table: %s", exc)
+            return ""
+
+        if not splits:
+            return ""
+
+        rows = []
+        label_values = []
+        if self.task_type == "classification":
+            y_display_series = self._decode_class_labels_for_display(y_display_series)
+            label_values = pd.unique(y_display_series)
+            try:
+                label_values = sorted(label_values, key=lambda item: str(item))
+            except Exception:
+                label_values = list(label_values)
+
+        def _format_label_counts(indices):
+            if self.task_type != "classification":
+                return None
+            series = pd.Series(y_display_series).iloc[list(indices)].reset_index(drop=True)
+            parts = []
+            for label in label_values:
+                if pd.isna(label):
+                    count = int(series.isna().sum())
+                    label_text = "NaN"
+                else:
+                    count = int((series == label).sum())
+                    label_text = str(label)
+                parts.append(f"{label_text}: {count}")
+            return ", ".join(parts)
+
+        for fold_num, (train_idx, validation_idx) in enumerate(splits, start=1):
+            row = {
+                "Fold": fold_num,
+                "Train Samples": len(train_idx),
+                "Validation Samples": len(validation_idx),
+            }
+            if cv_groups is not None:
+                row["Train Groups"] = int(pd.Series(cv_groups).iloc[list(train_idx)].nunique(dropna=False))
+                row["Validation Groups"] = int(
+                    pd.Series(cv_groups).iloc[list(validation_idx)].nunique(dropna=False)
+                )
+            if self.task_type == "classification":
+                row["Train Label Counts"] = _format_label_counts(train_idx)
+                row["Validation Label Counts"] = _format_label_counts(validation_idx)
+            rows.append(row)
+
+        column_order = ["Fold", "Train Samples"]
+        if self.task_type == "classification":
+            column_order.append("Train Label Counts")
+        column_order.append("Validation Samples")
+        if self.task_type == "classification":
+            column_order.append("Validation Label Counts")
+        if cv_groups is not None:
+            column_order.append("Train Groups")
+            column_order.append("Validation Groups")
+
+        df = pd.DataFrame(rows)
+        df = df[[column for column in column_order if column in df.columns]]
+        note = (
+            "Note: Sizes can differ by one sample, and group-aware folds can vary more "
+            "because rows with the same sample ID stay together."
+        )
+        return (
+            "<h2>Cross-Validation Fold Allocation</h2>"
+            + '<div class="table-wrapper">'
+            + df.to_html(
+                index=False,
+                classes=["table", "sortable", "table-cv-fold-allocation"],
+            )
+            + "</div>"
+            + f"<p class='report-footnote'>{note}</p>"
+        )
+
     def _get_cross_validated_predictions(self, X, y):
         """
         Generate cross-validated predictions for the validation split so we
@@ -1011,6 +1180,18 @@ class BaseModelTrainer:
         if len(X_df) != len(y_series):
             X_df = X_df.iloc[: len(y_series)].reset_index(drop=True)
 
+        cv_groups = getattr(self, "sample_id_series", None)
+        if cv_groups is not None:
+            cv_groups = pd.Series(cv_groups).reset_index(drop=True)
+            if len(cv_groups) != len(y_series):
+                LOG.warning(
+                    "Skipping group labels for validation metrics because "
+                    "group count (%s) does not match training rows (%s).",
+                    len(cv_groups),
+                    len(y_series),
+                )
+                cv_groups = None
+
         classes = list(getattr(self.best_model, "classes_", []))
         if len(classes) > 1:
             try:
@@ -1031,6 +1212,9 @@ class BaseModelTrainer:
 
         prob_thresh = getattr(self, "probability_threshold", None)
         n_jobs = getattr(self, "n_jobs", None)
+        cv_predict_kwargs = {"cv": cv_gen, "method": "predict_proba", "n_jobs": n_jobs}
+        if cv_groups is not None:
+            cv_predict_kwargs["groups"] = cv_groups
 
         y_scores = None
         try:
@@ -1038,9 +1222,7 @@ class BaseModelTrainer:
                 self.best_model,
                 X_df,
                 y_series,
-                cv=cv_gen,
-                method="predict_proba",
-                n_jobs=n_jobs,
+                **cv_predict_kwargs,
             )
             y_scores = np.asarray(proba)
         except Exception as exc:
@@ -1066,13 +1248,12 @@ class BaseModelTrainer:
             y_scores = y_scores[:, pos_idx]
         else:
             try:
+                cv_predict_kwargs["method"] = "predict"
                 y_pred = cross_val_predict(
                     self.best_model,
                     X_df,
                     y_series,
-                    cv=cv_gen,
-                    method="predict",
-                    n_jobs=n_jobs,
+                    **cv_predict_kwargs,
                 )
             except Exception as exc:
                 LOG.warning(
@@ -1388,6 +1569,12 @@ class BaseModelTrainer:
             except Exception:
                 return str(value)
 
+        validation_enabled = getattr(self, "cross_validation", None) is not False
+        columns = ["Metric", "Train"]
+        if validation_enabled:
+            columns.append("Validation")
+        columns.append("Test")
+
         rows = []
         validation_preds = split_predictions.get("Validation")
         for metric in metric_names:
@@ -1398,13 +1585,14 @@ class BaseModelTrainer:
             )
             row.append(_fmt(train_val))
 
-            # Validation is shown only when validation predictions exist. This
-            # avoids mixing selected-model metrics with PyCaret comparison rows
-            # when cross-validation is disabled.
-            val_val = self._compute_metric_value(
-                metric, validation_preds, "Validation"
-            )
-            row.append(_fmt(val_val))
+            # Validation belongs only to final evaluation when user-facing
+            # cross-validation is enabled. PyCaret model-selection metrics are
+            # reported separately in the Model Comparison tab.
+            if validation_enabled:
+                val_val = self._compute_metric_value(
+                    metric, validation_preds, "Validation"
+                )
+                row.append(_fmt(val_val))
 
             # Test
             test_val = self._compute_metric_value(
@@ -1413,7 +1601,14 @@ class BaseModelTrainer:
             row.append(_fmt(test_val))
             rows.append(row)
 
-        df = pd.DataFrame(rows, columns=["Metric", "Train", "Validation", "Test"])
+        df = pd.DataFrame(rows, columns=columns)
+        note = (
+            "Note: Train and Test metrics are computed by scoring the selected "
+            "best model on the training/CV pool and held-out test set. These "
+            "values can differ from PyCaret's candidate-model table."
+            if validation_enabled
+            else ""
+        )
         return (
             "<h2>Best Model Performance</h2>"
             + '<div class="table-wrapper">'
@@ -1422,6 +1617,7 @@ class BaseModelTrainer:
                 classes=["table", "sortable", "table-perf-summary"],
             )
             + "</div>"
+            + (f"<p class='report-footnote'>{note}</p>" if note else "")
         )
 
     @staticmethod
@@ -1551,10 +1747,13 @@ class BaseModelTrainer:
             "Remove Outliers",
             "Remove Multicollinearity",
             "Polynomial Features",
-            "Fix Imbalance",
             "Models",
-            "Probability Threshold",
         ]
+        if self.task_type == "classification":
+            display_keys.extend([
+                "Fix Imbalance",
+                "Probability Threshold",
+            ])
         setup_rows = []
         for key in display_keys:
             pk = key.lower().replace(" ", "_")
@@ -1635,15 +1834,14 @@ class BaseModelTrainer:
         header = f"<h2>Best Model: {best_model_name}</h2>"
 
         validation_enabled = getattr(self, "cross_validation", None) is not False
-        comparison_metric_prefix = "CV " if validation_enabled else "Comparison "
 
         # — Model Comparison & Configuration —
         val_df = self._prepare_model_comparison_display_df(
             self.results,
-            metric_prefix=comparison_metric_prefix,
         )
         dataset_overview_html = self._build_dataset_overview()
         performance_summary_html = self._build_performance_summary_table()
+        cv_fold_allocation_html = self._build_cv_fold_allocation_table()
         # mapping raw plot keys to user-friendly titles
         plot_title_map = {
             "learning": "Learning Curve",
@@ -1657,32 +1855,72 @@ class BaseModelTrainer:
             "class_report": "Per-Class Metrics",
             "pr_auc": "Precision-Recall Curve",
             "roc_auc": "Receiver Operating Characteristic AUC",
+            "predicted_vs_actual": "Predicted vs Actual",
             "residuals": "Residuals Distribution",
             "error": "Prediction Error Distribution",
         }
-        summary_tab_label = "Model Comparison"
+        summary_tab_label = "Validation Summary"
         summary_heading = (
-            "Cross-Validation Model Comparison Across Candidate Models"
+            "Internal Cross-Validation Summary Across Candidate Models"
             if validation_enabled
-            else "Model Comparison Across Candidate Models"
+            else "Internal Holdout Summary Across Candidate Models"
         )
+        if self.task_type == "classification":
+            model_selection_note = (
+                "Note: This table reports PyCaret's internal cross-validation "
+                "metrics used to rank candidate models. These values can "
+                "slightly differ from Best Model Performance table."
+                if validation_enabled
+                else "Note: Cross-validation was disabled. The candidate-model "
+                "table reports PyCaret's internal holdout metrics used to rank "
+                "candidate models. "
+                "No final Validation column is shown."
+            )
+            tuning_note = (
+                "Note: The tuning table reports PyCaret's tuning output for the "
+                "selected model. It is separate from the final Train, Validation, "
+                "and Test metrics in Best Model Performance."
+                if validation_enabled
+                else "Note: The tuning table reports PyCaret's tuning output for "
+                "the selected model. It is separate from the final Train and Test "
+                "metrics in Best Model Performance."
+            )
+        else:
+            model_selection_note = (
+                "Note: The candidate-model table reports PyCaret's internal "
+                "cross-validation metrics used to rank candidate models. Final "
+                "selected-model holdout metrics are reported separately in Test "
+                "Summary."
+                if validation_enabled
+                else "Note: Cross-validation was disabled. The candidate-model "
+                "table reports PyCaret's internal holdout metrics used to rank "
+                "candidate models. Final selected-model holdout metrics are "
+                "reported separately in Test Summary."
+            )
+            tuning_note = (
+                "Note: The tuning table reports PyCaret's tuning output for the "
+                "selected model. It is separate from the final selected-model "
+                "holdout metrics in Test Summary."
+            )
         summary_html = (
-            f"<h2>{summary_heading}</h2>"
+            cv_fold_allocation_html
+            + f"<h2>{summary_heading}</h2>"
             + '<div class="table-wrapper">'
             + val_df.to_html(index=False, classes="table sortable")
             + "</div>"
+            + f"<p class='report-footnote'>{model_selection_note}</p>"
         )
 
         if self.tuning_results is not None:
             tuning_df = self._prepare_model_comparison_display_df(
                 self.tuning_results,
-                metric_prefix=comparison_metric_prefix,
             )
             summary_html += (
                 f"<h2>{best_model_name}: Tuning Summary</h2>"
                 + '<div class="table-wrapper">'
                 + tuning_df.to_html(index=False, classes="table sortable")
                 + "</div>"
+                + f"<p class='report-footnote'>{tuning_note}</p>"
             )
 
         config_html = (
@@ -1719,7 +1957,7 @@ class BaseModelTrainer:
                 "percentage_above_below",
             ]
         else:
-            summary_plots = ["learning", "vc", "parameter", "residuals"]
+            summary_plots = ["learning", "vc", "parameter"]
 
         for name in summary_plots:
             fig_or_fn = self.explainer_plots.pop(name, None)
@@ -1774,6 +2012,7 @@ class BaseModelTrainer:
                     )
                 ).rename("Predicted")
                 df_tp = pd.concat([y_true, y_pred], axis=1)
+                df_tp["Residual"] = df_tp["True"] - df_tp["Predicted"]
                 test_html += "<h2>True vs Predicted Values</h2>"
                 test_html += (
                     '<div class="table-wrapper" '
@@ -1791,7 +2030,7 @@ class BaseModelTrainer:
 
         # 5a) Explainer-substituted plots in order
         if self.task_type == "regression":
-            test_order = ["residuals"]
+            test_order = ["predicted_vs_actual", "residuals"]
         else:
             test_order = [
                 "confusion_matrix",
@@ -1846,10 +2085,12 @@ class BaseModelTrainer:
             # regression: explicitly include the 'error' plot,
             # before skipping
             if self.task_type == "regression" and (
-                name == "error"
+                name in {"error", "residuals"}
             ):
+                if name in rendered_test_plots:
+                    continue
                 title = plot_title_map.get(
-                    "error", "Prediction Error Distribution"
+                    name, name.replace("_", " ").title()
                 )
                 b64 = encode_image_to_base64(path)
                 test_html += (
