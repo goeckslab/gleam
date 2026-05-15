@@ -998,28 +998,58 @@ class BaseModelTrainer:
                     return val
             return None
 
-        X_train = _get_from_config(["X_train_transformed", "X_train"])
-        y_split = _get_from_config(["y_train_transformed", "y_train"])
+        # Prefer the original training/CV pool. Transformed training features
+        # can have fewer rows when preprocessing removes samples, for example
+        # with remove_outliers=True, which makes them unsuitable for reporting
+        # the user-visible CV fold allocation.
+        X_train = _get_from_config(["X_train", "X_train_transformed"])
+        y_split = _get_from_config(["y_train", "y_train_transformed"])
         y_display = _get_from_config(["y_train", "y_train_transformed"])
-        if X_train is None or y_split is None:
+        if (
+            y_split is None
+            and self.data is not None
+            and self.target in self.data.columns
+        ):
+            y_split = self.data[self.target]
+            y_display = y_split
+        if y_split is None:
             return ""
 
-        X_df = pd.DataFrame(X_train).reset_index(drop=True)
         y_split_series = pd.Series(y_split).reset_index(drop=True)
         y_display_series = pd.Series(
             y_display if y_display is not None else y_split
         ).reset_index(drop=True)
-        if (
-            X_df.empty
-            or y_split_series.empty
-            or len(X_df) != len(y_split_series)
-            or len(y_display_series) != len(y_split_series)
-        ):
-            LOG.warning(
-                "Skipping CV fold allocation table because training data and labels "
-                "could not be aligned."
-            )
+        if y_split_series.empty:
             return ""
+
+        if len(y_display_series) != len(y_split_series):
+            LOG.warning(
+                "Using split labels for CV fold allocation display because display "
+                "labels could not be aligned."
+            )
+            y_display_series = y_split_series
+
+        X_df = None
+        if X_train is not None:
+            try:
+                candidate_X = pd.DataFrame(X_train).reset_index(drop=True)
+                if len(candidate_X) == len(y_split_series):
+                    X_df = candidate_X
+            except Exception:
+                X_df = None
+        if (
+            X_df is None
+            and self.data is not None
+            and self.target in self.data.columns
+            and len(self.data) == len(y_split_series)
+        ):
+            X_df = self.data.drop(columns=[self.target]).reset_index(drop=True)
+        if X_df is None:
+            LOG.warning(
+                "Using row indices for CV fold allocation table because training "
+                "features could not be aligned with labels."
+            )
+            X_df = pd.DataFrame({"_row": range(len(y_split_series))})
 
         cv_gen = self._get_cv_generator(y_split_series)
         if cv_gen is None:
