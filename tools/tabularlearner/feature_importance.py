@@ -5,6 +5,7 @@ import os
 import matplotlib.pyplot as plt
 import pandas as pd
 import shap
+from explainability_limits import limit_explainability_data
 from pycaret.classification import ClassificationExperiment
 from pycaret.regression import RegressionExperiment
 
@@ -25,6 +26,7 @@ class FeatureImportanceAnalyzer:
         max_plot_features=None,
         processed_data=None,
         max_shap_rows=None,
+        polynomial_features=False,
     ):
         self.task_type = task_type
         self.output_dir = output_dir
@@ -33,6 +35,9 @@ class FeatureImportanceAnalyzer:
         self._skip_messages = []
         self.shap_total_features = None
         self.shap_used_features = None
+        self.shap_total_rows = None
+        self.shap_used_rows = None
+        self.shap_scope = None
         if isinstance(max_plot_features, int) and max_plot_features > 0:
             self.max_plot_features = max_plot_features
         elif max_plot_features is None:
@@ -65,6 +70,7 @@ class FeatureImportanceAnalyzer:
 
         self.plots = {}
         self.max_shap_rows = max_shap_rows
+        self.polynomial_features = bool(polynomial_features)
 
     def _get_feature_names_from_model(self, model):
         """Best-effort extraction of feature names seen by the estimator."""
@@ -198,78 +204,29 @@ class FeatureImportanceAnalyzer:
         if X_data is None:
             raise RuntimeError("No transformed dataset found for SHAP.")
 
-        n_rows, n_features = X_data.shape
-        self.shap_total_features = n_features
-        feature_cap = (
-            min(self.max_plot_features, n_features)
-            if self.max_plot_features is not None
-            else n_features
-        )
-        if max_features is None:
-            max_features = feature_cap
-        else:
-            max_features = min(max_features, feature_cap)
-        display_features = list(X_data.columns)
-
-        try:
-            if hasattr(model, "feature_importances_"):
-                importances = pd.Series(
-                    model.feature_importances_, index=X_data.columns
-                )
-                top_features = importances.nlargest(max_features).index
-            elif hasattr(model, "coef_"):
-                coef = abs(model.coef_).flatten()
-                importances = pd.Series(coef, index=X_data.columns)
-                top_features = importances.nlargest(max_features).index
-            else:
-                variances = X_data.var()
-                top_features = variances.nlargest(max_features).index
-
-            candidate_features = list(top_features)
-            missing = [f for f in candidate_features if f not in X_data.columns]
-            display_features = [f for f in candidate_features if f in X_data.columns]
-            if missing:
-                LOG.warning(
-                    "Dropping %s transformed feature(s) not present in SHAP frame: %s",
-                    len(missing),
-                    missing[:5],
-                )
-            if display_features and len(display_features) < n_features:
-                LOG.info(
-                    "Restricting SHAP display to top %s of %s features",
-                    len(display_features),
-                    n_features,
-                )
-            elif not display_features:
-                display_features = list(X_data.columns)
-        except Exception as e:
-            LOG.warning(
-                f"Feature limiting failed: {e}. Using all {n_features} features."
-            )
-            display_features = list(X_data.columns)
-
-        self.shap_used_features = len(display_features)
-
-        # Apply the column restriction so SHAP only runs on the selected features.
-        if display_features:
-            X_data = X_data[display_features]
-            n_rows, n_features = X_data.shape
-
-        # --- Adaptive row subsampling ---
-        if max_samples is None:
-            if n_rows <= 500:
-                max_samples = n_rows
-            elif n_rows <= 5000:
-                max_samples = 500
-            else:
-                max_samples = min(1000, int(n_rows * 0.1))
-
+        row_cap = max_samples
         if self.max_shap_rows is not None:
-            max_samples = min(max_samples, self.max_shap_rows)
-
-        if n_rows > max_samples:
-            LOG.info(f"Subsampling SHAP rows: {max_samples} of {n_rows}")
-            X_data = X_data.sample(max_samples, random_state=42)
+            row_cap = self.max_shap_rows if row_cap is None else min(row_cap, self.max_shap_rows)
+        X_data, _, scope = limit_explainability_data(
+            X_data,
+            model=model,
+            max_features=(
+                self.max_plot_features
+                if max_features is None
+                else min(max_features, self.max_plot_features or max_features)
+            ),
+            max_rows=row_cap,
+            random_seed=42,
+            polynomial_features=self.polynomial_features,
+            context="Custom SHAP",
+        )
+        self.shap_scope = scope
+        self.shap_total_rows = scope.total_rows
+        self.shap_used_rows = scope.used_rows
+        self.shap_total_features = scope.total_features
+        self.shap_used_features = scope.used_features
+        display_features = list(X_data.columns)
+        n_rows, n_features = X_data.shape
 
         # --- Adaptive feature display ---
         display_cap = (

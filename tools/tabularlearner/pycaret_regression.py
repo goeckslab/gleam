@@ -1,5 +1,6 @@
 import logging
 
+import pandas as pd
 from base_model_trainer import BaseModelTrainer
 from dashboard import generate_regression_explainer_dashboard
 from pycaret.regression import RegressionExperiment
@@ -65,7 +66,13 @@ class RegressionModelTrainer(BaseModelTrainer):
         from explainerdashboard import RegressionExplainer
 
         X_test = self.exp.X_test_transformed.copy()
-        y_test = self.exp.y_test_transformed
+        y_test = pd.Series(self.exp.y_test_transformed).reset_index(drop=True)
+        X_test, y_test = self._limit_explainer_data(
+            X_test,
+            y_test,
+            context="RegressionExplainer",
+            cap_features=False,
+        )
 
         try:
             explainer = RegressionExplainer(self.best_model, X_test, y_test)
@@ -73,23 +80,33 @@ class RegressionModelTrainer(BaseModelTrainer):
             LOG.error(f"Error creating explainer: {e}")
             return
 
-        # --- 1) SHAP mean impact (average absolute SHAP values) ---
-        try:
-            self.explainer_plots["shap_mean"] = explainer.plot_importances()
-        except Exception as e:
-            LOG.error(f"Error generating SHAP mean importance: {e}")
-
-        # --- 2) SHAP permutation importance ---
-        try:
-            self.explainer_plots["shap_perm"] = explainer.plot_importances_permutation(
-                kind="permutation"
+        if self._explainer_feature_count_exceeds_cap():
+            LOG.info(
+                "Skipping ExplainerDashboard SHAP/permutation importance because "
+                "the transformed test set has %s features; custom SHAP remains capped "
+                "to top %s features.",
+                self.explainer_scope.total_features,
+                self.explainer_scope.feature_cap,
             )
-        except Exception as e:
-            LOG.error(f"Error generating SHAP permutation importance: {e}")
+            self.explainer_dashboard_importance_skipped = True
+        else:
+            # --- 1) SHAP mean impact (average absolute SHAP values) ---
+            try:
+                self.explainer_plots["shap_mean"] = explainer.plot_importances()
+            except Exception as e:
+                LOG.error(f"Error generating SHAP mean importance: {e}")
+
+            # --- 2) SHAP permutation importance ---
+            try:
+                self.explainer_plots["shap_perm"] = explainer.plot_importances_permutation(
+                    kind="permutation"
+                )
+            except Exception as e:
+                LOG.error(f"Error generating SHAP permutation importance: {e}")
 
         # Pre-filter features so we never call PDP or residual-vs-feature on missing cols
         valid_feats = []
-        for feat in self.features_name:
+        for feat in self.plot_feature_names:
             if feat in explainer.X.columns or feat in explainer.onehot_cols:
                 valid_feats.append(feat)
             else:

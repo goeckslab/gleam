@@ -7,6 +7,7 @@ import h5py
 import joblib
 import numpy as np
 import pandas as pd
+from explainability_limits import limit_explainability_data
 from feature_help_modal import get_feature_metrics_help_modal
 from feature_importance import FeatureImportanceAnalyzer
 from sklearn.metrics import (
@@ -133,6 +134,8 @@ class BaseModelTrainer:
         self.plots = {}
         self.explainer_plots = {}
         self.plots_explainer_html = None
+        self.explainer_scope = None
+        self.explainer_dashboard_importance_skipped = False
         self.trees = []
         self.user_kwargs = kwargs.copy()
         for key, value in self.user_kwargs.items():
@@ -505,6 +508,37 @@ class BaseModelTrainer:
         self.exp.setup(self.data, **self.setup_params)
         self._capture_imputed_training_data()
         self.setup_params.update(self.user_kwargs)
+
+    def _limit_explainer_data(
+        self,
+        X,
+        y=None,
+        context="ExplainerDashboard",
+        cap_features=True,
+    ):
+        """
+        Bound expensive ExplainerDashboard SHAP/permutation/PDP inputs.
+
+        Training, model selection, and final metrics keep using the full data;
+        this limiter only affects report explainability plots.
+        """
+        X_limited, y_limited, scope = limit_explainability_data(
+            X,
+            y,
+            model=self.best_model,
+            max_features=getattr(self, "plot_feature_limit", 30),
+            max_rows=getattr(self, "_shap_row_cap", None),
+            random_seed=self.random_seed,
+            polynomial_features=getattr(self, "polynomial_features", False),
+            cap_features=cap_features,
+            context=context,
+        )
+        self.explainer_scope = scope
+        return X_limited, y_limited
+
+    def _explainer_feature_count_exceeds_cap(self):
+        scope = getattr(self, "explainer_scope", None)
+        return scope is not None and scope.total_features > scope.feature_cap
 
     def _capture_imputed_training_data(self):
         """
@@ -2126,19 +2160,59 @@ class BaseModelTrainer:
             max_plot_features=self.plot_feature_limit,
             processed_data=self.imputed_training_data,
             max_shap_rows=self._shap_row_cap,
+            polynomial_features=getattr(self, "polynomial_features", False),
         )
         fi_html = fi_analyzer.run()
-        # Add a small table to show SHAP feature caps near the Best Model header.
+        # Add a small table to show explainability caps near the Best Model header.
         cap_rows = []
-        if fi_analyzer.shap_total_features is not None:
-            cap_rows.append(
-                ("Total transformed features", fi_analyzer.shap_total_features)
-            )
-        if fi_analyzer.shap_used_features is not None:
-            cap_rows.append(
-                ("Features used in SHAP", fi_analyzer.shap_used_features)
-            )
+        custom_scope = getattr(fi_analyzer, "shap_scope", None)
+        if custom_scope is not None:
+            cap_rows.extend([
+                ("Custom SHAP rows", f"{custom_scope.used_rows} of {custom_scope.total_rows}"),
+                (
+                    "Custom SHAP transformed features",
+                    f"{custom_scope.used_features} of {custom_scope.total_features}",
+                ),
+            ])
+        elif fi_analyzer.shap_total_features is not None:
+            cap_rows.append((
+                "Custom SHAP transformed features",
+                f"{fi_analyzer.shap_used_features} of {fi_analyzer.shap_total_features}",
+            ))
+        explainer_scope = getattr(self, "explainer_scope", None)
+        if explainer_scope is not None:
+            cap_rows.extend([
+                (
+                    "ExplainerDashboard rows",
+                    f"{explainer_scope.used_rows} of {explainer_scope.total_rows}",
+                ),
+                (
+                    "ExplainerDashboard transformed features",
+                    f"{explainer_scope.used_features} of {explainer_scope.total_features}",
+                ),
+            ])
+        if getattr(self, "explainer_dashboard_importance_skipped", False):
+            cap_rows.append((
+                "ExplainerDashboard SHAP/permutation importance",
+                "Skipped; custom capped SHAP is shown instead",
+            ))
+        if getattr(self, "polynomial_features", False):
+            cap_rows.append((
+                "Polynomial feature cap",
+                "Top 15 features and at most 200 rows",
+            ))
         if cap_rows:
+            capped = []
+            for scope in (custom_scope, explainer_scope):
+                if scope is not None and (scope.rows_capped or scope.features_capped):
+                    capped.append(scope)
+            note = ""
+            if capped:
+                note = (
+                    "<p class='report-footnote'>Note: Explainability plots were "
+                    "computed on a capped subset of rows and transformed features "
+                    "to keep report generation responsive after model training.</p>"
+                )
             cap_table = (
                 "<div class='table-wrapper'>"
                 "<table class='table sortable table-fi-scope'>"
@@ -2149,6 +2223,7 @@ class BaseModelTrainer:
                     for label, value in cap_rows
                 )
                 + "</tbody></table></div>"
+                + note
             )
             feature_html += cap_table
         feature_html += fi_html

@@ -137,7 +137,13 @@ class ClassificationModelTrainer(BaseModelTrainer):
             )
 
         X_test = self.exp.X_test_transformed.copy()
-        y_test = self.exp.y_test_transformed
+        y_test = pd.Series(self.exp.y_test_transformed).reset_index(drop=True)
+        X_test, y_test = self._limit_explainer_data(
+            X_test,
+            y_test,
+            context="ClassifierExplainer",
+            cap_features=False,
+        )
         label_encoder = None
         try:
             from pycaret.utils.generic import get_label_encoder
@@ -277,23 +283,33 @@ class ClassificationModelTrainer(BaseModelTrainer):
             except Exception as e:
                 LOG.error(f"Error generating explainer plot {key}: {e}")
 
-        # mean SHAP importances
-        try:
-            self.explainer_plots["shap_mean"] = explainer.plot_importances()
-        except Exception as e:
-            LOG.warning(f"Could not generate shap_mean: {e}")
-
-        # permutation importances
-        try:
-            self.explainer_plots["shap_perm"] = lambda: explainer.plot_importances(
-                kind="permutation"
+        if self._explainer_feature_count_exceeds_cap():
+            LOG.info(
+                "Skipping ExplainerDashboard SHAP/permutation importance because "
+                "the transformed test set has %s features; custom SHAP remains capped "
+                "to top %s features.",
+                self.explainer_scope.total_features,
+                self.explainer_scope.feature_cap,
             )
-        except Exception as e:
-            LOG.warning(f"Could not generate shap_perm: {e}")
+            self.explainer_dashboard_importance_skipped = True
+        else:
+            # mean SHAP importances
+            try:
+                self.explainer_plots["shap_mean"] = explainer.plot_importances()
+            except Exception as e:
+                LOG.warning(f"Could not generate shap_mean: {e}")
+
+            # permutation importances
+            try:
+                self.explainer_plots["shap_perm"] = lambda: explainer.plot_importances(
+                    kind="permutation"
+                )
+            except Exception as e:
+                LOG.warning(f"Could not generate shap_perm: {e}")
 
         # PDPs for each feature (appended last)
         valid_feats = []
-        for feat in self.features_name:
+        for feat in self.plot_feature_names:
             if feat in explainer.X.columns or feat in explainer.onehot_cols:
                 valid_feats.append(feat)
             else:
