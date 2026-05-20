@@ -96,6 +96,14 @@ def get_html_template() -> str:
               font-size: 0.88rem;
               line-height: 1.35;
           }
+          .report-notice {
+              margin: 1rem 0;
+              padding: 0.75rem 1rem;
+              border-left: 4px solid #4CAF50;
+              background: #eef8ef;
+              color: #2e5f31;
+              line-height: 1.4;
+          }
 
           .plot {
               text-align: center;

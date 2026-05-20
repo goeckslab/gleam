@@ -155,6 +155,7 @@ class BaseModelTrainer:
             )
         self.imputed_training_data = None
         self._best_model_metric_used = None
+        self.cv_fold_adjustment = None
         self.setup_params = {}
         self.test_file = test_file
         self.test_data = None
@@ -393,6 +394,141 @@ class BaseModelTrainer:
         self.features_name = [n for n in names if n != self.target]
         self.plot_feature_names = self._select_plot_features(self.features_name)
 
+    def _estimate_cv_training_labels(self):
+        """
+        Estimate the labels that PyCaret will use as the training/CV pool.
+
+        When no separate test file is supplied, PyCaret applies train_size
+        during setup. We mirror the relevant split constraints so fold
+        validation is based on the pool that will actually be cross-validated.
+        """
+        if self.data is None or self.target not in self.data.columns:
+            return None
+
+        y = pd.Series(self.data[self.target]).reset_index(drop=True)
+        if y.empty:
+            return y
+
+        if self.test_data is not None:
+            return y
+
+        train_size = getattr(self, "train_size", None)
+        if train_size is None:
+            train_size = 0.7
+        try:
+            train_size = float(train_size)
+        except (TypeError, ValueError):
+            return y
+        if train_size <= 0 or train_size >= 1:
+            return y
+
+        if self.task_type == "classification":
+            try:
+                from sklearn.model_selection import train_test_split
+
+                _, _, y_train, _ = train_test_split(
+                    self.data.drop(columns=[self.target]),
+                    y,
+                    train_size=train_size,
+                    stratify=y,
+                    random_state=self.random_seed,
+                    shuffle=True,
+                )
+                return pd.Series(y_train).reset_index(drop=True)
+            except Exception as exc:
+                LOG.warning(
+                    "Could not mirror PyCaret stratified split for CV fold "
+                    "validation; using conservative class-count estimate: %s",
+                    exc,
+                )
+                counts = y.value_counts(dropna=False)
+                estimated_counts = np.floor(counts * train_size).astype(int)
+                values = []
+                for label, count in estimated_counts.items():
+                    values.extend([label] * int(count))
+                return pd.Series(values)
+
+        n_train = int(np.floor(len(y) * train_size))
+        n_train = max(0, min(n_train, len(y)))
+        return y.iloc[:n_train].reset_index(drop=True)
+
+    def _validate_and_adjust_cross_validation_folds(self):
+        """
+        Ensure the requested fold count is valid before PyCaret setup.
+
+        If the requested count is too high, lower it to the maximum valid value
+        and store the adjustment for the report.
+        """
+        if getattr(self, "cross_validation", None) is False:
+            return
+
+        requested = getattr(self, "cross_validation_folds", None)
+        if requested is None:
+            requested = 10
+        try:
+            requested = int(requested)
+        except (TypeError, ValueError):
+            requested = 10
+
+        y_train = self._estimate_cv_training_labels()
+        if y_train is None:
+            return
+        y_train = pd.Series(y_train).reset_index(drop=True)
+
+        if self.task_type == "classification":
+            counts = y_train.value_counts(dropna=False)
+            max_valid_folds = int(counts.min()) if not counts.empty else 0
+            limiting_reason = (
+                "the smallest class in the training/CV pool has "
+                f"{max_valid_folds} sample(s)"
+            )
+        else:
+            max_valid_folds = int(len(y_train))
+            limiting_reason = (
+                "the training/CV pool has "
+                f"{max_valid_folds} sample(s)"
+            )
+
+        group_series = getattr(self, "sample_id_series", None)
+        if group_series is not None:
+            n_groups = int(pd.Series(group_series).nunique(dropna=False))
+            if n_groups < max_valid_folds:
+                max_valid_folds = n_groups
+                limiting_reason = (
+                    "the training/CV pool has "
+                    f"{max_valid_folds} sample group(s)"
+                )
+
+        if max_valid_folds < 2:
+            raise ValueError(
+                "Cross-validation requires at least 2 folds, but "
+                f"{limiting_reason}. Disable cross-validation or provide more "
+                "training samples."
+            )
+
+        if requested < 2:
+            adjusted = 2
+            reason = "the requested fold count was below the minimum of 2"
+        elif requested > max_valid_folds:
+            adjusted = max_valid_folds
+            reason = limiting_reason
+        else:
+            self.cross_validation_folds = requested
+            return
+
+        LOG.warning(
+            "Adjusting cross_validation_folds from %s to %s because %s.",
+            requested,
+            adjusted,
+            reason,
+        )
+        self.cv_fold_adjustment = {
+            "requested": requested,
+            "effective": adjusted,
+            "reason": reason,
+        }
+        self.cross_validation_folds = adjusted
+
     def _select_plot_features(self, all_features):
         limit = getattr(self, "plot_feature_limit", 30)
         if not isinstance(limit, int) or limit <= 0:
@@ -441,6 +577,7 @@ class BaseModelTrainer:
 
     def setup_pycaret(self):
         LOG.info("Initializing PyCaret")
+        self._validate_and_adjust_cross_validation_folds()
         self.setup_params = {
             "target": self.target,
             "session_id": self.random_seed,
@@ -505,6 +642,26 @@ class BaseModelTrainer:
         self.exp.setup(self.data, **self.setup_params)
         self._capture_imputed_training_data()
         self.setup_params.update(self.user_kwargs)
+        if getattr(self, "cross_validation_folds", None) is not None:
+            self.setup_params["fold"] = self.cross_validation_folds
+            self.setup_params["cross_validation_folds"] = (
+                self.cross_validation_folds
+            )
+
+    def _build_cv_fold_adjustment_notice(self):
+        adjustment = getattr(self, "cv_fold_adjustment", None)
+        if not adjustment:
+            return ""
+        requested = adjustment["requested"]
+        effective = adjustment["effective"]
+        reason = adjustment["reason"]
+        return (
+            "<div class='report-notice'>"
+            "<strong>Cross-validation folds adjusted:</strong> "
+            f"The requested fold count was {requested}, but the tool used "
+            f"{effective} because {reason}."
+            "</div>"
+        )
 
     def _capture_imputed_training_data(self):
         """
@@ -569,6 +726,20 @@ class BaseModelTrainer:
 
         LOG.info(f"compare_models kwargs: {compare_kwargs}")
         self.best_model = self.exp.compare_models(**compare_kwargs)
+        if isinstance(self.best_model, list):
+            if len(self.best_model) == 1:
+                self.best_model = self.best_model[0]
+            else:
+                raise ValueError(
+                    "Expected PyCaret compare_models() to return one fitted "
+                    f"model, but it returned {len(self.best_model)} models."
+                )
+        if self.best_model is None or not hasattr(self.best_model, "predict"):
+            raise ValueError(
+                "PyCaret did not return a fitted model. Check the selected "
+                "models, target column, cross-validation folds, and class "
+                "balance."
+            )
         if self._best_model_metric_used is None:
             self._best_model_metric_used = getattr(self.exp, "_fold_metric", None)
         self.results = self.exp.pull()
@@ -1140,7 +1311,8 @@ class BaseModelTrainer:
             "because rows with the same sample ID stay together."
         )
         return (
-            "<h2>Cross-Validation Fold Allocation</h2>"
+            self._build_cv_fold_adjustment_notice()
+            + "<h2>Cross-Validation Fold Allocation</h2>"
             + '<div class="table-wrapper">'
             + df.to_html(
                 index=False,
@@ -1782,6 +1954,12 @@ class BaseModelTrainer:
                     dv = "None"
                 else:
                     dv = v if v is not None else 10
+                    adjustment = getattr(self, "cv_fold_adjustment", None)
+                    if adjustment:
+                        dv = (
+                            f"{adjustment['effective']} "
+                            f"(adjusted from {adjustment['requested']})"
+                        )
             elif key == "Models":
                 dv = ", ".join(map(str, v)) if isinstance(
                     v, (list, tuple)
@@ -1796,6 +1974,12 @@ class BaseModelTrainer:
         )
         if metric_label:
             setup_rows.append(["Best Model Metric", metric_label])
+        adjustment = getattr(self, "cv_fold_adjustment", None)
+        if adjustment:
+            setup_rows.append([
+                "Cross Validation Fold Adjustment Reason",
+                adjustment["reason"],
+            ])
 
         df_setup = pd.DataFrame(setup_rows, columns=["Parameter", "Value"])
         df_setup.to_csv(
