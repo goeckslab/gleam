@@ -81,6 +81,20 @@ def pr_auc_curve_score(y_true, y_score):
     return _weighted_ovr_pr_auc(y_true, y_score)
 
 
+def _add_pr_auc_metric_if_supported(exp):
+    if getattr(exp, "is_multiclass", False):
+        LOG.info(
+            "Skipping PyCaret custom PR-AUC metric for multiclass "
+            "classification."
+        )
+        return False
+    exp.add_metric(id='PR-AUC',
+                   name='PR-AUC',
+                   target='pred_proba',
+                   score_func=pr_auc_curve_score)
+    return True
+
+
 class PyCaretModelEvaluator:
     def __init__(self, model_path, task, target):
         self.model_path = model_path
@@ -115,10 +129,7 @@ class ClassificationEvaluator(PyCaretModelEvaluator):
             target_index = int(self.target) - 1
             target_name = names[target_index]
             exp.setup(data, target=target_name, test_data=data, index=False)
-            exp.add_metric(id='PR-AUC',
-                           name='PR-AUC',
-                           target='pred_proba',
-                           score_func=pr_auc_curve_score)
+            _add_pr_auc_metric_if_supported(exp)
             predictions = exp.predict_model(self.model)
             metrics = exp.pull()
             plots = ['confusion_matrix', 'auc', 'threshold', 'pr',

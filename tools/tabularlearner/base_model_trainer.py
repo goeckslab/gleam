@@ -107,6 +107,30 @@ def pr_auc_curve_score(y_true, y_score):
     return _weighted_ovr_pr_auc(y_true, y_score)
 
 
+def _add_pr_auc_metric_if_supported(exp):
+    """
+    Register PyCaret's custom PR-AUC metric only for binary classification.
+
+    PyCaret 3.3.2 can pass multiclass probability matrices through a
+    single-column prediction-score path during predict_model(), which raises
+    a DataFrame shape error. Multiclass PR-AUC is still computed later by the
+    report code from the model's probability matrix.
+    """
+    if getattr(exp, "is_multiclass", False):
+        LOG.info(
+            "Skipping PyCaret custom PR-AUC metric for multiclass "
+            "classification; report PR-AUC will be computed separately."
+        )
+        return False
+    exp.add_metric(
+        id="PR-AUC",
+        name="PR-AUC",
+        target="pred_proba",
+        score_func=pr_auc_curve_score,
+    )
+    return True
+
+
 class BaseModelTrainer:
     def __init__(
         self,
@@ -733,11 +757,8 @@ class BaseModelTrainer:
     def train_model(self):
         LOG.info("Training and selecting the best model")
         if self.task_type == "classification":
-            self.exp.add_metric(
-                id="PR-AUC",
-                name="PR-AUC",
-                target="pred_proba",
-                score_func=pr_auc_curve_score,
+            self._pycaret_pr_auc_metric_added = _add_pr_auc_metric_if_supported(
+                self.exp
             )
         # Build arguments for compare_models()
         compare_kwargs = {}
@@ -754,6 +775,17 @@ class BaseModelTrainer:
 
         best_metric = getattr(self, "best_model_metric", None)
         if best_metric:
+            if (
+                self.task_type == "classification"
+                and best_metric == "PR-AUC"
+                and not getattr(self, "_pycaret_pr_auc_metric_added", False)
+            ):
+                LOG.warning(
+                    "PR-AUC model ranking is not supported for multiclass "
+                    "classification in this PyCaret path; ranking models by "
+                    "ROC-AUC instead."
+                )
+                best_metric = "AUC"
             compare_kwargs["sort"] = best_metric
             self._best_model_metric_used = best_metric
             LOG.info(f"Ranking models using metric: {best_metric}")
@@ -1716,22 +1748,17 @@ class BaseModelTrainer:
 
     def _replace_test_pr_auc(self):
         """
-        Replace PyCaret's custom PR-AUC output with the report's curve-based
-        PR-AUC for the held-out test split.
+        Add or replace PyCaret's custom PR-AUC output with the report's
+        curve-based PR-AUC for the held-out test split.
         """
         if not isinstance(self.test_result_df, pd.DataFrame):
-            return
-        if (
-            "PR-AUC" not in self.test_result_df.columns
-            and "PR-AUC-Weighted" not in self.test_result_df.columns
-        ):
             return
 
         preds = self._get_test_predictions_for_report()
         pr_auc = self._compute_pr_auc_from_predictions(preds)
         if pr_auc is None:
             LOG.warning(
-                "Could not replace PR-AUC-Weighted; test PR-AUC was unavailable."
+                "Could not add or replace PR-AUC; test PR-AUC was unavailable."
             )
             return
 
