@@ -7,17 +7,19 @@ import h5py
 import joblib
 import numpy as np
 import pandas as pd
+from classification_metrics import (
+    labels_in_sample_order,
+    weighted_ovr_pr_auc as _weighted_ovr_pr_auc,
+)
 from explainability_limits import limit_explainability_data
 from feature_help_modal import get_feature_metrics_help_modal
 from feature_importance import FeatureImportanceAnalyzer
 from sklearn.metrics import (
     accuracy_score,
-    auc,
     cohen_kappa_score,
     confusion_matrix,
     f1_score,
     matthews_corrcoef,
-    precision_recall_curve,
     precision_score,
     recall_score,
     roc_auc_score,
@@ -33,73 +35,6 @@ from utils import (
 
 logging.basicConfig(level=logging.DEBUG)
 LOG = logging.getLogger(__name__)
-
-
-def _weighted_ovr_pr_auc(y_true, y_score, labels=None):
-    """
-    Compute PR-AUC from precision-recall curves.
-
-    Binary tasks use the positive-class probability curve. Multiclass tasks use
-    one-vs-rest curves per class and return a support-weighted mean.
-    """
-    y_true_series = pd.Series(y_true).reset_index(drop=True)
-    if labels is not None:
-        class_labels = list(labels)
-    else:
-        class_labels = list(pd.unique(y_true_series))
-        try:
-            class_labels = sorted(class_labels)
-        except Exception:
-            pass
-    if len(class_labels) < 2:
-        return np.nan
-
-    scores = np.asarray(y_score)
-    if len(scores) != len(y_true_series):
-        return np.nan
-
-    if len(class_labels) == 2:
-        try:
-            pos_label = 1 if 1 in class_labels else sorted(class_labels)[-1]
-        except Exception:
-            pos_label = class_labels[-1]
-        if scores.ndim == 2:
-            if scores.shape[1] < 2:
-                scores = scores.ravel()
-            else:
-                try:
-                    pos_idx = class_labels.index(pos_label)
-                except ValueError:
-                    pos_idx = scores.shape[1] - 1
-                pos_idx = min(pos_idx, scores.shape[1] - 1)
-                scores = scores[:, pos_idx]
-        precision, recall, _ = precision_recall_curve(
-            (y_true_series == pos_label).astype(int),
-            scores,
-        )
-        return auc(recall, precision)
-
-    if scores.ndim != 2 or scores.shape[1] < len(class_labels):
-        return np.nan
-
-    weighted_total = 0.0
-    support_total = 0
-    for class_idx, class_label in enumerate(class_labels):
-        if class_idx >= scores.shape[1]:
-            break
-        y_true_bin = (y_true_series == class_label).astype(int)
-        if len(pd.unique(y_true_bin)) < 2:
-            continue
-        precision, recall, _ = precision_recall_curve(
-            y_true_bin,
-            scores[:, class_idx],
-        )
-        support = int(y_true_bin.sum())
-        weighted_total += auc(recall, precision) * support
-        support_total += support
-
-    return weighted_total / support_total if support_total else np.nan
-
 
 def pr_auc_curve_score(y_true, y_score):
     """
@@ -1094,7 +1029,6 @@ class BaseModelTrainer:
             rows.append(row)
 
         df = pd.DataFrame(rows, columns=["Label", *split_map.keys()])
-        df.sort_values("Label", inplace=True)
 
         note = (
             "<p class='report-footnote'>Note: The Training / CV Pool column "
@@ -1381,11 +1315,7 @@ class BaseModelTrainer:
         label_values = []
         if self.task_type == "classification":
             y_display_series = self._decode_class_labels_for_display(y_display_series)
-            label_values = pd.unique(y_display_series)
-            try:
-                label_values = sorted(label_values, key=lambda item: str(item))
-            except Exception:
-                label_values = list(label_values)
+            label_values = labels_in_sample_order(y_display_series)
 
         def _format_label_counts(indices):
             if self.task_type != "classification":
@@ -1798,7 +1728,11 @@ class BaseModelTrainer:
         y_true = preds["y_true"]
         classes = preds.get("classes")
         try:
-            pr_auc = _weighted_ovr_pr_auc(y_true, y_scores, labels=classes)
+            pr_auc = _weighted_ovr_pr_auc(
+                y_true,
+                y_scores,
+                labels=classes if classes else None,
+            )
             if np.isnan(pr_auc):
                 return None
             return pr_auc

@@ -47,10 +47,17 @@ def _install_import_stubs():
 _install_import_stubs()
 
 from base_model_trainer import BaseModelTrainer, _add_pr_auc_metric_if_supported
+from classification_metrics import (
+    labels_in_metric_order,
+    labels_in_sample_order,
+    weighted_ovr_pr_auc,
+)
+from feature_importance import FeatureImportanceAnalyzer
 from pycaret_classification import (
     ClassificationModelTrainer,
     _should_skip_pycaret_plot,
 )
+from pycaret_regression import RegressionModelTrainer
 from pycaret_predict import _add_pr_auc_metric_if_supported as add_predict_pr_auc
 
 
@@ -253,3 +260,322 @@ def test_multiclass_explainer_failure_keeps_custom_plots(monkeypatch):
 
     assert "class_report" in trainer.explainer_plots
     assert "confusion_matrix" in trainer.explainer_plots
+
+
+def test_weighted_multiclass_pr_auc_uses_probability_column_label_order():
+    y_true = pd.Series(["beta", "alpha", "gamma", "beta", "alpha", "gamma"])
+    class_order = ["gamma", "alpha", "beta"]
+    y_score = np.array(
+        [
+            [0.05, 0.10, 0.85],
+            [0.10, 0.80, 0.10],
+            [0.90, 0.05, 0.05],
+            [0.05, 0.20, 0.75],
+            [0.15, 0.70, 0.15],
+            [0.80, 0.10, 0.10],
+        ]
+    )
+
+    assert weighted_ovr_pr_auc(y_true, y_score, labels=class_order) == 1.0
+    assert weighted_ovr_pr_auc(
+        y_true,
+        y_score,
+        labels=labels_in_sample_order(y_true),
+    ) < 1.0
+
+
+def test_binary_pr_auc_default_label_order_is_metric_stable():
+    y_true = pd.Series(["yes", "no", "yes", "no"])
+    y_score = np.array([0.9, 0.2, 0.8, 0.1])
+
+    assert labels_in_sample_order(y_true) == ["yes", "no"]
+    assert labels_in_metric_order(y_true) == ["no", "yes"]
+    assert weighted_ovr_pr_auc(y_true, y_score) == 1.0
+
+
+def test_report_confusion_matrix_preserves_sample_label_order():
+    trainer = object.__new__(ClassificationModelTrainer)
+    trainer.task_type = "classification"
+    trainer.target = "target"
+    trainer.exp = FakeExperiment(is_multiclass=True)
+
+    labels = ["beta", "alpha", "gamma"]
+    fig = trainer._build_confusion_matrix_fig(
+        pd.Series(["beta", "alpha", "gamma"]),
+        pd.Series(["beta", "gamma", "gamma"]),
+        labels,
+    )
+
+    assert fig.data[0].x == tuple(f"Pred {label}" for label in labels)
+    assert fig.data[0].y == tuple(f"True {label}" for label in labels)
+
+
+def test_labeled_scatter_preserves_sample_label_order():
+    import plotly.graph_objects as go
+
+    trainer = object.__new__(ClassificationModelTrainer)
+    fig = go.Figure()
+
+    trainer._plot_labeled_scatter(
+        fig,
+        x=np.array([0, 1, 2]),
+        y=np.array([0, 1, 2]),
+        labels=pd.Series(["beta", "alpha", "gamma"]),
+    )
+
+    assert [trace.name for trace in fig.data] == ["beta", "alpha", "gamma"]
+
+
+def test_multiclass_custom_curves_use_model_class_order_and_display_labels():
+    trainer = object.__new__(ClassificationModelTrainer)
+    trainer.task_type = "classification"
+    trainer.target = "target"
+    trainer.exp = FakeExperiment(is_multiclass=True)
+    trainer._decode_labels_for_display = lambda values: values
+
+    y_true = pd.Series(["beta", "alpha", "gamma", "beta", "alpha", "gamma"])
+    score_labels = ["gamma", "alpha", "beta"]
+    y_score = np.array(
+        [
+            [0.05, 0.10, 0.85],
+            [0.10, 0.80, 0.10],
+            [0.90, 0.05, 0.05],
+            [0.05, 0.20, 0.75],
+            [0.15, 0.70, 0.15],
+            [0.80, 0.10, 0.10],
+        ]
+    )
+
+    roc_fig = trainer._build_multiclass_roc_fig(y_true, y_score, score_labels)
+    pr_fig = trainer._build_multiclass_precision_recall_fig(
+        y_true,
+        y_score,
+        score_labels,
+    )
+
+    assert [trace.name for trace in roc_fig.data[:3]] == [
+        "gamma (AUC=1.000)",
+        "alpha (AUC=1.000)",
+        "beta (AUC=1.000)",
+    ]
+    assert [trace.name for trace in pr_fig.data] == [
+        "gamma (AUC=1.000)",
+        "alpha (AUC=1.000)",
+        "beta (AUC=1.000)",
+    ]
+
+
+def test_regression_permutation_importance_uses_supported_explainer_api(monkeypatch):
+    calls = []
+    explainerdashboard = types.ModuleType("explainerdashboard")
+
+    class FakeRegressionExplainer:
+        X = pd.DataFrame({"feature": [0, 1]})
+        onehot_cols = []
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def plot_importances(self, **kwargs):
+            calls.append(kwargs)
+            return "importance"
+
+        def plot_pdp(self, feature):
+            return f"pdp-{feature}"
+
+        def plot_predicted_vs_actual(self):
+            return "predicted-vs-actual"
+
+        def plot_residuals(self):
+            return "residuals"
+
+        def plot_residuals_vs_feature(self, feature):
+            return f"residuals-{feature}"
+
+    explainerdashboard.RegressionExplainer = FakeRegressionExplainer
+    monkeypatch.setitem(sys.modules, "explainerdashboard", explainerdashboard)
+
+    trainer = object.__new__(RegressionModelTrainer)
+    trainer.best_model = object()
+    trainer.exp = types.SimpleNamespace(
+        X_test_transformed=pd.DataFrame({"feature": [0, 1]}),
+        y_test_transformed=pd.Series([0.0, 1.0]),
+    )
+    trainer.random_seed = 42
+    trainer.plot_feature_names = []
+    trainer.explainer_plots = {}
+    trainer.explainer_scope = types.SimpleNamespace(
+        total_features=1,
+        feature_cap=30,
+    )
+    trainer.explainer_dashboard_importance_skipped = False
+    trainer._limit_explainer_data = lambda X, y, **kwargs: (X, y)
+    trainer._explainer_feature_count_exceeds_cap = lambda: False
+
+    trainer.generate_plots_explainer()
+    trainer.explainer_plots["shap_perm"]()
+
+    assert {"kind": "permutation"} in calls
+
+
+class FakeShapExplanation:
+    def __init__(self, shape, selected=None):
+        self.shape = shape
+        self.selected = [] if selected is None else selected
+
+    def __getitem__(self, key):
+        if isinstance(key, tuple) and len(key) == 2:
+            class_idx = key[1]
+            return FakeShapExplanation(self.shape[:2], self.selected + [class_idx])
+        raise AssertionError(f"Unexpected SHAP slice: {key!r}")
+
+
+class FakeShapExplainer:
+    def __init__(self, explanation):
+        self.explanation = explanation
+
+    def __call__(self, X):
+        return self.explanation
+
+
+def _build_shap_analyzer(tmp_path, task_type, model, explanation, max_features=1):
+    analyzer = object.__new__(FeatureImportanceAnalyzer)
+    analyzer.task_type = task_type
+    analyzer.best_model = model
+    analyzer.exp = types.SimpleNamespace(pipeline=None)
+    analyzer.output_dir = str(tmp_path)
+    analyzer.plots = {}
+    analyzer.plot_titles = {}
+    analyzer.max_shap_rows = None
+    analyzer.max_plot_features = max_features
+    analyzer.polynomial_features = False
+    analyzer._get_transformed_frame = lambda model, prefer_test=True: pd.DataFrame(
+        {
+            "f1": [0.0, 1.0],
+            "f2": [2.0, 3.0],
+            "f3": [4.0, 5.0],
+        }
+    )
+    analyzer._choose_shap_explainer = lambda model, bg, predict_fn: (
+        FakeShapExplainer(explanation),
+        "fake",
+        False,
+    )
+    return analyzer
+
+
+def test_custom_shap_binary_plots_positive_class_only_with_display_cap(
+    monkeypatch,
+    tmp_path,
+):
+    import feature_importance
+
+    beeswarm_calls = []
+    monkeypatch.setattr(
+        feature_importance.shap,
+        "plots",
+        types.SimpleNamespace(
+            beeswarm=lambda explanation, **kwargs: beeswarm_calls.append(
+                (explanation.shape, explanation.selected, kwargs)
+            )
+        ),
+        raising=False,
+    )
+
+    class FakeBinaryModel:
+        classes_ = ["control", "case"]
+
+        def predict_proba(self, X):
+            return np.ones((len(X), 2)) * 0.5
+
+    explanation = FakeShapExplanation((2, 3, 2))
+    analyzer = _build_shap_analyzer(
+        tmp_path,
+        "classification",
+        FakeBinaryModel(),
+        explanation,
+        max_features=1,
+    )
+
+    analyzer.save_shap_values()
+
+    assert beeswarm_calls == [((2, 3), [1], {"max_display": 1, "show": False})]
+    assert list(analyzer.plots) == ["shap_summary_class_case"]
+    assert "class case" in analyzer.plot_titles["shap_summary_class_case"]
+    assert analyzer.shap_used_features == 3
+
+
+def test_custom_shap_multiclass_plots_each_model_class(monkeypatch, tmp_path):
+    import feature_importance
+
+    beeswarm_calls = []
+    monkeypatch.setattr(
+        feature_importance.shap,
+        "plots",
+        types.SimpleNamespace(
+            beeswarm=lambda explanation, **kwargs: beeswarm_calls.append(
+                (explanation.shape, explanation.selected, kwargs)
+            )
+        ),
+        raising=False,
+    )
+
+    class FakeMulticlassModel:
+        classes_ = ["gamma", "alpha", "beta"]
+
+        def predict_proba(self, X):
+            return np.ones((len(X), 3)) / 3
+
+    explanation = FakeShapExplanation((2, 3, 3))
+    analyzer = _build_shap_analyzer(
+        tmp_path,
+        "classification",
+        FakeMulticlassModel(),
+        explanation,
+        max_features=2,
+    )
+
+    analyzer.save_shap_values()
+
+    assert [call[1] for call in beeswarm_calls] == [[0], [1], [2]]
+    assert list(analyzer.plots) == [
+        "shap_summary_class_gamma",
+        "shap_summary_class_alpha",
+        "shap_summary_class_beta",
+    ]
+    assert all(call[2]["max_display"] == 2 for call in beeswarm_calls)
+
+
+def test_custom_shap_regression_plots_single_summary(monkeypatch, tmp_path):
+    import feature_importance
+
+    beeswarm_calls = []
+    monkeypatch.setattr(
+        feature_importance.shap,
+        "plots",
+        types.SimpleNamespace(
+            beeswarm=lambda explanation, **kwargs: beeswarm_calls.append(
+                (explanation.shape, explanation.selected, kwargs)
+            )
+        ),
+        raising=False,
+    )
+
+    class FakeRegressionModel:
+        def predict(self, X):
+            return np.zeros(len(X))
+
+    explanation = FakeShapExplanation((2, 3))
+    analyzer = _build_shap_analyzer(
+        tmp_path,
+        "regression",
+        FakeRegressionModel(),
+        explanation,
+        max_features=2,
+    )
+
+    analyzer.save_shap_values()
+
+    assert beeswarm_calls == [((2, 3), [], {"max_display": 2, "show": False})]
+    assert list(analyzer.plots) == ["shap_summary"]
+    assert analyzer.shap_used_features == 3

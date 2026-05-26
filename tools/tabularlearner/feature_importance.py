@@ -5,6 +5,7 @@ import os
 import matplotlib.pyplot as plt
 import pandas as pd
 import shap
+from classification_metrics import positive_class_label
 from explainability_limits import limit_explainability_data
 from pycaret.classification import ClassificationExperiment
 from pycaret.regression import RegressionExperiment
@@ -38,6 +39,7 @@ class FeatureImportanceAnalyzer:
         self.shap_total_rows = None
         self.shap_used_rows = None
         self.shap_scope = None
+        self.plot_titles = {}
         if isinstance(max_plot_features, int) and max_plot_features > 0:
             self.max_plot_features = max_plot_features
         elif max_plot_features is None:
@@ -196,6 +198,7 @@ class FeatureImportanceAnalyzer:
         plt.savefig(plot_path, bbox_inches="tight")
         plt.close()
         self.plots["tree_importance"] = plot_path
+        self.plot_titles["tree_importance"] = f"Feature importance from {model_type}"
 
     def save_shap_values(self, max_samples=None, max_display=None, max_features=None):
         model = self.best_model or self.exp.get_config("best_model")
@@ -210,14 +213,11 @@ class FeatureImportanceAnalyzer:
         X_data, _, scope = limit_explainability_data(
             X_data,
             model=model,
-            max_features=(
-                self.max_plot_features
-                if max_features is None
-                else min(max_features, self.max_plot_features or max_features)
-            ),
+            max_features=self.max_plot_features,
             max_rows=row_cap,
             random_seed=42,
             polynomial_features=self.polynomial_features,
+            cap_features=False,
             context="Custom SHAP",
         )
         self.shap_scope = scope
@@ -228,7 +228,6 @@ class FeatureImportanceAnalyzer:
         display_features = list(X_data.columns)
         n_rows, n_features = X_data.shape
 
-        # --- Adaptive feature display ---
         display_cap = (
             min(self.max_plot_features, len(display_features))
             if self.max_plot_features is not None
@@ -316,33 +315,23 @@ class FeatureImportanceAnalyzer:
                 self.shap_model_name = None
                 return
 
-        def _limit_explanation_features(explanation):
-            if len(display_features) >= n_features:
-                return explanation
-            try:
-                limited = explanation[:, display_features]
-                LOG.info(
-                    "SHAP explanation trimmed to %s display features.",
-                    len(display_features),
-                )
-                return limited
-            except Exception as exc:
-                LOG.warning(
-                    "Failed to restrict SHAP explanation to top features "
-                    "(sample=%s); plot will include all features. Error: %s",
-                    display_features[:5],
-                    exc,
-                )
-                # Keep using full feature list if trimming fails
-                return explanation
-
         shap_shape = getattr(shap_values, "shape", None)
         class_labels = list(getattr(model, "classes_", []))
         shap_outputs = []
         if shap_shape is not None and len(shap_shape) == 3:
             output_count = shap_shape[2]
             LOG.info("Detected multi-output SHAP explanation with %s classes.", output_count)
-            for class_idx in range(output_count):
+            output_indices = list(range(output_count))
+            if self.task_type == "classification" and output_count == 2:
+                pos_label = positive_class_label(class_labels)
+                try:
+                    output_indices = [class_labels.index(pos_label)]
+                except ValueError:
+                    output_indices = [1]
+                LOG.info(
+                    "Binary SHAP explanation detected; plotting positive class only."
+                )
+            for class_idx in output_indices:
                 try:
                     class_expl = shap_values[..., class_idx]
                 except Exception as exc:
@@ -357,7 +346,9 @@ class FeatureImportanceAnalyzer:
                     if class_labels and class_idx < len(class_labels)
                     else class_idx
                 )
-                shap_outputs.append((class_idx, label, class_expl))
+                shap_outputs.append(
+                    (class_idx, self._class_label_for_display(label), class_expl)
+                )
         else:
             shap_outputs.append((None, None, shap_values))
 
@@ -368,17 +359,16 @@ class FeatureImportanceAnalyzer:
 
         # --- Plot SHAP summary (one per class if needed) ---
         for class_idx, class_label, class_expl in shap_outputs:
-            expl_to_plot = _limit_explanation_features(class_expl)
             suffix = ""
             plot_key = "shap_summary"
             if class_idx is not None:
-                safe_label = str(class_label).replace("/", "_").replace(" ", "_")
+                safe_label = self._safe_label(class_label)
                 suffix = f"_class_{safe_label}"
                 plot_key = f"shap_summary_class_{safe_label}"
             out_filename = f"shap_summary{suffix}.png"
             out_path = os.path.join(self.output_dir, out_filename)
             plt.figure()
-            shap.plots.beeswarm(expl_to_plot, max_display=max_display, show=False)
+            shap.plots.beeswarm(class_expl, max_display=max_display, show=False)
             title = f"SHAP Summary for {model.__class__.__name__}"
             if class_idx is not None:
                 title += f" (class {class_label})"
@@ -387,6 +377,7 @@ class FeatureImportanceAnalyzer:
             plt.savefig(out_path, bbox_inches="tight")
             plt.close()
             self.plots[plot_key] = out_path
+            self.plot_titles[plot_key] = f"{title} (top {max_display} features)"
 
         # --- Log summary ---
         LOG.info(
@@ -407,22 +398,7 @@ class FeatureImportanceAnalyzer:
             ):
                 continue
             encoded_image = self.encode_image_to_base64(plot_path)
-            if plot_name == "tree_importance" and getattr(
-                self, "tree_model_name", None
-            ):
-                section_title = f"Feature importance from {self.tree_model_name}"
-            elif plot_name == "shap_summary":
-                section_title = (
-                    f"SHAP Summary from {getattr(self, 'shap_model_name', 'model')}"
-                )
-            elif plot_name.startswith("shap_summary_class_"):
-                class_label = plot_name.replace("shap_summary_class_", "")
-                section_title = (
-                    f"SHAP Summary for class {class_label} "
-                    f"({getattr(self, 'shap_model_name', 'model')})"
-                )
-            else:
-                section_title = plot_name
+            section_title = self.plot_titles.get(plot_name, plot_name)
             plots_html += f"""
             <div class="plot" id="{plot_name}" style="text-align:center;margin-bottom:24px;">
                 <h2>{section_title}</h2>
@@ -442,6 +418,32 @@ class FeatureImportanceAnalyzer:
         if hasattr(model, "decision_function"):
             return model.decision_function
         return model.predict
+
+    @staticmethod
+    def _safe_label(label):
+        return (
+            str(label)
+            .replace("/", "_")
+            .replace("\\", "_")
+            .replace(" ", "_")
+        )
+
+    def _class_label_for_display(self, label):
+        if self.exp is None:
+            return label
+        try:
+            from pycaret.utils.generic import get_label_encoder
+
+            label_encoder = get_label_encoder(self.exp.pipeline)
+        except Exception:
+            label_encoder = None
+        if label_encoder is None:
+            return label
+        try:
+            decoded = label_encoder.inverse_transform([label])
+            return decoded[0]
+        except Exception:
+            return label
 
     def _choose_shap_explainer(self, model, bg, predict_fn):
         """
