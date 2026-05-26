@@ -20,6 +20,16 @@ from utils import (
 LOG = logging.getLogger(__name__)
 
 
+MULTICLASS_UNAVAILABLE_PYCARET_PLOTS = {"threshold"}
+
+
+def _should_skip_pycaret_plot(plot_name, exp):
+    return (
+        getattr(exp, "is_multiclass", False)
+        and plot_name in MULTICLASS_UNAVAILABLE_PYCARET_PLOTS
+    )
+
+
 def _weighted_ovr_pr_auc(y_true, y_score, labels=None):
     y_true_series = pd.Series(y_true).reset_index(drop=True)
     if labels is not None:
@@ -138,6 +148,13 @@ class ClassificationEvaluator(PyCaretModelEvaluator):
                      'feature_all']
             for plot_name in plots:
                 try:
+                    if _should_skip_pycaret_plot(plot_name, exp):
+                        LOG.info(
+                            "Skipping PyCaret %s plot for multiclass "
+                            "classification.",
+                            plot_name,
+                        )
+                        continue
                     if plot_name == 'auc' and not exp.is_multiclass:
                         plot_path = exp.plot_model(self.model,
                                                    plot=plot_name,

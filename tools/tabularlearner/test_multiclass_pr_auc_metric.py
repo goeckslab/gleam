@@ -21,6 +21,10 @@ def _install_import_stubs():
     regression = sys.modules.setdefault(
         "pycaret.regression", types.ModuleType("pycaret.regression")
     )
+    utils = sys.modules.setdefault("pycaret.utils", types.ModuleType("pycaret.utils"))
+    generic = sys.modules.setdefault(
+        "pycaret.utils.generic", types.ModuleType("pycaret.utils.generic")
+    )
 
     class ClassificationExperiment:
         pass
@@ -28,15 +32,25 @@ def _install_import_stubs():
     class RegressionExperiment:
         pass
 
+    def get_label_encoder(*args, **kwargs):
+        return None
+
     classification.ClassificationExperiment = ClassificationExperiment
     regression.RegressionExperiment = RegressionExperiment
+    generic.get_label_encoder = get_label_encoder
     pycaret.classification = classification
     pycaret.regression = regression
+    pycaret.utils = utils
+    utils.generic = generic
 
 
 _install_import_stubs()
 
 from base_model_trainer import BaseModelTrainer, _add_pr_auc_metric_if_supported
+from pycaret_classification import (
+    ClassificationModelTrainer,
+    _should_skip_pycaret_plot,
+)
 from pycaret_predict import _add_pr_auc_metric_if_supported as add_predict_pr_auc
 
 
@@ -92,6 +106,19 @@ class FakeExperiment:
             "y_test_transformed": self.y_test,
         }
         return values.get(key)
+
+
+class FakePlotExperiment:
+    is_multiclass = True
+
+    def __init__(self):
+        self.plot_calls = []
+
+    def plot_model(self, model, plot, save=True, plot_kwargs=None):
+        self.plot_calls.append(plot)
+        if plot == "threshold":
+            raise AssertionError("threshold plot should be skipped for multiclass")
+        return f"{plot}.png"
 
 
 def test_training_pr_auc_metric_is_skipped_for_multiclass():
@@ -161,3 +188,18 @@ def test_predict_evaluator_pr_auc_metric_is_skipped_for_multiclass():
 
     assert added is False
     assert exp.metric_added is False
+
+
+def test_multiclass_threshold_plot_is_skipped():
+    exp = FakePlotExperiment()
+    trainer = object.__new__(ClassificationModelTrainer)
+    trainer.best_model = FakeModel()
+    trainer.exp = exp
+    trainer.plots = {}
+
+    trainer.generate_plots()
+
+    assert _should_skip_pycaret_plot("threshold", exp) is True
+    assert "threshold" not in exp.plot_calls
+    assert "threshold" not in trainer.plots
+    assert "auc" in exp.plot_calls

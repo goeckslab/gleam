@@ -22,6 +22,8 @@ from utils import predict_proba
 
 LOG = logging.getLogger(__name__)
 
+MULTICLASS_UNAVAILABLE_PYCARET_PLOTS = {"threshold"}
+
 
 def _apply_report_layout(fig: go.Figure) -> go.Figure:
     # Give the left side more space for y-axis title/ticks and let axes auto-reserve room
@@ -38,6 +40,13 @@ def _apply_report_layout(fig: go.Figure) -> go.Figure:
         margin=dict(l=120, r=40, t=60, b=60),  # bump 'l' if you still see clipping
     )
     return fig
+
+
+def _should_skip_pycaret_plot(plot_name, exp):
+    return (
+        getattr(exp, "is_multiclass", False)
+        and plot_name in MULTICLASS_UNAVAILABLE_PYCARET_PLOTS
+    )
 
 
 class ClassificationModelTrainer(BaseModelTrainer):
@@ -92,6 +101,12 @@ class ClassificationModelTrainer(BaseModelTrainer):
         ]
         for plot_name in plots:
             try:
+                if _should_skip_pycaret_plot(plot_name, self.exp):
+                    LOG.info(
+                        "Skipping PyCaret %s plot for multiclass classification.",
+                        plot_name,
+                    )
+                    continue
                 if plot_name == "threshold":
                     plot_path = self.exp.plot_model(
                         self.best_model,
