@@ -79,7 +79,10 @@ class ClassificationModelTrainer(BaseModelTrainer):
     def generate_plots(self):
         LOG.info("Generating and saving plots")
 
-        if not hasattr(self.best_model, "predict_proba"):
+        if (
+            not hasattr(self.best_model, "predict_proba")
+            and not getattr(self.exp, "is_multiclass", False)
+        ):
             self.best_model.predict_proba = types.MethodType(
                 predict_proba, self.best_model
             )
@@ -143,7 +146,10 @@ class ClassificationModelTrainer(BaseModelTrainer):
         LOG.info("Generating explainer plots")
 
         # Ensure predict_proba is available here too
-        if not hasattr(self.best_model, "predict_proba"):
+        if (
+            not hasattr(self.best_model, "predict_proba")
+            and not getattr(self.exp, "is_multiclass", False)
+        ):
             self.best_model.predict_proba = types.MethodType(
                 predict_proba, self.best_model
             )
@@ -169,12 +175,20 @@ class ClassificationModelTrainer(BaseModelTrainer):
         explainer_labels = (
             list(label_encoder.classes_) if label_encoder is not None else None
         )
-        explainer = ClassifierExplainer(
-            self.best_model,
-            X_test,
-            y_test,
-            labels=explainer_labels,
-        )
+        explainer = None
+        try:
+            explainer = ClassifierExplainer(
+                self.best_model,
+                X_test,
+                y_test,
+                labels=explainer_labels,
+            )
+        except Exception as exc:
+            LOG.warning(
+                "Could not initialize ClassifierExplainer; "
+                "continuing with custom classification plots only: %s",
+                exc,
+            )
 
         # a dict to hold the raw Figure objects or callables
         self.explainer_plots: Dict[str, go.Figure] = {}
@@ -280,6 +294,9 @@ class ClassificationModelTrainer(BaseModelTrainer):
                     self.explainer_plots["pr_auc"] = fig_pr
             except Exception as e:
                 LOG.warning(f"Could not generate custom PR curve: {e}")
+
+        if explainer is None:
+            return
 
         # these go into the Test tab (don't overwrite overrides)
         for key, fn in [

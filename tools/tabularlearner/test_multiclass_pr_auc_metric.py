@@ -69,6 +69,12 @@ class FakeModel:
         return proba
 
 
+class FakeModelWithoutProba:
+    def predict(self, X=None):
+        n_rows = len(X) if X is not None else 0
+        return np.resize(np.asarray([1, 2, 3, 4, 5]), n_rows)
+
+
 class FakeExperiment:
     def __init__(self, is_multiclass, always_shape_error=False):
         self.is_multiclass = is_multiclass
@@ -79,6 +85,9 @@ class FakeExperiment:
         self.predict_kwargs = None
         self.X_test = pd.DataFrame({"feature": range(10)})
         self.y_test = pd.Series([1, 2, 3, 4, 5] * 2)
+        self.X_test_transformed = self.X_test
+        self.y_test_transformed = self.y_test
+        self.pipeline = None
 
     def add_metric(self, **kwargs):
         self.metric_added = True
@@ -203,3 +212,44 @@ def test_multiclass_threshold_plot_is_skipped():
     assert "threshold" not in exp.plot_calls
     assert "threshold" not in trainer.plots
     assert "auc" in exp.plot_calls
+
+
+def test_multiclass_plot_generation_does_not_add_binary_proba_patch():
+    exp = FakePlotExperiment()
+    model = FakeModelWithoutProba()
+    trainer = object.__new__(ClassificationModelTrainer)
+    trainer.best_model = model
+    trainer.exp = exp
+    trainer.plots = {}
+
+    trainer.generate_plots()
+
+    assert not hasattr(model, "predict_proba")
+
+
+def test_multiclass_explainer_failure_keeps_custom_plots(monkeypatch):
+    explainerdashboard = types.ModuleType("explainerdashboard")
+
+    class RaisingClassifierExplainer:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("no multiclass probabilities")
+
+    explainerdashboard.ClassifierExplainer = RaisingClassifierExplainer
+    monkeypatch.setitem(sys.modules, "explainerdashboard", explainerdashboard)
+
+    exp = FakeExperiment(is_multiclass=True)
+    trainer = object.__new__(ClassificationModelTrainer)
+    trainer.best_model = FakeModelWithoutProba()
+    trainer.exp = exp
+    trainer.task_type = "classification"
+    trainer.target = "AGE"
+    trainer.test_data = None
+    trainer.random_seed = 42
+    trainer.plot_feature_names = []
+    trainer.explainer_plots = {}
+    trainer._limit_explainer_data = lambda X, y, **kwargs: (X, y)
+
+    trainer.generate_plots_explainer()
+
+    assert "class_report" in trainer.explainer_plots
+    assert "confusion_matrix" in trainer.explainer_plots
