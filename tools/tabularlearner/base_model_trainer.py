@@ -13,6 +13,7 @@ from feature_importance import FeatureImportanceAnalyzer
 from sklearn.metrics import (
     accuracy_score,
     auc,
+    cohen_kappa_score,
     confusion_matrix,
     f1_score,
     matthews_corrcoef,
@@ -820,17 +821,7 @@ class BaseModelTrainer:
                 columns={"PR-AUC-Weighted": "PR-AUC"}, inplace=True
             )
 
-        prob_thresh = getattr(self, "probability_threshold", None)
-        if self.task_type == "classification" and (
-            prob_thresh is not None
-        ):
-            _ = self.exp.predict_model(
-                self.best_model, probability_threshold=prob_thresh
-            )
-        else:
-            _ = self.exp.predict_model(self.best_model)
-
-        self.test_result_df = self.exp.pull()
+        self._collect_test_results_from_pycaret()
         if self.task_type == "classification":
             self.test_result_df.rename(
                 columns={"AUC": "ROC-AUC"}, inplace=True
@@ -839,6 +830,73 @@ class BaseModelTrainer:
                 columns={"PR-AUC-Weighted": "PR-AUC"}, inplace=True
             )
             self._replace_test_pr_auc()
+
+    def _collect_test_results_from_pycaret(self):
+        """
+        Collect PyCaret's held-out metric table, falling back to local metric
+        computation when PyCaret's multiclass predict_model path fails while
+        constructing its prediction DataFrame.
+        """
+        prob_thresh = getattr(self, "probability_threshold", None)
+        is_multiclass = (
+            self.task_type == "classification"
+            and getattr(self.exp, "is_multiclass", False)
+        )
+        predict_kwargs = {}
+        if (
+            self.task_type == "classification"
+            and prob_thresh is not None
+            and not is_multiclass
+        ):
+            predict_kwargs["probability_threshold"] = prob_thresh
+
+        try:
+            _ = self.exp.predict_model(self.best_model, **predict_kwargs)
+            self.test_result_df = self.exp.pull()
+            return
+        except ValueError as exc:
+            if not (
+                is_multiclass
+                and "Shape of passed values" in str(exc)
+                and "indices imply" in str(exc)
+            ):
+                raise
+            LOG.warning(
+                "PyCaret predict_model failed on multiclass prediction shape; "
+                "using GLEAM-computed held-out test metrics instead: %s",
+                exc,
+            )
+
+        self.test_result_df = self._build_fallback_test_result_df()
+
+    def _build_fallback_test_result_df(self):
+        """
+        Build a one-row held-out test metric table without PyCaret predict_model.
+        This is used only when PyCaret cannot format multiclass predictions.
+        """
+        preds = self._get_test_predictions_for_report()
+        if preds is None:
+            LOG.warning(
+                "Could not compute fallback held-out test metrics; no test "
+                "prediction bundle was available."
+            )
+            return pd.DataFrame()
+
+        metric_columns = [
+            ("Accuracy", "Accuracy"),
+            ("ROC-AUC", "ROC-AUC"),
+            ("Precision", "Prec."),
+            ("Recall", "Recall"),
+            ("F1-Score", "F1"),
+            ("PR-AUC", "PR-AUC"),
+            ("Kappa", "Kappa"),
+            ("MCC", "MCC"),
+        ]
+        row = {}
+        for metric_name, column_name in metric_columns:
+            value = self._compute_metric_value(metric_name, preds, "Test")
+            row[column_name] = value if value is not None else np.nan
+        return pd.DataFrame([row])
 
     def save_model(self):
         hdf5_path = Path(self.output_dir) / "pycaret_model.h5"
@@ -1691,6 +1749,8 @@ class BaseModelTrainer:
                     )
             if metric_name == "PR-AUC":
                 return self._compute_pr_auc_from_predictions(preds)
+            if metric_name == "Kappa":
+                return cohen_kappa_score(y_true, y_pred)
             if metric_name == "Specificity":
                 labels = pd.unique(pd.concat([y_true, y_pred], ignore_index=True))
                 if len(labels) != 2:
