@@ -5,6 +5,8 @@
 
 GLEAM (Galaxy Learning and Modeling) is a maintained suite of Galaxy tools for no-code and low-code machine learning workflows. The repository is the software-maintenance home for the GLEAM workbench: it contains Galaxy wrappers, Python entrypoints, test assets, and container build definitions for tool development and deployment in Galaxy.
 
+Project website: [https://goeckslab.github.io/gleam/](https://goeckslab.github.io/gleam/)
+
 This repository is not intended to be a manuscript-specific analysis archive. Paper-specific benchmark datasets, figure-generation notebooks, and result tables should live in separate companion repositories or public data archives referenced by the corresponding publication.
 
 ## Tool Families
@@ -51,13 +53,14 @@ GLEAM tools are published for Galaxy administrators through the [Galaxy ToolShed
 1. Sign in to your Galaxy instance as an administrator.
 2. Open `Admin` and then `Install and Uninstall` or `Manage Tools`.
 3. Search for tool suites published by the `goeckslab` owner.
-4. Install the suites you need, for example:
-   - `suite_tabular_learner`
-   - `suite_imagelearner`
-   - `suite_ludwig`
-   - `suite_tiler`
-   - `suite_embedding_extractor`
-   - `suite_mil_bag`
+4. Install the suites you need from their exact ToolShed repositories:
+   - [`suite_tabular_learner`](https://toolshed.g2.bx.psu.edu/repository/view_repository?id=babd0d26f1edc4a6)
+   - [`suite_imagelearner`](https://toolshed.g2.bx.psu.edu/repository/view_repository?id=d141b70930a8ae9e)
+   - [`suite_multimodallearner`](https://toolshed.g2.bx.psu.edu/repository/view_repository?id=02626b9dcabebff1)
+   - [`suite_ludwig`](https://toolshed.g2.bx.psu.edu/repository/view_repository?id=7766a9382c5a05e6)
+   - [`suite_tiler`](https://toolshed.g2.bx.psu.edu/repository/view_repository?id=07dd6bd237b21b26)
+   - [`suite_embedding_extractor`](https://toolshed.g2.bx.psu.edu/repository/view_repository?id=c75060934e8e5c2c)
+   - [`suite_mil_bag`](https://toolshed.g2.bx.psu.edu/repository/view_repository?id=1c742723b8e1449e)
 5. Let Galaxy resolve the declared dependencies and restart the server if your deployment requires it.
 
 This is the recommended path for production Galaxy instances because it tracks released tool definitions rather than an arbitrary development snapshot.

@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GLEAM | Galaxy Learning and Modeling</title>
+    <meta
+      name="description"
+      content="GLEAM is a maintained suite of Galaxy tools for no-code and low-code machine learning workflows."
+    >
+    <link rel="canonical" href="https://goeckslab.github.io/gleam/">
+    <link rel="stylesheet" href="assets/styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="GLEAM home">
+        <span class="brand-mark">G</span>
+        <span>
+          <strong>GLEAM</strong>
+          <small>Galaxy Learning and Modeling</small>
+        </span>
+      </a>
+      <nav class="site-nav" aria-label="Primary navigation">
+        <a href="#tools">Tools</a>
+        <a href="#tutorials">Tutorials</a>
+        <a href="https://github.com/goeckslab/gleam">GitHub</a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top" aria-labelledby="hero-title">
+        <div class="hero-content">
+          <p class="eyebrow">Galaxy Learning and Modeling</p>
+          <h1 id="hero-title">GLEAM</h1>
+          <p class="lede">
+            No-code and low-code machine learning tools for Galaxy, spanning
+            tabular modeling, image learning, and multimodal prediction.
+          </p>
+          <div class="hero-actions" aria-label="Primary actions">
+            <a class="button primary" href="#tools">Use GLEAM tools</a>
+            <a class="button secondary" href="https://github.com/goeckslab/gleam">Browse source</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="metrics" aria-label="GLEAM highlights">
+        <div>
+          <strong>3</strong>
+          <span>tool families</span>
+        </div>
+        <div>
+          <strong>2</strong>
+          <span>current GTN tutorials</span>
+        </div>
+        <div>
+          <strong>Galaxy</strong>
+          <span>history and workflow provenance</span>
+        </div>
+        <div>
+          <strong>GPU-ready</strong>
+          <span>containers for deep learning workloads</span>
+        </div>
+      </section>
+
+      <section class="section intro" aria-labelledby="intro-title">
+        <div class="section-copy">
+          <p class="eyebrow">Built for reproducible biomedical ML</p>
+          <h2 id="intro-title">Train, evaluate, and share models in Galaxy.</h2>
+        </div>
+        <div class="intro-grid">
+          <article>
+            <h3>Accessible</h3>
+            <p>
+              Run machine learning workflows through Galaxy forms and histories without
+              requiring local command-line setup.
+            </p>
+          </article>
+          <article>
+            <h3>Reproducible</h3>
+            <p>
+              Capture inputs, parameters, model artifacts, reports, metrics, and
+              configuration files as Galaxy datasets.
+            </p>
+          </article>
+          <article>
+            <h3>Extensible</h3>
+            <p>
+              Use maintained wrappers and containerized runtimes that can be installed
+              into public, institutional, or development Galaxy servers.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section band" id="tools" aria-labelledby="tools-title">
+        <div class="section-heading">
+          <p class="eyebrow">Workbench</p>
+          <h2 id="tools-title">GLEAM tool families</h2>
+        </div>
+        <div class="tool-grid">
+          <article class="tool-card">
+            <p class="tool-tag">Structured data</p>
+            <h3>Tabular Learner</h3>
+            <p>
+              Train and compare classification or regression models with PyCaret,
+              generate evaluation reports, and reuse the best model for prediction.
+            </p>
+            <div class="link-row">
+              <a href="https://usegalaxy.org/tool_runner?tool_id=toolshed.g2.bx.psu.edu%2Frepos%2Fgoeckslab%2Ftabular_learner%2Ftabular_learner%2F0.1.5">Open on usegalaxy.org</a>
+              <a href="https://usegalaxy.org/tool_runner?tool_id=toolshed.g2.bx.psu.edu%2Frepos%2Fgoeckslab%2Fpycaret_predict%2Fpycaret_predict%2F3.3.2%2B2">Predict/evaluate</a>
+              <a href="https://github.com/goeckslab/gleam/tree/main/tools/tabularlearner">Docs</a>
+            </div>
+          </article>
+          <article class="tool-card">
+            <p class="tool-tag">Computer vision</p>
+            <h3>Image Learner</h3>
+            <p>
+              Train image classification or regression models from image ZIP archives
+              and metadata tables using Ludwig, TorchVision, and MetaFormer backbones.
+            </p>
+            <div class="link-row">
+              <a href="https://usegalaxy.org/tool_runner?tool_id=toolshed.g2.bx.psu.edu%2Frepos%2Fgoeckslab%2Fimage_learner%2Fimage_learner%2F0.1.5">Open on usegalaxy.org</a>
+              <a href="https://github.com/goeckslab/gleam/tree/main/tools/imagelearner">Docs</a>
+            </div>
+          </article>
+          <article class="tool-card">
+            <p class="tool-tag">Mixed modality</p>
+            <h3>Multimodal Learner</h3>
+            <p>
+              Combine tabular, text, and image features in AutoGluon Multimodal with
+              configurable splits, metrics, quality presets, and HTML reporting.
+            </p>
+            <div class="link-row">
+              <a href="https://usegalaxy.org/tool_runner?tool_id=toolshed.g2.bx.psu.edu%2Frepos%2Fgoeckslab%2Fmultimodal_learner%2Fmultimodal_learner%2F0.1.9">Open on usegalaxy.org</a>
+              <a href="https://github.com/goeckslab/gleam/tree/main/tools/multimodallearner">Docs</a>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <section class="section" id="tutorials" aria-labelledby="tutorials-title">
+        <div class="section-heading split">
+          <div>
+            <p class="eyebrow">Galaxy Training Network</p>
+            <h2 id="tutorials-title">Hands-on GLEAM tutorials</h2>
+          </div>
+          <a class="button compact" href="https://training.galaxyproject.org/training-material/topics/statistics/">
+            Browse GTN statistics
+          </a>
+        </div>
+        <div class="tutorial-grid">
+          <article class="tutorial-card">
+            <div>
+              <p class="tool-tag">Image Learner</p>
+              <h3>Validating skin lesion classification on HAM10000</h3>
+              <p>
+                Prepare a balanced HAM10000 subset, run Image Learner with a
+                pretrained CaFormer backbone, and evaluate accuracy, weighted
+                precision, recall, F1, and confusion patterns.
+              </p>
+            </div>
+            <dl>
+              <div>
+                <dt>Published</dt>
+                <dd>Jan 28, 2026</dd>
+              </div>
+              <div>
+                <dt>Level</dt>
+                <dd>Intermediate</dd>
+              </div>
+              <div>
+                <dt>Time</dt>
+                <dd>1 hour</dd>
+              </div>
+            </dl>
+            <div class="link-row">
+              <a href="https://training.galaxyproject.org/training-material/topics/statistics/tutorials/image_learner/tutorial.html">Tutorial</a>
+              <a href="https://training.galaxyproject.org/training-material/topics/statistics/tutorials/image_learner/workflows/main_workflow.html">Workflow</a>
+              <a href="https://training.galaxyproject.org/training-material/topics/statistics/tutorials/image_learner/slides.html">Slides</a>
+            </div>
+          </article>
+
+          <article class="tutorial-card">
+            <div>
+              <p class="tool-tag">Multimodal Learner</p>
+              <h3>Head and neck cancer recurrence prediction with HANCOCK</h3>
+              <p>
+                Train a late-fusion model from clinical tabular fields, text columns,
+                and CD3/CD8 image archives, then interpret ROC, PR, confusion matrix,
+                calibration, and threshold-dependent metrics.
+              </p>
+            </div>
+            <dl>
+              <div>
+                <dt>Published</dt>
+                <dd>Mar 25, 2026</dd>
+              </div>
+              <div>
+                <dt>Level</dt>
+                <dd>Intermediate</dd>
+              </div>
+              <div>
+                <dt>Time</dt>
+                <dd>1 hour</dd>
+              </div>
+            </dl>
+            <div class="link-row">
+              <a href="https://training.galaxyproject.org/training-material/topics/statistics/tutorials/multimodal_learner/tutorial.html">Tutorial</a>
+              <a href="https://training.galaxyproject.org/training-material/topics/statistics/tutorials/multimodal_learner/workflows/main_workflow.html">Workflow</a>
+              <a href="https://training.galaxyproject.org/training-material/topics/statistics/tutorials/multimodal_learner/slides.html">Slides</a>
+            </div>
+          </article>
+        </div>
+      </section>
+
+    </main>
+
+    <footer class="site-footer">
+      <p>
+        GLEAM is maintained by the Goecks Lab and contributors as part of the Galaxy
+        machine learning ecosystem.
+      </p>
+      <p>
+        <a href="https://github.com/goeckslab/gleam/blob/main/LICENSE">License</a>
+        <span aria-hidden="true">|</span>
+        <a href="https://github.com/goeckslab/gleam/blob/main/CITATION.cff">Citation</a>
+        <span aria-hidden="true">|</span>
+        <a href="https://galaxyproject.org/community/machine-learning/">Galaxy ML community</a>
+      </p>
+    </footer>
+  </body>
+</html>
