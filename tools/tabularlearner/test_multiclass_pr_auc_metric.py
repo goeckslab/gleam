@@ -46,19 +46,48 @@ def _install_import_stubs():
 
 _install_import_stubs()
 
-from base_model_trainer import BaseModelTrainer, _add_pr_auc_metric_if_supported
-from classification_metrics import (
+
+def _load_tool_modules():
+    from base_model_trainer import _add_pr_auc_metric_if_supported, BaseModelTrainer
+    from classification_metrics import (
+        labels_in_metric_order,
+        labels_in_sample_order,
+        weighted_ovr_pr_auc,
+    )
+    from feature_importance import FeatureImportanceAnalyzer
+    from pycaret_classification import (
+        _should_skip_pycaret_plot,
+        ClassificationModelTrainer,
+    )
+    from pycaret_predict import _add_pr_auc_metric_if_supported as add_predict_pr_auc
+    from pycaret_regression import RegressionModelTrainer
+
+    return (
+        _add_pr_auc_metric_if_supported,
+        BaseModelTrainer,
+        labels_in_metric_order,
+        labels_in_sample_order,
+        weighted_ovr_pr_auc,
+        FeatureImportanceAnalyzer,
+        _should_skip_pycaret_plot,
+        ClassificationModelTrainer,
+        add_predict_pr_auc,
+        RegressionModelTrainer,
+    )
+
+
+(
+    _add_pr_auc_metric_if_supported,
+    BaseModelTrainer,
     labels_in_metric_order,
     labels_in_sample_order,
     weighted_ovr_pr_auc,
-)
-from feature_importance import FeatureImportanceAnalyzer
-from pycaret_classification import (
-    ClassificationModelTrainer,
+    FeatureImportanceAnalyzer,
     _should_skip_pycaret_plot,
-)
-from pycaret_regression import RegressionModelTrainer
-from pycaret_predict import _add_pr_auc_metric_if_supported as add_predict_pr_auc
+    ClassificationModelTrainer,
+    add_predict_pr_auc,
+    RegressionModelTrainer,
+) = _load_tool_modules()
 
 
 class FakeModel:

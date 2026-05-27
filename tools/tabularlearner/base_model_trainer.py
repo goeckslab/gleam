@@ -36,6 +36,7 @@ from utils import (
 logging.basicConfig(level=logging.DEBUG)
 LOG = logging.getLogger(__name__)
 
+
 def pr_auc_curve_score(y_true, y_score):
     """
     PR-AUC scorer matching the report's Precision-Recall curve logic.
