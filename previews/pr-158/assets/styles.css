@@ -437,6 +437,18 @@ a:hover {
   font-size: 1.05rem;
 }
 
+.repo-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem 1rem;
+  margin: 1rem 0 0;
+  padding-left: 1.1rem;
+}
+
+.repo-list a {
+  font-weight: 800;
+}
+
 .action-panel {
   display: grid;
   gap: 0.75rem;
@@ -524,6 +536,7 @@ a:hover {
   .intro-grid,
   .tool-grid,
   .tutorial-grid,
+  .repo-list,
   .tutorial-card dl {
     grid-template-columns: 1fr;
   }
