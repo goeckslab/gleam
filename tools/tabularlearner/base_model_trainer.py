@@ -2533,6 +2533,9 @@ class BaseModelTrainer:
         self.save_model()
         self.generate_plots()
         self.generate_plots_explainer()
-        self.generate_tree_plots()
+        try:
+            self.generate_tree_plots()
+        except Exception as exc:
+            LOG.warning("Tree plots skipped: %s", exc)
         self.save_html_report()
         # self.save_dashboard()

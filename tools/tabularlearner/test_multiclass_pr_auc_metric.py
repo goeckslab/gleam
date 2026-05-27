@@ -418,6 +418,38 @@ def test_regression_permutation_importance_uses_supported_explainer_api(monkeypa
     assert {"kind": "permutation"} in calls
 
 
+def test_tree_plot_failure_does_not_block_html_report(caplog):
+    calls = []
+    trainer = object.__new__(BaseModelTrainer)
+    trainer.load_data = lambda: calls.append("load_data")
+    trainer.setup_pycaret = lambda: calls.append("setup_pycaret")
+    trainer.train_model = lambda: calls.append("train_model")
+    trainer.save_model = lambda: calls.append("save_model")
+    trainer.generate_plots = lambda: calls.append("generate_plots")
+    trainer.generate_plots_explainer = lambda: calls.append("generate_plots_explainer")
+    trainer.save_html_report = lambda: calls.append("save_html_report")
+
+    def _raise_tree_error():
+        calls.append("generate_tree_plots")
+        raise RuntimeError("dot failed")
+
+    trainer.generate_tree_plots = _raise_tree_error
+
+    BaseModelTrainer.run(trainer)
+
+    assert calls == [
+        "load_data",
+        "setup_pycaret",
+        "train_model",
+        "save_model",
+        "generate_plots",
+        "generate_plots_explainer",
+        "generate_tree_plots",
+        "save_html_report",
+    ]
+    assert "Tree plots skipped: dot failed" in caplog.text
+
+
 class FakeShapExplanation:
     def __init__(self, shape, selected=None):
         self.shape = shape
