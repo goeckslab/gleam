@@ -19,7 +19,11 @@ from utils import (
 LOG = logging.getLogger(__name__)
 
 
-MULTICLASS_UNAVAILABLE_PYCARET_PLOTS = {"threshold"}
+MULTICLASS_UNAVAILABLE_PYCARET_PLOTS = {
+    "calibration",
+    "rfe",
+    "threshold",
+}
 
 
 def _should_skip_pycaret_plot(plot_name, exp):
@@ -113,7 +117,11 @@ class ClassificationEvaluator(PyCaretModelEvaluator):
                                                plot=plot_name, save=True)
                     plot_paths[plot_name] = plot_path
                 except Exception as e:
-                    LOG.error(f"Error generating plot {plot_name}: {e}")
+                    LOG.warning(
+                        "Could not generate optional PyCaret plot %s: %s",
+                        plot_name,
+                        e,
+                    )
                     continue
             generate_html_report(plot_paths, metrics)
 
@@ -147,7 +155,11 @@ class RegressionEvaluator(PyCaretModelEvaluator):
                                                plot=plot_name, save=True)
                     plot_paths[plot_name] = plot_path
                 except Exception as e:
-                    LOG.error(f"Error generating plot {plot_name}: {e}")
+                    LOG.warning(
+                        "Could not generate optional PyCaret plot %s: %s",
+                        plot_name,
+                        e,
+                    )
                     continue
             generate_html_report(plot_paths, metrics)
         else:

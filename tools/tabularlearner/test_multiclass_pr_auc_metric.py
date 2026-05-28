@@ -161,8 +161,8 @@ class FakePlotExperiment:
 
     def plot_model(self, model, plot, save=True, plot_kwargs=None):
         self.plot_calls.append(plot)
-        if plot == "threshold":
-            raise AssertionError("threshold plot should be skipped for multiclass")
+        if plot in {"calibration", "rfe", "threshold"}:
+            raise AssertionError(f"{plot} plot should be skipped for multiclass")
         return f"{plot}.png"
 
 
@@ -235,7 +235,7 @@ def test_predict_evaluator_pr_auc_metric_is_skipped_for_multiclass():
     assert exp.metric_added is False
 
 
-def test_multiclass_threshold_plot_is_skipped():
+def test_multiclass_unsupported_pycaret_plots_are_skipped():
     exp = FakePlotExperiment()
     trainer = object.__new__(ClassificationModelTrainer)
     trainer.best_model = FakeModel()
@@ -245,8 +245,14 @@ def test_multiclass_threshold_plot_is_skipped():
     trainer.generate_plots()
 
     assert _should_skip_pycaret_plot("threshold", exp) is True
+    assert _should_skip_pycaret_plot("calibration", exp) is True
+    assert _should_skip_pycaret_plot("rfe", exp) is True
     assert "threshold" not in exp.plot_calls
+    assert "calibration" not in exp.plot_calls
+    assert "rfe" not in exp.plot_calls
     assert "threshold" not in trainer.plots
+    assert "calibration" not in trainer.plots
+    assert "rfe" not in trainer.plots
     assert "auc" in exp.plot_calls
 
 
@@ -337,6 +343,42 @@ def test_report_confusion_matrix_preserves_sample_label_order():
 
     assert fig.data[0].x == tuple(f"Pred {label}" for label in labels)
     assert fig.data[0].y == tuple(f"True {label}" for label in labels)
+
+
+def test_original_test_labels_are_not_decoded_again(monkeypatch):
+    generic = sys.modules["pycaret.utils.generic"]
+
+    class LabelEncoder:
+        classes_ = np.array([1, 2, 3, 4, 5])
+
+        def inverse_transform(self, values):
+            return np.asarray(values) + 1
+
+    monkeypatch.setattr(
+        generic,
+        "get_label_encoder",
+        lambda pipeline: LabelEncoder(),
+    )
+
+    class ExperimentWithOriginalLabels:
+        pipeline = None
+
+        def get_config(self, key):
+            if key == "y_test":
+                return pd.Series([1, 5])
+            if key == "y_test_transformed":
+                return pd.Series([0, 4])
+            raise KeyError(key)
+
+    trainer = object.__new__(ClassificationModelTrainer)
+    trainer.task_type = "classification"
+    trainer.target = "AGE"
+    trainer.test_data = None
+    trainer.exp = ExperimentWithOriginalLabels()
+
+    labels = trainer._get_original_test_labels_for_display(pd.Series([0, 4]))
+
+    assert list(labels) == [1, 5]
 
 
 def test_labeled_scatter_preserves_sample_label_order():

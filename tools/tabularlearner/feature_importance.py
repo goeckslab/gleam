@@ -12,6 +12,7 @@ from pycaret.regression import RegressionExperiment
 
 logging.basicConfig(level=logging.DEBUG)
 LOG = logging.getLogger(__name__)
+logging.getLogger("matplotlib").setLevel(logging.WARNING)
 logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 
 

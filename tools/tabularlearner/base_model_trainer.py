@@ -904,6 +904,15 @@ class BaseModelTrainer:
                 return arr
 
             encoded_vals = flat[mask]
+            original_classes = set(getattr(label_encoder, "classes_", []))
+            if original_classes:
+                try:
+                    value_set = set(encoded_vals)
+                    encoded_range = set(range(len(original_classes)))
+                    if value_set.issubset(original_classes) and not value_set.issubset(encoded_range):
+                        return arr
+                except Exception:
+                    pass
             try:
                 decoded_vals = label_encoder.inverse_transform(encoded_vals)
             except Exception:

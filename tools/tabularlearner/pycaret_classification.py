@@ -27,7 +27,11 @@ from utils import predict_proba
 
 LOG = logging.getLogger(__name__)
 
-MULTICLASS_UNAVAILABLE_PYCARET_PLOTS = {"threshold"}
+MULTICLASS_UNAVAILABLE_PYCARET_PLOTS = {
+    "calibration",
+    "rfe",
+    "threshold",
+}
 
 
 def _apply_report_layout(fig: go.Figure) -> go.Figure:
@@ -142,7 +146,11 @@ class ClassificationModelTrainer(BaseModelTrainer):
                     )
                     self.plots[plot_name] = plot_path
             except Exception as e:
-                LOG.error(f"Error generating plot {plot_name}: {e}")
+                LOG.warning(
+                    "Could not generate optional PyCaret plot %s: %s",
+                    plot_name,
+                    e,
+                )
                 continue
 
     def generate_plots_explainer(self):
@@ -353,7 +361,11 @@ class ClassificationModelTrainer(BaseModelTrainer):
                 if fig is not None:
                     self.explainer_plots[key] = fig
             except Exception as e:
-                LOG.error(f"Error generating explainer plot {key}: {e}")
+                LOG.warning(
+                    "Could not generate optional explainer plot %s: %s",
+                    key,
+                    e,
+                )
 
         if self._explainer_feature_count_exceeds_cap():
             LOG.info(
@@ -399,7 +411,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
                         LOG.warning(f"PDP AssertionError for {f!r}: {ae}")
                         return None
                     except Exception as e:
-                        LOG.error(f"Unexpected error plotting PDP for {f!r}: {e}")
+                        LOG.warning(f"Unexpected error plotting PDP for {f!r}: {e}")
                         return None
 
                 return _plot
@@ -477,29 +489,32 @@ class ClassificationModelTrainer(BaseModelTrainer):
         label_values = labels_in_sample_order(y_true, y_pred)
         return y_true, y_pred, label_values, y_scores, score_labels
 
-    def _decode_labels_for_display(self, values):
+    def _decode_labels_for_display(self, values, assume_encoded=True):
         """Map transformed class ids back to the original target labels for plots."""
+        if not assume_encoded:
+            return values
         return self._decode_class_labels_for_display(values)
 
     def _get_original_test_labels_for_display(self, fallback):
         """Return original test labels for report plots when PyCaret exposes them."""
         candidates = []
         if self.test_data is not None and self.target in self.test_data.columns:
-            candidates.append(self.test_data[self.target])
+            candidates.append((self.test_data[self.target], False))
         for key in ("y_test", "y_test_transformed"):
             try:
-                candidates.append(self.exp.get_config(key))
+                value = self.exp.get_config(key)
             except Exception:
-                candidates.append(getattr(self.exp, key, None))
+                value = getattr(self.exp, key, None)
+            candidates.append((value, key.endswith("_transformed")))
 
         fallback_len = len(fallback) if fallback is not None else None
-        for candidate in candidates:
+        for candidate, assume_encoded in candidates:
             if candidate is None:
                 continue
             series = pd.Series(candidate).reset_index(drop=True)
             if fallback_len is not None and len(series) != fallback_len:
                 continue
-            return self._decode_labels_for_display(series)
+            return self._decode_labels_for_display(series, assume_encoded=assume_encoded)
 
         return self._decode_labels_for_display(fallback)
 
@@ -812,9 +827,10 @@ class ClassificationModelTrainer(BaseModelTrainer):
         return fig
 
     def _build_confusion_matrix_fig(self, y_true, y_pred, labels):
-        ordered_labels = list(labels)
-        cm = confusion_matrix(y_true, y_pred, labels=ordered_labels)
-        label_names = [str(lbl) for lbl in ordered_labels]
+        label_names = [str(lbl) for lbl in labels]
+        y_true_display = pd.Series(y_true).map(str)
+        y_pred_display = pd.Series(y_pred).map(str)
+        cm = confusion_matrix(y_true_display, y_pred_display, labels=label_names)
         fig_cm = go.Figure(
             data=go.Heatmap(
                 z=cm,
@@ -846,10 +862,15 @@ class ClassificationModelTrainer(BaseModelTrainer):
         return fig_cm
 
     def _build_classification_report_fig(self, y_true, y_pred, labels):
-        precision, recall, f1, support = precision_recall_fscore_support(
-            y_true, y_pred, labels=labels, zero_division=0
-        )
         label_names = [str(lbl) for lbl in labels]
+        y_true_display = pd.Series(y_true).map(str)
+        y_pred_display = pd.Series(y_pred).map(str)
+        precision, recall, f1, support = precision_recall_fscore_support(
+            y_true_display,
+            y_pred_display,
+            labels=label_names,
+            zero_division=0,
+        )
         metrics = ["precision", "recall", "f1", "support"]
 
         max_support = float(max(support) if len(support) else 0)
