@@ -51,7 +51,14 @@ jobs:
             pr_json="$(gh api "repos/${GITHUB_REPOSITORY}/pulls" \
               -f state=open \
               -f head="${GITHUB_REPOSITORY_OWNER}:${GITHUB_REF_NAME}" \
-              --jq '.[0] // empty')"
+              --jq '.[0] // empty' 2> /dev/null || true)"
+
+            if [ -z "${pr_json}" ]; then
+              head_query="$(jq -rn --arg head "${GITHUB_REPOSITORY_OWNER}:${GITHUB_REF_NAME}" '$head | @uri')"
+              pr_json="$(curl -fsSL \
+                "https://api.github.com/repos/${GITHUB_REPOSITORY}/pulls?state=open&head=${head_query}" \
+                | jq -c '.[0] // empty')"
+            fi
 
             if [ -z "${pr_json}" ]; then
               echo "has_pr=false" >> "${GITHUB_OUTPUT}"
