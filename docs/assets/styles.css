@@ -363,6 +363,11 @@ a:hover {
 }
 
 .link-row {
+  margin-top: 0;
+}
+
+.workflow-button {
+  align-self: flex-start;
   margin-top: auto;
 }
 
