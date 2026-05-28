@@ -12,6 +12,7 @@ from pycaret.regression import RegressionExperiment
 
 logging.basicConfig(level=logging.DEBUG)
 LOG = logging.getLogger(__name__)
+logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 
 
 class FeatureImportanceAnalyzer:
@@ -298,11 +299,10 @@ class FeatureImportanceAnalyzer:
                     error_message,
                 )
                 try:
-                    explainer = shap.TreeExplainer(
+                    explainer = self._tree_explainer(
                         model,
                         bg,
                         feature_perturbation="interventional",
-                        n_jobs=-1,
                     )
                     shap_values = explainer(X_data)
                     self.shap_model_name = (
@@ -445,6 +445,9 @@ class FeatureImportanceAnalyzer:
             return model.decision_function
         return model.predict
 
+    def _tree_explainer(self, model, background, **kwargs):
+        return shap.TreeExplainer(model, background, **kwargs)
+
     @staticmethod
     def _safe_label(label):
         return (
@@ -507,8 +510,8 @@ class FeatureImportanceAnalyzer:
             # 4) Random Forest
             if "randomforestclassifier" in lname:
                 return (
-                    shap.TreeExplainer(
-                        model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                    self._tree_explainer(
+                        model, bg, feature_perturbation="tree_path_dependent"
                     ),
                     "tree_path_dependent",
                     True,
@@ -517,8 +520,8 @@ class FeatureImportanceAnalyzer:
             # 5) Gradient Boosting
             if "gradientboostingclassifier" in lname:
                 return (
-                    shap.TreeExplainer(
-                        model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                    self._tree_explainer(
+                        model, bg, feature_perturbation="tree_path_dependent"
                     ),
                     "tree_path_dependent",
                     True,
@@ -527,8 +530,8 @@ class FeatureImportanceAnalyzer:
             # 6) AdaBoost
             if "adaboostclassifier" in lname:
                 return (
-                    shap.TreeExplainer(
-                        model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                    self._tree_explainer(
+                        model, bg, feature_perturbation="tree_path_dependent"
                     ),
                     "tree_path_dependent",
                     True,
@@ -537,8 +540,8 @@ class FeatureImportanceAnalyzer:
             # 7) Extra Trees
             if "extratreesclassifier" in lname:
                 return (
-                    shap.TreeExplainer(
-                        model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                    self._tree_explainer(
+                        model, bg, feature_perturbation="tree_path_dependent"
                     ),
                     "tree_path_dependent",
                     True,
@@ -547,12 +550,11 @@ class FeatureImportanceAnalyzer:
             # 8) LightGBM
             if "lgbmclassifier" in lname:
                 return (
-                    shap.TreeExplainer(
+                    self._tree_explainer(
                         model,
                         bg,
                         model_output="raw",
                         feature_perturbation="tree_path_dependent",
-                        n_jobs=-1,
                     ),
                     "tree_path_dependent",
                     True,
@@ -561,8 +563,8 @@ class FeatureImportanceAnalyzer:
             # 9) XGBoost
             if "xgbclassifier" in lname:
                 return (
-                    shap.TreeExplainer(
-                        model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                    self._tree_explainer(
+                        model, bg, feature_perturbation="tree_path_dependent"
                     ),
                     "tree_path_dependent",
                     True,
@@ -571,8 +573,8 @@ class FeatureImportanceAnalyzer:
             # 10) CatBoost (classifier)
             if "catboost" in lname:
                 return (
-                    shap.TreeExplainer(
-                        model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                    self._tree_explainer(
+                        model, bg, feature_perturbation="tree_path_dependent"
                     ),
                     "tree_path_dependent",
                     True,
@@ -592,8 +594,8 @@ class FeatureImportanceAnalyzer:
             # 13) Decision Tree
             if "decisiontreeclassifier" in lname:
                 return (
-                    shap.TreeExplainer(
-                        model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                    self._tree_explainer(
+                        model, bg, feature_perturbation="tree_path_dependent"
                     ),
                     "tree_path_dependent",
                     True,
@@ -659,8 +661,8 @@ class FeatureImportanceAnalyzer:
         ]
         if any(k in lname for k in tree_class_names):
             return (
-                shap.TreeExplainer(
-                    model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                self._tree_explainer(
+                    model, bg, feature_perturbation="tree_path_dependent"
                 ),
                 "tree_path_dependent",
                 True,
@@ -669,28 +671,27 @@ class FeatureImportanceAnalyzer:
         # Boosting libraries
         if "lgbmregressor" in lname or "lightgbm" in lname:
             return (
-                shap.TreeExplainer(
+                self._tree_explainer(
                     model,
                     bg,
                     model_output="raw",
                     feature_perturbation="tree_path_dependent",
-                    n_jobs=-1,
                 ),
                 "tree_path_dependent",
                 True,
             )
         if "xgbregressor" in lname or "xgboost" in lname:
             return (
-                shap.TreeExplainer(
-                    model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                self._tree_explainer(
+                    model, bg, feature_perturbation="tree_path_dependent"
                 ),
                 "tree_path_dependent",
                 True,
             )
         if "catboost" in lname:
             return (
-                shap.TreeExplainer(
-                    model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                self._tree_explainer(
+                    model, bg, feature_perturbation="tree_path_dependent"
                 ),
                 "tree_path_dependent",
                 True,

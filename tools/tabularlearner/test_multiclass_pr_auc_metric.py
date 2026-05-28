@@ -543,6 +543,47 @@ def test_feature_importance_setup_prefers_supplied_data_over_exp_dataset(tmp_pat
     assert exp.setup_kwargs["target"] == "AGE"
 
 
+def test_tree_shap_explainer_does_not_pass_unsupported_n_jobs(monkeypatch):
+    import feature_importance
+
+    calls = []
+
+    def fake_tree_explainer(model, background, **kwargs):
+        calls.append(kwargs)
+        if "n_jobs" in kwargs:
+            raise TypeError("__init__() got an unexpected keyword argument 'n_jobs'")
+        return "explainer"
+
+    monkeypatch.setattr(
+        feature_importance.shap,
+        "TreeExplainer",
+        fake_tree_explainer,
+        raising=False,
+    )
+
+    class LGBMClassifier:
+        pass
+
+    analyzer = object.__new__(FeatureImportanceAnalyzer)
+    analyzer.task_type = "classification"
+
+    explainer, label, tree_based = analyzer._choose_shap_explainer(
+        LGBMClassifier(),
+        pd.DataFrame({"feature": [1, 2]}),
+        lambda X: X,
+    )
+
+    assert explainer == "explainer"
+    assert label == "tree_path_dependent"
+    assert tree_based is True
+    assert calls == [
+        {
+            "model_output": "raw",
+            "feature_perturbation": "tree_path_dependent",
+        }
+    ]
+
+
 class FakeShapExplanation:
     def __init__(self, shape, selected=None):
         self.shape = shape
