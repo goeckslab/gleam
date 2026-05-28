@@ -1,4 +1,4 @@
-<tool id="image_learner" name="Image Learner" version="0.1.5" profile="22.01">
+<tool id="image_learner" name="Image Learner" version="0.1.6" profile="22.01">
     <description>trains and evaluates an image classification/regression model</description>
     <requirements>
         <container type="docker">quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1</container>
@@ -67,8 +67,12 @@
                         --batch-size "$customize_defaults_section.batch_size_condition.batch_size"
                     #end if
                     --split-probabilities "$customize_defaults_section.train_split" "$customize_defaults_section.val_split" "$customize_defaults_section.test_split"
-                    #if $customize_defaults_section.threshold
-                        --threshold "$customize_defaults_section.threshold"
+                    #if $customize_defaults_section.binary_threshold_policy.mode == "auto"
+                        --threshold-mode auto
+                        --threshold-metric "$customize_defaults_section.binary_threshold_policy.threshold_metric"
+                    #else
+                        --threshold-mode manual
+                        --threshold "$customize_defaults_section.binary_threshold_policy.threshold"
                     #end if
                 #if $model_hyperparameter_configuration.augmentation
                     --augmentation "$model_hyperparameter_configuration.augmentation"
@@ -384,7 +388,28 @@
                     label="Test split proportion (only works if no split column in the metadata csv)"
                     value="0.2"
                     help="Fraction of data for testing (e.g., 0.2) train split + val split + test split should = 1."/>
-            <param name="threshold" type="float" value="0.5" min="0.0" max="1.0" optional="true" label="Decision Threshold (binary only)" help="Set the decision threshold for binary classification (0.0–1.0). Only applies when task is binary; default is 0.5." />
+            <conditional name="binary_threshold_policy">
+                <param name="mode" type="select" label="Binary classification threshold">
+                    <option value="auto" selected="true">Auto: optimize threshold by metric</option>
+                    <option value="manual">Manual: set threshold value</option>
+                </param>
+                <when value="auto">
+                    <param name="threshold_metric" type="select" label="Threshold optimization metric"
+                           help="Used only for binary classification. The threshold is optimized on the validation split after Ludwig training.">
+                        <option value="f1" selected="true">F1</option>
+                        <option value="accuracy">Accuracy</option>
+                        <option value="balanced_accuracy">Balanced Accuracy</option>
+                        <option value="precision">Precision</option>
+                        <option value="recall">Recall</option>
+                        <option value="mcc">Matthews Correlation Coefficient</option>
+                    </param>
+                </when>
+                <when value="manual">
+                    <param name="threshold" type="float" value="0.5" min="0.0" max="1.0" optional="true"
+                           label="Manual threshold value"
+                           help="Only applies to binary classification. Probability above which a prediction is considered positive." />
+                </when>
+            </conditional>
         </section>
     </inputs>
     <outputs>
@@ -525,16 +550,18 @@
             <param name="data_configuration|input_csv" value="mnist_subset_binary.csv" ftype="csv" />
             <param name="data_configuration|image_zip" value="mnist_subset.zip" ftype="zip" />
             <param name="model_hyperparameter_configuration|model_name" value="resnet18" />
-            <param name="customize_defaults_section|threshold" value="0.6" />
-            <param name="model_hyperparameter_configuration|task_selection|task" value="classification" />
-            <param name="model_hyperparameter_configuration|task_selection|validation_metric_multiclass" value="accuracy" />
+            <param name="customize_defaults_section|binary_threshold_policy|mode" value="manual" />
+            <param name="customize_defaults_section|binary_threshold_policy|threshold" value="0.6" />
+            <param name="model_hyperparameter_configuration|task_selection|task" value="binary" />
+            <param name="model_hyperparameter_configuration|task_selection|validation_metric_binary" value="accuracy" />
             <output name="output_report">
                 <assert_contents>
                     <has_text text="Experiment Summary" />
                     <has_text text="Validation Summary" />
                     <has_text text="Test Summary" />
-                    <has_text text="Threshold" />
-                    <has_text text="0.60" />
+                    <has_text text="Decision Threshold (Test)" />
+                    <has_text text="Threshold Source" />
+                    <has_text text="0.600" />
                 </assert_contents>
             </output>
             <output name="output_artifacts_zip" ftype="zip">

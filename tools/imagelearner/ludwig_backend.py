@@ -43,6 +43,8 @@ from plotly_plots import (
     build_regression_test_plots,
     build_regression_train_val_plots,
     build_train_validation_plots,
+    compute_binary_threshold_metrics_from_predictions,
+    optimize_binary_threshold_from_predictions,
 )
 from utils import detect_output_type, extract_metrics_from_json
 
@@ -530,7 +532,10 @@ class LudwigDirectBackend:
                     "type": "binary",
                     "loss": {"type": "binary_weighted_cross_entropy"},
                 }
-                if config_params.get("threshold") is not None:
+                if (
+                    config_params.get("threshold_mode", "auto") == "manual"
+                    and config_params.get("threshold") is not None
+                ):
                     output_feat["threshold"] = float(config_params["threshold"])
             else:
                 output_feat = {
@@ -1618,6 +1623,84 @@ class LudwigDirectBackend:
                 else None
             )
 
+        predictions_csv_path = exp_dir / "predictions.csv"
+        if output_type == "binary":
+            threshold_mode = str(
+                config_for_summary.get("threshold_mode")
+                or config.get("threshold_mode")
+                or "auto"
+            ).lower()
+            requested_metric = (
+                config_for_summary.get("threshold_metric")
+                or config.get("threshold_metric")
+                or "f1"
+            )
+            if threshold_mode == "manual":
+                threshold = (
+                    config_for_summary.get("threshold")
+                    if config_for_summary.get("threshold") is not None
+                    else config.get("threshold")
+                )
+                threshold = 0.5 if threshold is None else float(threshold)
+                config_for_summary["threshold"] = threshold
+                config_for_summary["threshold_source"] = "Manual"
+                config_for_summary["threshold_metric"] = "Not used"
+            else:
+                try:
+                    optimized_threshold = None
+                    if predictions_csv_path.exists():
+                        optimized_threshold = optimize_binary_threshold_from_predictions(
+                            str(predictions_csv_path),
+                            label_data_path=str(config.get("label_column_data_path"))
+                            if config.get("label_column_data_path")
+                            else None,
+                            split_value=1,
+                            metric=str(requested_metric),
+                        )
+                    if optimized_threshold is None:
+                        raise ValueError("validation probabilities unavailable")
+                    config_for_summary["threshold"] = optimized_threshold["threshold"]
+                    config_for_summary["threshold_source"] = "Optimized on validation split"
+                    config_for_summary["threshold_metric"] = optimized_threshold[
+                        "metric_display"
+                    ]
+                    config_for_summary["threshold_metric_value"] = optimized_threshold[
+                        "metric_value"
+                    ]
+                except Exception as exc:
+                    config_for_summary["threshold"] = 0.5
+                    config_for_summary["threshold_source"] = (
+                        "Default 0.5 (automatic optimization unavailable)"
+                    )
+                    config_for_summary["threshold_metric"] = str(requested_metric)
+                    config_for_summary["threshold_reason"] = str(exc)
+                    logger.warning(
+                        "Could not optimize binary decision threshold; using 0.5: %s",
+                        exc,
+                    )
+        else:
+            config_for_summary["threshold"] = None
+
+        if output_type == "binary" and predictions_csv_path.exists():
+            try:
+                threshold_metrics = compute_binary_threshold_metrics_from_predictions(
+                    str(predictions_csv_path),
+                    float(config_for_summary.get("threshold", 0.5)),
+                    label_data_path=str(config.get("label_column_data_path"))
+                    if config.get("label_column_data_path")
+                    else None,
+                    split_value=2,
+                )
+                if threshold_metrics:
+                    test_metrics_html = format_test_merged_stats_table_html(
+                        threshold_metrics, output_type
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Could not recompute binary test metrics at selected threshold: %s",
+                    exc,
+                )
+
         dataset_overview_html = build_dataset_overview(
             label_metadata_path,
             output_type,
@@ -1723,9 +1806,6 @@ class LudwigDirectBackend:
                 )
             return html_section
 
-        # Show dataset overview, performance first, then config
-        predictions_csv_path = exp_dir / "predictions.csv"
-
         tab1_content = dataset_overview_html + metrics_html + config_html
 
         tab2_content = train_val_metrics_html
@@ -1746,6 +1826,14 @@ class LudwigDirectBackend:
                     if config.get("label_column_data_path")
                     else None,
                     split_value=1,
+                    selected_threshold=float(threshold_value)
+                    if threshold_value is not None
+                    else None,
+                    selected_metric=str(
+                        config_for_summary.get("threshold_metric")
+                        or config.get("threshold_metric")
+                        or "f1"
+                    ),
                 )
             except Exception as e:
                 logger.warning(f"Could not generate validation threshold plot: {e}")

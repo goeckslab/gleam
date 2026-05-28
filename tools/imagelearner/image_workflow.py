@@ -438,6 +438,8 @@ class ImageLearnerCLI:
                 "image_resize": self.args.image_resize,
                 "image_zip": self.args.image_zip,
                 "threshold": self.args.threshold,
+                "threshold_mode": self.args.threshold_mode,
+                "threshold_metric": self.args.threshold_metric,
                 "label_metadata": self.label_metadata,
                 "output_type_hint": self.output_type_hint,
                 "validation_metric": self.args.validation_metric,

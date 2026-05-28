@@ -55,6 +55,8 @@ def argument_checker(args, parser):
         parser.error(f"Metada file not found: {args.csv_file}")
     if not (args.image_zip.is_file() or args.image_zip.is_dir()):
         parser.error(f"ZIP or directory not found: {args.image_zip}")
+    if args.threshold is not None and not 0.0 <= args.threshold <= 1.0:
+        parser.error("threshold must be between 0.0 and 1.0")
     if args.augmentation is not None:
         try:
             augmentation_setup = aug_parse(args.augmentation)

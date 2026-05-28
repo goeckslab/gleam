@@ -11,7 +11,9 @@ from sklearn.metrics import (
     accuracy_score,
     auc,
     average_precision_score,
+    balanced_accuracy_score,
     f1_score,
+    matthews_corrcoef,
     precision_recall_curve,
     precision_score,
     recall_score,
@@ -1175,27 +1177,94 @@ def build_binary_threshold_plot(
     predictions_path: str,
     label_data_path: Optional[str] = None,
     split_value: int = 1,
+    selected_threshold: Optional[float] = None,
+    selected_metric: str = "f1",
 ) -> Optional[Dict[str, str]]:
     """Build a binary threshold sweep plot (accuracy, precision, recall, F1) for a given split."""
+    threshold_data = load_binary_threshold_data(
+        predictions_path, label_data_path=label_data_path, split_value=split_value
+    )
+    if threshold_data is None:
+        return None
+
+    y_true_bin = threshold_data["y_true_bin"]
+    y_score = threshold_data["y_score"]
+
+    thresholds = np.linspace(0.0, 1.0, 101)
+    accs: List[float] = []
+    balanced_accs: List[float] = []
+    precs: List[float] = []
+    recs: List[float] = []
+    f1s: List[float] = []
+    mccs: List[float] = []
+    for t in thresholds:
+        preds = (y_score >= t).astype(int)
+        accs.append(accuracy_score(y_true_bin, preds))
+        balanced_accs.append(balanced_accuracy_score(y_true_bin, preds))
+        precs.append(precision_score(y_true_bin, preds, zero_division=0))
+        recs.append(recall_score(y_true_bin, preds, zero_division=0))
+        f1s.append(f1_score(y_true_bin, preds, zero_division=0))
+        mccs.append(matthews_corrcoef(y_true_bin, preds))
+
+    if selected_threshold is None:
+        optimized = optimize_binary_threshold_values(
+            y_true_bin, y_score, metric=selected_metric
+        )
+        marker_threshold = optimized["threshold"] if optimized else thresholds[int(np.argmax(f1s))]
+    else:
+        marker_threshold = float(selected_threshold)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=thresholds, y=accs, mode="lines", name="Accuracy", line=dict(width=4)))
+    fig.add_trace(go.Scatter(x=thresholds, y=balanced_accs, mode="lines", name="Balanced Accuracy", line=dict(width=4)))
+    fig.add_trace(go.Scatter(x=thresholds, y=precs, mode="lines", name="Precision", line=dict(width=4)))
+    fig.add_trace(go.Scatter(x=thresholds, y=recs, mode="lines", name="Recall", line=dict(width=4)))
+    fig.add_trace(go.Scatter(x=thresholds, y=f1s, mode="lines", name="F1-Score", line=dict(width=4)))
+    fig.add_trace(go.Scatter(x=thresholds, y=mccs, mode="lines", name="MCC", line=dict(width=4)))
+    fig.add_shape(
+        type="line",
+        x0=marker_threshold,
+        x1=marker_threshold,
+        y0=0,
+        y1=1,
+        line=dict(color="gray", width=2, dash="dash"),
+    )
+    fig.update_layout(
+        title=dict(text="Threshold plot", x=0.5),
+        xaxis_title="Threshold",
+        yaxis_title="Metric value",
+        yaxis=dict(range=[0, 1]),
+        width=760,
+        height=520,
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    _style_fig(fig)
+    return _wrap_plot("Threshold plot", fig, include_js=True)
+
+
+def load_binary_threshold_data(
+    predictions_path: str,
+    label_data_path: Optional[str] = None,
+    split_value: int = 1,
+) -> Optional[Dict[str, np.ndarray]]:
+    """Load binary labels and positive-class probabilities for threshold sweeps."""
     preds_file = Path(predictions_path)
     if not preds_file.exists():
         return None
 
     try:
-        df_pred = pd.read_csv(predictions_path)
+        df_full = pd.read_csv(predictions_path)
     except Exception as exc:
-        print(f"Warning: Unable to read predictions CSV for threshold plot: {exc}")
+        print(f"Warning: Unable to read predictions CSV for threshold optimization: {exc}")
         return None
 
     labels_from_dataset: Optional[pd.Series] = None
-    df_full = df_pred.copy()
 
     def _filter_by_split(df: pd.DataFrame, split_val: int) -> pd.DataFrame:
         if SPLIT_COLUMN_NAME in df.columns:
             return df[df[SPLIT_COLUMN_NAME] == split_val].reset_index(drop=True)
         return df
 
-    # Try preferred split, then fallback to others with data (val -> test -> train)
     candidate_splits = [split_value, 2, 0, 1] if split_value == 1 else [split_value, 1, 0, 2]
     df_candidate = pd.DataFrame()
     used_split: Optional[int] = None
@@ -1208,7 +1277,6 @@ def build_binary_threshold_plot(
         df_candidate = df_full
     df_pred = df_candidate.reset_index(drop=True)
 
-    # If still empty (e.g., split column exists but no rows for candidates), fall back to all rows
     if df_pred.empty:
         df_pred = df_full.reset_index(drop=True)
         labels_from_dataset = None
@@ -1226,9 +1294,8 @@ def build_binary_threshold_plot(
                 if len(labels_from_dataset) == len(df_pred):
                     labels_from_dataset = labels_from_dataset.reset_index(drop=True)
         except Exception as exc:
-            print(f"Warning: Unable to align labels for threshold plot: {exc}")
+            print(f"Warning: Unable to align labels for threshold optimization: {exc}")
 
-    # Identify probability columns
     prob_cols = [
         c
         for c in df_pred.columns
@@ -1239,16 +1306,12 @@ def build_binary_threshold_plot(
     ]
     if not prob_cols and "probabilities" in df_pred.columns:
         labels_guess = sorted([str(u) for u in pd.unique(df_pred.get(LABEL_COLUMN_NAME, []))])
-        # reuse expansion logic from diagnostics
         try:
             first_val = df_pred["probabilities"].dropna().iloc[0]
             parsed = json.loads(first_val) if isinstance(first_val, str) else list(first_val)
             n = len(parsed)
             if n > 0:
-                if labels_guess and len(labels_guess) == n:
-                    labels_use = labels_guess
-                else:
-                    labels_use = [str(i) for i in range(n)]
+                labels_use = labels_guess if labels_guess and len(labels_guess) == n else [str(i) for i in range(n)]
                 for idx, lbl in enumerate(labels_use):
                     df_pred[f"probabilities_{lbl}"] = df_pred["probabilities"].apply(
                         lambda v: (json.loads(v)[idx] if isinstance(v, str) else list(v)[idx]) if pd.notnull(v) else np.nan
@@ -1265,7 +1328,6 @@ def build_binary_threshold_plot(
             return col.replace("probabilities_", "")
         return col
 
-    # True labels
     def _extract_labels():
         if labels_from_dataset is not None:
             return labels_from_dataset
@@ -1288,7 +1350,6 @@ def build_binary_threshold_plot(
     if labels_series is None or not prob_cols_sorted:
         return None
 
-    # Positive prob column selection
     preferred_keys = ("event", "true", "positive", "pos", "1")
     pos_prob_col = None
     for col in prob_cols_sorted:
@@ -1304,53 +1365,127 @@ def build_binary_threshold_plot(
         return None
 
     y_true = np.array(labels_series.iloc[:min_len])
-    # map to binary 0/1
     unique_labels = pd.unique(y_true)
     if len(unique_labels) < 2:
         return None
-    positive_label = unique_labels[1] if len(unique_labels) >= 2 else unique_labels[0]
+    positive_label = unique_labels[1]
     y_true_bin = (y_true == positive_label).astype(int)
     y_score = np.array(df_pred[pos_prob_col].iloc[:min_len], dtype=float)
+    finite_mask = np.isfinite(y_score)
+    if not finite_mask.any():
+        return None
 
-    thresholds = np.linspace(0.0, 1.0, 101)
-    accs: List[float] = []
-    precs: List[float] = []
-    recs: List[float] = []
-    f1s: List[float] = []
-    for t in thresholds:
-        preds = (y_score >= t).astype(int)
-        accs.append(accuracy_score(y_true_bin, preds))
-        precs.append(precision_score(y_true_bin, preds, zero_division=0))
-        recs.append(recall_score(y_true_bin, preds, zero_division=0))
-        f1s.append(f1_score(y_true_bin, preds, zero_division=0))
+    return {
+        "y_true_bin": y_true_bin[finite_mask],
+        "y_score": y_score[finite_mask],
+        "positive_label": positive_label,
+    }
 
-    best_idx = int(np.argmax(f1s))
-    best_thr = thresholds[best_idx]
 
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=thresholds, y=accs, mode="lines", name="Accuracy", line=dict(width=4)))
-    fig.add_trace(go.Scatter(x=thresholds, y=precs, mode="lines", name="Precision", line=dict(width=4)))
-    fig.add_trace(go.Scatter(x=thresholds, y=recs, mode="lines", name="Recall", line=dict(width=4)))
-    fig.add_trace(go.Scatter(x=thresholds, y=f1s, mode="lines", name="F1-Score", line=dict(width=4)))
-    fig.add_shape(
-        type="line",
-        x0=best_thr,
-        x1=best_thr,
-        y0=0,
-        y1=1,
-        line=dict(color="gray", width=2, dash="dash"),
+def optimize_binary_threshold_values(
+    y_true_bin: np.ndarray,
+    y_score: np.ndarray,
+    metric: str = "f1",
+) -> Optional[Dict[str, float]]:
+    """Optimize a binary threshold against a threshold-sensitive metric."""
+    metric_key = str(metric or "f1").strip().lower().replace("-", "_").replace(" ", "_")
+    display_map = {
+        "f1": "F1",
+        "accuracy": "Accuracy",
+        "balanced_accuracy": "Balanced Accuracy",
+        "precision": "Precision",
+        "recall": "Recall",
+        "mcc": "MCC",
+        "matthews_correlation_coefficient": "MCC",
+    }
+    metric_key = "mcc" if metric_key == "matthews_correlation_coefficient" else metric_key
+    if metric_key not in display_map:
+        raise ValueError(
+            "Unsupported threshold optimization metric "
+            f"'{metric}'. Valid choices: {', '.join(display_map.values())}."
+        )
+
+    thresholds = np.unique(np.concatenate(([0.0, 0.5, 1.0], np.asarray(y_score, dtype=float))))
+    best_score = None
+    best_thresholds: List[float] = []
+    for threshold in thresholds:
+        preds = (y_score >= threshold).astype(int)
+        if metric_key == "f1":
+            score = f1_score(y_true_bin, preds, zero_division=0)
+        elif metric_key == "accuracy":
+            score = accuracy_score(y_true_bin, preds)
+        elif metric_key == "balanced_accuracy":
+            score = balanced_accuracy_score(y_true_bin, preds)
+        elif metric_key == "precision":
+            score = precision_score(y_true_bin, preds, zero_division=0)
+        elif metric_key == "recall":
+            score = recall_score(y_true_bin, preds, zero_division=0)
+        elif metric_key == "mcc":
+            score = matthews_corrcoef(y_true_bin, preds)
+        else:
+            continue
+
+        if best_score is None or score > best_score:
+            best_score = float(score)
+            best_thresholds = [float(threshold)]
+        elif score == best_score:
+            best_thresholds.append(float(threshold))
+
+    if best_score is None or not best_thresholds:
+        return None
+
+    threshold = min(best_thresholds, key=lambda value: abs(value - 0.5))
+    return {
+        "threshold": float(threshold),
+        "metric_value": float(best_score),
+        "metric": metric_key,
+        "metric_display": display_map[metric_key],
+    }
+
+
+def optimize_binary_threshold_from_predictions(
+    predictions_path: str,
+    label_data_path: Optional[str] = None,
+    split_value: int = 1,
+    metric: str = "f1",
+) -> Optional[Dict[str, float]]:
+    data = load_binary_threshold_data(
+        predictions_path, label_data_path=label_data_path, split_value=split_value
     )
-    fig.update_layout(
-        title=dict(text="Threshold plot", x=0.5),
-        xaxis_title="Threshold",
-        yaxis_title="Metric value",
-        yaxis=dict(range=[0, 1]),
-        width=760,
-        height=520,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    if data is None:
+        return None
+    return optimize_binary_threshold_values(
+        data["y_true_bin"], data["y_score"], metric=metric
     )
-    _style_fig(fig)
-    return _wrap_plot("Threshold plot", fig, include_js=True)
+
+
+def compute_binary_threshold_metrics_from_predictions(
+    predictions_path: str,
+    threshold: float,
+    label_data_path: Optional[str] = None,
+    split_value: int = 2,
+) -> Optional[Dict[str, float]]:
+    data = load_binary_threshold_data(
+        predictions_path, label_data_path=label_data_path, split_value=split_value
+    )
+    if data is None:
+        return None
+
+    y_true_bin = data["y_true_bin"]
+    y_pred = (data["y_score"] >= float(threshold)).astype(int)
+    tn = int(((y_true_bin == 0) & (y_pred == 0)).sum())
+    fp = int(((y_true_bin == 0) & (y_pred == 1)).sum())
+    specificity = tn / (tn + fp) if (tn + fp) else 0.0
+
+    return {
+        "accuracy": accuracy_score(y_true_bin, y_pred),
+        "balanced_accuracy": balanced_accuracy_score(y_true_bin, y_pred),
+        "precision": precision_score(y_true_bin, y_pred, zero_division=0),
+        "recall": recall_score(y_true_bin, y_pred, zero_division=0),
+        "specificity": specificity,
+        "f1": f1_score(y_true_bin, y_pred, zero_division=0),
+        "mcc": matthews_corrcoef(y_true_bin, y_pred),
+    }
 
 
 def build_multiclass_roc_pr_plots(

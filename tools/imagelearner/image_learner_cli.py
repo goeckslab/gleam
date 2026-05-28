@@ -143,6 +143,18 @@ def main():
         ),
     )
     parser.add_argument(
+        "--threshold-mode",
+        choices=["auto", "manual"],
+        default="auto",
+        help="Whether to optimize the binary classification threshold or use a manual value.",
+    )
+    parser.add_argument(
+        "--threshold-metric",
+        type=str,
+        default="f1",
+        help="Metric used for automatic binary threshold optimization.",
+    )
+    parser.add_argument(
         "--validation-metric",
         type=str,
         default=None,
