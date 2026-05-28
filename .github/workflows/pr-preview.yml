@@ -26,7 +26,7 @@ permissions:
   pull-requests: read
 
 concurrency:
-  group: pr-preview-gh-pages
+  group: gleam-gh-pages-publish
   cancel-in-progress: false
 
 jobs:

@@ -11,32 +11,45 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
-  group: "pages"
+  group: gleam-gh-pages-publish
   cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Check out repository
+      - name: Check out source
         uses: actions/checkout@v6
-
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload static site
-        uses: actions/upload-pages-artifact@v4
         with:
-          path: docs
+          path: source
 
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+      - name: Check out Pages branch
+        uses: actions/checkout@v6
+        with:
+          ref: gh-pages
+          path: gh-pages
+          fetch-depth: 0
+
+      - name: Copy site root
+        run: |
+          set -euo pipefail
+          find gh-pages -mindepth 1 -maxdepth 1 ! -name .git ! -name previews -exec rm -rf {} +
+          rsync -a source/docs/ gh-pages/
+          touch gh-pages/.nojekyll
+
+      - name: Commit site root
+        run: |
+          set -euo pipefail
+          cd gh-pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .nojekyll .
+          if git diff --cached --quiet; then
+            echo "GitHub Pages site is already up to date."
+            exit 0
+          fi
+          git commit -m "Update GitHub Pages site"
+          git push origin HEAD:gh-pages
