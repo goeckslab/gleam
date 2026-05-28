@@ -479,6 +479,70 @@ def test_tree_plot_failure_does_not_block_html_report(caplog):
     assert "Tree plots skipped: dot failed" in caplog.text
 
 
+def test_feature_importance_reuses_setup_experiment_without_is_setup(tmp_path):
+    class ConfiguredExperiment:
+        target_param = "AGE"
+        dataset = pd.DataFrame({"feature": [1, 2], "AGE": [None, None]})
+
+        def __init__(self):
+            self.setup_called = False
+
+        def get_config(self, key):
+            if key == "X_test_transformed":
+                return pd.DataFrame({"feature": [1, 2]})
+            raise KeyError(key)
+
+        def setup(self, *args, **kwargs):
+            self.setup_called = True
+            raise AssertionError("setup should not be called")
+
+    exp = ConfiguredExperiment()
+    analyzer = FeatureImportanceAnalyzer(
+        task_type="regression",
+        output_dir=str(tmp_path),
+        data=pd.DataFrame({"feature": [1, 2], "AGE": [10, 20]}),
+        target_col=2,
+        exp=exp,
+        best_model=object(),
+    )
+    calls = []
+    analyzer.save_tree_importance = lambda: calls.append("tree")
+    analyzer.save_shap_values = lambda: calls.append("shap")
+    analyzer.generate_html_report = lambda: "html"
+
+    assert analyzer.run() == "html"
+    assert calls == ["tree", "shap"]
+    assert exp.setup_called is False
+
+
+def test_feature_importance_setup_prefers_supplied_data_over_exp_dataset(tmp_path):
+    clean_data = pd.DataFrame({"feature": [1, 2], "AGE": [10, 20]})
+
+    class UnconfiguredExperiment:
+        target_param = "AGE"
+        dataset = pd.DataFrame({"feature": [1, 2], "AGE": [None, None]})
+        is_setup = False
+
+        def setup(self, data, **kwargs):
+            self.setup_data = data.copy()
+            self.setup_kwargs = kwargs
+
+    exp = UnconfiguredExperiment()
+    analyzer = FeatureImportanceAnalyzer(
+        task_type="regression",
+        output_dir=str(tmp_path),
+        data=clean_data,
+        target_col=2,
+        exp=exp,
+        best_model=object(),
+    )
+
+    analyzer.setup_pycaret()
+
+    assert exp.setup_data["AGE"].isna().sum() == 0
+    assert exp.setup_kwargs["target"] == "AGE"
+
+
 class FakeShapExplanation:
     def __init__(self, shape, selected=None):
         self.shape = shape

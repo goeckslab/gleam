@@ -48,9 +48,15 @@ class FeatureImportanceAnalyzer:
             self.max_plot_features = None
 
         if exp is not None:
-            # Assume all configs (data, target) are in exp
-            self.data = exp.dataset.copy()
-            self.target = exp.target_param
+            # Prefer explicit data from the trainer. Some PyCaret versions
+            # mutate exp.dataset after setup when imbalance handling is enabled.
+            self.target = getattr(exp, "target_param", None)
+            if processed_data is not None:
+                self.data = processed_data.copy()
+            elif data is not None:
+                self.data = data.copy()
+            else:
+                self.data = exp.dataset.copy()
             LOG.info("Using provided experiment object")
         else:
             if data is not None:
@@ -67,7 +73,9 @@ class FeatureImportanceAnalyzer:
                 if task_type == "classification"
                 else RegressionExperiment()
             )
-        if processed_data is not None:
+        if self.target is None and target_col is not None:
+            self.target = self.data.columns[int(target_col) - 1]
+        if exp is None and processed_data is not None:
             self.data = processed_data
 
         self.plots = {}
@@ -90,6 +98,24 @@ class FeatureImportanceAnalyzer:
             if names is not None:
                 return list(names)
         return None
+
+    def _experiment_is_setup(self):
+        if self.exp is None:
+            return False
+
+        is_setup = getattr(self.exp, "is_setup", None)
+        if is_setup is not None:
+            return bool(is_setup)
+
+        for key in ("X_test_transformed", "X_train_transformed", "X_transformed"):
+            try:
+                value = self.exp.get_config(key)
+            except Exception:
+                value = getattr(self.exp, key, None)
+            if value is not None:
+                return True
+
+        return False
 
     def _get_transformed_frame(self, model=None, prefer_test=True):
         """Return a DataFrame that mirrors the matrix fed to the estimator."""
@@ -119,7 +145,7 @@ class FeatureImportanceAnalyzer:
         return None
 
     def setup_pycaret(self):
-        if self.exp is not None and hasattr(self.exp, "is_setup") and self.exp.is_setup:
+        if self._experiment_is_setup():
             LOG.info("Experiment already set up. Skipping PyCaret setup.")
             return
         LOG.info("Initializing PyCaret")
@@ -674,11 +700,7 @@ class FeatureImportanceAnalyzer:
         return _permutation(predict_fn), "permutation-default", False
 
     def run(self):
-        if (
-            self.exp is None
-            or not hasattr(self.exp, "is_setup")
-            or not self.exp.is_setup
-        ):
+        if not self._experiment_is_setup():
             self.setup_pycaret()
         self.save_tree_importance()
         self.save_shap_values()
