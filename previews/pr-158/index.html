@@ -25,7 +25,6 @@
       <nav class="site-nav" aria-label="Primary navigation">
         <a href="#tools">Tools</a>
         <a href="#tutorials">Tutorials</a>
-        <a href="#install">Install</a>
         <a href="https://github.com/goeckslab/gleam">GitHub</a>
       </nav>
     </header>
@@ -36,9 +35,8 @@
           <p class="eyebrow">Galaxy Learning and Modeling</p>
           <h1 id="hero-title">GLEAM</h1>
           <p class="lede">
-            No-code and low-code machine learning tools for Galaxy, spanning tabular
-            modeling, image learning, multimodal prediction, Ludwig workflows, and
-            digital pathology utilities.
+            No-code and low-code machine learning tools for Galaxy, spanning
+            tabular modeling, image learning, and multimodal prediction.
           </p>
           <div class="hero-actions" aria-label="Primary actions">
             <a class="button primary" href="#tools">Use GLEAM tools</a>
@@ -49,7 +47,7 @@
 
       <section class="metrics" aria-label="GLEAM highlights">
         <div>
-          <strong>5</strong>
+          <strong>3</strong>
           <span>tool families</span>
         </div>
         <div>
@@ -139,38 +137,6 @@
               <a href="https://github.com/goeckslab/gleam/tree/main/tools/multimodallearner">Docs</a>
             </div>
           </article>
-          <article class="tool-card">
-            <p class="tool-tag">Generic deep learning</p>
-            <h3>Galaxy-Ludwig</h3>
-            <p>
-              Build Ludwig configs, train, evaluate, predict, visualize, and run
-              hyperparameter optimization from the Galaxy interface.
-            </p>
-            <div class="link-row">
-              <a href="https://usegalaxy.org/tool_runner?tool_id=toolshed.g2.bx.psu.edu%2Frepos%2Fgoeckslab%2Fludwig_config_generator%2Fludwig_config_generator%2F0.10.1%2B3">Config</a>
-              <a href="https://usegalaxy.org/tool_runner?tool_id=toolshed.g2.bx.psu.edu%2Frepos%2Fgoeckslab%2Fludwig_train%2Fludwig_train%2F0.10.1%2B3">Train</a>
-              <a href="https://usegalaxy.org/tool_runner?tool_id=toolshed.g2.bx.psu.edu%2Frepos%2Fgoeckslab%2Fludwig_experiment%2Fludwig_experiment%2F0.10.1%2B3">Experiment</a>
-              <a href="https://usegalaxy.org/tool_runner?tool_id=toolshed.g2.bx.psu.edu%2Frepos%2Fgoeckslab%2Fludwig_evaluate%2Fludwig_evaluate%2F0.10.1%2B3">Evaluate</a>
-              <a href="https://usegalaxy.org/tool_runner?tool_id=toolshed.g2.bx.psu.edu%2Frepos%2Fgoeckslab%2Fludwig_predict%2Fludwig_predict%2F0.10.1%2B3">Predict</a>
-              <a href="https://usegalaxy.org/tool_runner?tool_id=toolshed.g2.bx.psu.edu%2Frepos%2Fgoeckslab%2Fludwig_hyperopt%2Fludwig_hyperopt%2F0.10.1%2B3">Hyperopt</a>
-              <a href="https://usegalaxy.org/tool_runner?tool_id=toolshed.g2.bx.psu.edu%2Frepos%2Fgoeckslab%2Fludwig_visualize%2Fludwig_visualize%2F0.10.1%2B3">Visualize</a>
-              <a href="https://github.com/goeckslab/gleam/tree/main/tools/galaxy-ludwig">Docs</a>
-            </div>
-          </article>
-          <article class="tool-card wide">
-            <p class="tool-tag">Digital pathology</p>
-            <h3>Pathology utilities</h3>
-            <p>
-              Tile whole-slide images with PyHIST, extract image embeddings with
-              pretrained vision backbones, and build bag-level datasets for multiple
-              instance learning workflows.
-            </p>
-            <div class="link-row">
-              <a href="https://github.com/goeckslab/gleam/tree/main/tools/galaxy-tiler">Tiler</a>
-              <a href="https://github.com/goeckslab/gleam/tree/main/tools/galaxy-embedding_extractor">Embedding extraction</a>
-              <a href="https://github.com/goeckslab/gleam/tree/main/tools/galaxy-mil_bag">MIL bags</a>
-            </div>
-          </article>
         </div>
       </section>
 
@@ -249,34 +215,6 @@
         </div>
       </section>
 
-      <section class="section band" id="install" aria-labelledby="install-title">
-        <div class="install-layout">
-          <div>
-            <p class="eyebrow">Deployment</p>
-            <h2 id="install-title">Install released tools or develop from source.</h2>
-            <p>
-              Galaxy administrators can install released GLEAM suites from the Galaxy
-              ToolShed. Developers can clone this repository, register the wrappers in
-              a local Galaxy tool panel, and run the existing Planemo-backed CI tests.
-            </p>
-            <p>Exact ToolShed suite repositories:</p>
-            <ul class="repo-list">
-              <li><a href="https://toolshed.g2.bx.psu.edu/repository/view_repository?id=babd0d26f1edc4a6">suite_tabular_learner</a></li>
-              <li><a href="https://toolshed.g2.bx.psu.edu/repository/view_repository?id=d141b70930a8ae9e">suite_imagelearner</a></li>
-              <li><a href="https://toolshed.g2.bx.psu.edu/repository/view_repository?id=02626b9dcabebff1">suite_multimodallearner</a></li>
-              <li><a href="https://toolshed.g2.bx.psu.edu/repository/view_repository?id=7766a9382c5a05e6">suite_ludwig</a></li>
-              <li><a href="https://toolshed.g2.bx.psu.edu/repository/view_repository?id=07dd6bd237b21b26">suite_tiler</a></li>
-              <li><a href="https://toolshed.g2.bx.psu.edu/repository/view_repository?id=c75060934e8e5c2c">suite_embedding_extractor</a></li>
-              <li><a href="https://toolshed.g2.bx.psu.edu/repository/view_repository?id=1c742723b8e1449e">suite_mil_bag</a></li>
-            </ul>
-          </div>
-          <div class="action-panel">
-            <a class="button primary" href="https://toolshed.g2.bx.psu.edu/">Search the ToolShed</a>
-            <a class="button secondary" href="https://github.com/goeckslab/gleam#installation">Read installation notes</a>
-            <a class="button secondary" href="https://github.com/goeckslab/gleam/issues">Report an issue</a>
-          </div>
-        </div>
-      </section>
     </main>
 
     <footer class="site-footer">

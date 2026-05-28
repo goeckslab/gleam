@@ -169,7 +169,6 @@ a:hover {
 }
 
 .hero-actions,
-.action-panel,
 .link-row {
   display: flex;
   flex-wrap: wrap;
@@ -298,8 +297,7 @@ a:hover {
 
 .intro-grid article,
 .tool-card,
-.tutorial-card,
-.action-panel {
+.tutorial-card {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--paper);
@@ -313,7 +311,6 @@ a:hover {
 .intro-grid p,
 .tool-card p,
 .tutorial-card p,
-.install-layout p,
 .site-footer {
   color: var(--muted);
 }
@@ -335,7 +332,7 @@ a:hover {
 
 .tool-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
 }
 
@@ -345,10 +342,6 @@ a:hover {
   flex-direction: column;
   gap: 0.85rem;
   padding: 1.2rem;
-}
-
-.tool-card.wide {
-  grid-column: span 2;
 }
 
 .tool-card a,
@@ -425,42 +418,6 @@ a:hover {
   font-weight: 800;
 }
 
-.install-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
-  gap: 2rem;
-  align-items: start;
-}
-
-.install-layout p {
-  margin-top: 1rem;
-  font-size: 1.05rem;
-}
-
-.repo-list {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.45rem 1rem;
-  margin: 1rem 0 0;
-  padding-left: 1.1rem;
-}
-
-.repo-list a {
-  font-weight: 800;
-}
-
-.action-panel {
-  display: grid;
-  gap: 0.75rem;
-  padding: 1rem;
-}
-
-.action-panel .button.secondary {
-  color: var(--teal-dark);
-  background: var(--paper);
-  border-color: var(--line);
-}
-
 .site-footer {
   display: flex;
   justify-content: space-between;
@@ -491,8 +448,7 @@ a:hover {
     gap: 0.75rem 1rem;
   }
 
-  .intro,
-  .install-layout {
+  .intro {
     grid-template-columns: 1fr;
   }
 
@@ -536,7 +492,6 @@ a:hover {
   .intro-grid,
   .tool-grid,
   .tutorial-grid,
-  .repo-list,
   .tutorial-card dl {
     grid-template-columns: 1fr;
   }
@@ -557,10 +512,6 @@ a:hover {
 
   .section h2 {
     font-size: 2rem;
-  }
-
-  .tool-card.wide {
-    grid-column: auto;
   }
 
   .section-heading.split .button {
