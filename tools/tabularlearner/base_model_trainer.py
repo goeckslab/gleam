@@ -158,6 +158,7 @@ class BaseModelTrainer:
             )
         self.imputed_training_data = None
         self._best_model_metric_used = None
+        self.threshold_metadata = None
         self.cv_fold_adjustment = None
         self.setup_params = {}
         self.test_file = test_file
@@ -171,9 +172,11 @@ class BaseModelTrainer:
         # Warn about irrelevant kwargs for the task type
         if self.task_type == "regression" and (
             "probability_threshold" in self.user_kwargs
+            or "threshold_mode" in self.user_kwargs
+            or "threshold_metric" in self.user_kwargs
         ):
             LOG.warning(
-                "probability_threshold is ignored for regression tasks."
+                "Classification threshold settings are ignored for regression tasks."
             )
 
         LOG.info(f"Model kwargs: {self.__dict__}")
@@ -787,10 +790,17 @@ class BaseModelTrainer:
             self.results.rename(
                 columns={"PR-AUC-Weighted": "PR-AUC"}, inplace=True
             )
+            self._configure_decision_threshold()
 
         prob_thresh = getattr(self, "probability_threshold", None)
-        if self.task_type == "classification" and (
-            prob_thresh is not None
+        is_multiclass = (
+            self.task_type == "classification"
+            and getattr(self.exp, "is_multiclass", False)
+        )
+        if (
+            self.task_type == "classification"
+            and prob_thresh is not None
+            and not is_multiclass
         ):
             _ = self.exp.predict_model(
                 self.best_model, probability_threshold=prob_thresh
@@ -807,6 +817,121 @@ class BaseModelTrainer:
                 columns={"PR-AUC-Weighted": "PR-AUC"}, inplace=True
             )
             self._replace_test_pr_auc()
+
+    def _configure_decision_threshold(self):
+        """
+        Configure the binary classification decision threshold before final
+        held-out scoring, report metrics, plot markers, and model persistence.
+        """
+        if self.task_type != "classification":
+            return
+
+        if getattr(self.exp, "is_multiclass", False):
+            self.probability_threshold = None
+            self.threshold_metadata = {
+                "threshold": None,
+                "threshold_source": "Not used (multiclass classification)",
+                "threshold_metric": "Not used",
+            }
+            return
+
+        mode = str(getattr(self, "threshold_mode", "auto") or "auto").lower()
+        if mode == "manual":
+            threshold = getattr(self, "probability_threshold", None)
+            if threshold is None:
+                threshold = 0.5
+            threshold = float(threshold)
+            self._validate_probability_threshold(threshold)
+            self.probability_threshold = threshold
+            self.threshold_metadata = {
+                "threshold": threshold,
+                "threshold_source": "Manual",
+                "threshold_metric": "Not used",
+            }
+            return
+
+        metric = str(getattr(self, "threshold_metric", "F1") or "F1")
+        try:
+            optimized_model = self.exp.optimize_threshold(
+                self.best_model,
+                optimize=metric,
+                verbose=False,
+            )
+            threshold = getattr(optimized_model, "probability_threshold", None)
+            if threshold is None:
+                raise ValueError(
+                    "PyCaret did not return an optimized probability threshold."
+                )
+            threshold = float(threshold)
+            self._validate_probability_threshold(threshold)
+            self.best_model = optimized_model
+            self.probability_threshold = threshold
+            self.threshold_metadata = {
+                "threshold": threshold,
+                "threshold_source": "Optimized on validation split",
+                "threshold_metric": metric,
+            }
+            LOG.info(
+                "Optimized binary decision threshold using %s: %.6f",
+                metric,
+                threshold,
+            )
+        except Exception as exc:
+            fallback = 0.5
+            self.probability_threshold = fallback
+            self.threshold_metadata = {
+                "threshold": fallback,
+                "threshold_source": (
+                    "Default 0.5 (automatic optimization unavailable)"
+                ),
+                "threshold_metric": metric,
+                "threshold_reason": str(exc),
+            }
+            LOG.warning(
+                "Could not optimize binary decision threshold with PyCaret; "
+                "using default threshold %.1f: %s",
+                fallback,
+                exc,
+            )
+
+    @staticmethod
+    def _validate_probability_threshold(threshold):
+        if threshold < 0.0 or threshold > 1.0:
+            raise ValueError(
+                "Probability threshold must be between 0.0 and 1.0."
+            )
+
+    @staticmethod
+    def _format_threshold_value(threshold):
+        if threshold is None:
+            return None
+        try:
+            return f"{float(threshold):.3f}"
+        except Exception:
+            return str(threshold)
+
+    def _threshold_report_rows(self):
+        if self.task_type != "classification":
+            return []
+        if getattr(self.exp, "is_multiclass", False):
+            return []
+
+        metadata = self.threshold_metadata or {}
+        threshold = metadata.get(
+            "threshold", getattr(self, "probability_threshold", None)
+        )
+        threshold_display = self._format_threshold_value(threshold)
+        if threshold_display is None:
+            return []
+
+        return [
+            ["Decision threshold (Test)", threshold_display],
+            ["Threshold source", metadata.get("threshold_source", "Unknown")],
+            [
+                "Threshold optimization metric",
+                metadata.get("threshold_metric", "Not used"),
+            ],
+        ]
 
     def save_model(self):
         hdf5_path = Path(self.output_dir) / "pycaret_model.h5"
@@ -1958,7 +2083,6 @@ class BaseModelTrainer:
         if self.task_type == "classification":
             display_keys.extend([
                 "Fix Imbalance",
-                "Probability Threshold",
             ])
         setup_rows = []
         for key in display_keys:
@@ -1998,11 +2122,10 @@ class BaseModelTrainer:
                 dv = ", ".join(map(str, v)) if isinstance(
                     v, (list, tuple)
                 ) else "None"
-            elif key == "Probability Threshold":
-                dv = f"{v:.2f}" if v is not None else "0.5"
             else:
                 dv = v if v is not None else "None"
             setup_rows.append([key, dv])
+        setup_rows.extend(self._threshold_report_rows())
         metric_label = self._best_model_metric_used or getattr(
             self.exp, "_fold_metric", None
         )

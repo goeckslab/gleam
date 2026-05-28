@@ -1,5 +1,5 @@
 <macros>
-    <token name="@TABULAR_LEARNER_VERSION@">0.1.5</token>
+    <token name="@TABULAR_LEARNER_VERSION@">0.1.6</token>
     <token name="@PYCARET_VERSION@">3.3.2</token>
     <token name="@SUFFIX@">2</token>
     <token name="@PYCARET_PREDICT_VERSION@">@PYCARET_VERSION@+@SUFFIX@</token>

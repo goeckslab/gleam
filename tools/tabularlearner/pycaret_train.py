@@ -129,6 +129,18 @@ def main():
         help="Probability threshold for classification decision,",
     )
     parser.add_argument(
+        "--threshold_mode",
+        choices=["auto", "manual"],
+        default="auto",
+        help="Whether to optimize the binary classification threshold or use a manual value.",
+    )
+    parser.add_argument(
+        "--threshold_metric",
+        type=str,
+        default="F1",
+        help="Metric used for automatic binary threshold optimization.",
+    )
+    parser.add_argument(
         "--best_model_metric",
         type=str,
         default=None,
@@ -180,6 +192,8 @@ def main():
         "tune_model": args.tune_model,
         "n_jobs": n_jobs,
         "probability_threshold": args.probability_threshold,
+        "threshold_mode": args.threshold_mode,
+        "threshold_metric": args.threshold_metric,
         "best_model_metric": args.best_model_metric,
         "sample_id_column": args.sample_id_column,
     }
@@ -207,6 +221,9 @@ def main():
     elif args.model_type == "regression":
         # regression doesn't support fix_imbalance
         model_kwargs.pop("fix_imbalance", None)
+        model_kwargs.pop("probability_threshold", None)
+        model_kwargs.pop("threshold_mode", None)
+        model_kwargs.pop("threshold_metric", None)
         trainer = RegressionModelTrainer(
             args.input_file,
             args.target_col,
