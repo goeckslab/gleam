@@ -151,6 +151,7 @@ jobs:
           echo "changed=true" >> "${GITHUB_OUTPUT}"
 
       - name: Comment preview URL
+        continue-on-error: true
         uses: actions/github-script@v8
         with:
           script: |
