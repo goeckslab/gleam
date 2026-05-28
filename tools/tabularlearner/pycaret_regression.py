@@ -98,8 +98,8 @@ class RegressionModelTrainer(BaseModelTrainer):
 
             # --- 2) SHAP permutation importance ---
             try:
-                self.explainer_plots["shap_perm"] = explainer.plot_importances_permutation(
-                    kind="permutation"
+                self.explainer_plots["shap_perm"] = lambda: explainer.plot_importances(
+                    kind="permutation",
                 )
             except Exception as e:
                 LOG.error(f"Error generating SHAP permutation importance: {e}")

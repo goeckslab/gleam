@@ -6,6 +6,12 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from base_model_trainer import BaseModelTrainer
+from classification_metrics import (
+    labels_in_sample_order,
+    positive_class_label,
+    probability_class_labels,
+    weighted_ovr_pr_auc,
+)
 from dashboard import generate_classifier_explainer_dashboard
 from pycaret.classification import ClassificationExperiment
 from sklearn.decomposition import PCA
@@ -13,7 +19,6 @@ from sklearn.manifold import TSNE
 from sklearn.metrics import (
     auc,
     confusion_matrix,
-    matthews_corrcoef,
     precision_recall_curve,
     precision_recall_fscore_support,
     roc_curve,
@@ -21,6 +26,12 @@ from sklearn.metrics import (
 from utils import predict_proba
 
 LOG = logging.getLogger(__name__)
+
+MULTICLASS_UNAVAILABLE_PYCARET_PLOTS = {
+    "calibration",
+    "rfe",
+    "threshold",
+}
 
 
 def _apply_report_layout(fig: go.Figure) -> go.Figure:
@@ -38,6 +49,13 @@ def _apply_report_layout(fig: go.Figure) -> go.Figure:
         margin=dict(l=120, r=40, t=60, b=60),  # bump 'l' if you still see clipping
     )
     return fig
+
+
+def _should_skip_pycaret_plot(plot_name, exp):
+    return (
+        getattr(exp, "is_multiclass", False)
+        and plot_name in MULTICLASS_UNAVAILABLE_PYCARET_PLOTS
+    )
 
 
 class ClassificationModelTrainer(BaseModelTrainer):
@@ -70,7 +88,10 @@ class ClassificationModelTrainer(BaseModelTrainer):
     def generate_plots(self):
         LOG.info("Generating and saving plots")
 
-        if not hasattr(self.best_model, "predict_proba"):
+        if (
+            not hasattr(self.best_model, "predict_proba")
+            and not getattr(self.exp, "is_multiclass", False)
+        ):
             self.best_model.predict_proba = types.MethodType(
                 predict_proba, self.best_model
             )
@@ -92,6 +113,12 @@ class ClassificationModelTrainer(BaseModelTrainer):
         ]
         for plot_name in plots:
             try:
+                if _should_skip_pycaret_plot(plot_name, self.exp):
+                    LOG.info(
+                        "Skipping PyCaret %s plot for multiclass classification.",
+                        plot_name,
+                    )
+                    continue
                 if plot_name == "threshold":
                     plot_path = self.exp.plot_model(
                         self.best_model,
@@ -119,7 +146,11 @@ class ClassificationModelTrainer(BaseModelTrainer):
                     )
                     self.plots[plot_name] = plot_path
             except Exception as e:
-                LOG.error(f"Error generating plot {plot_name}: {e}")
+                LOG.warning(
+                    "Could not generate optional PyCaret plot %s: %s",
+                    plot_name,
+                    e,
+                )
                 continue
 
     def generate_plots_explainer(self):
@@ -128,7 +159,10 @@ class ClassificationModelTrainer(BaseModelTrainer):
         LOG.info("Generating explainer plots")
 
         # Ensure predict_proba is available here too
-        if not hasattr(self.best_model, "predict_proba"):
+        if (
+            not hasattr(self.best_model, "predict_proba")
+            and not getattr(self.exp, "is_multiclass", False)
+        ):
             self.best_model.predict_proba = types.MethodType(
                 predict_proba, self.best_model
             )
@@ -154,28 +188,37 @@ class ClassificationModelTrainer(BaseModelTrainer):
         explainer_labels = (
             list(label_encoder.classes_) if label_encoder is not None else None
         )
-        explainer = ClassifierExplainer(
-            self.best_model,
-            X_test,
-            y_test,
-            labels=explainer_labels,
-        )
+        explainer = None
+        try:
+            explainer = ClassifierExplainer(
+                self.best_model,
+                X_test,
+                y_test,
+                labels=explainer_labels,
+            )
+        except Exception as exc:
+            LOG.warning(
+                "Could not initialize ClassifierExplainer; "
+                "continuing with custom classification plots only: %s",
+                exc,
+            )
 
         # a dict to hold the raw Figure objects or callables
         self.explainer_plots: Dict[str, go.Figure] = {}
 
-        y_true, y_pred, label_values, y_scores = self._get_test_predictions()
+        (
+            y_true,
+            y_pred,
+            _,
+            y_scores,
+            score_labels,
+        ) = self._get_test_predictions()
         y_true_display = self._get_original_test_labels_for_display(y_true)
         y_pred_display = self._decode_labels_for_display(y_pred)
-        label_values_display = pd.unique(
-            pd.concat(
-                [
-                    pd.Series(y_true_display),
-                    pd.Series(y_pred_display),
-                ],
-                ignore_index=True,
-            )
-        ).tolist()
+        label_values_display = labels_in_sample_order(
+            y_true_display,
+            y_pred_display,
+        )
 
         # — Classification report (Plotly table) —
         try:
@@ -220,7 +263,11 @@ class ClassificationModelTrainer(BaseModelTrainer):
             try:
                 if y_scores is None:
                     raise ValueError("Predicted probabilities unavailable")
-                fpr, tpr, thr = roc_curve(y_true, y_scores)
+                pos_label = positive_class_label(score_labels)
+                y_true_curve = (
+                    pd.Series(y_true).reset_index(drop=True) == pos_label
+                ).astype(int)
+                fpr, tpr, thr = roc_curve(y_true_curve, y_scores)
                 roc_auc = auc(fpr, tpr)
                 fig_roc = go.Figure()
                 fig_roc.add_scatter(
@@ -251,7 +298,11 @@ class ClassificationModelTrainer(BaseModelTrainer):
 
             # ---- PR with threshold marker ----
             try:
-                fig_pr = self._build_precision_recall_fig(y_true, y_scores)
+                fig_pr = self._build_precision_recall_fig(
+                    y_true,
+                    y_scores,
+                    positive_class_label(score_labels),
+                )
                 if fig_pr is None:
                     raise ValueError("Predicted probabilities unavailable")
                 self.explainer_plots["pr_auc"] = fig_pr
@@ -260,11 +311,40 @@ class ClassificationModelTrainer(BaseModelTrainer):
 
         if "pr_auc" not in self.explainer_plots:
             try:
-                fig_pr = self._build_precision_recall_fig(y_true, y_scores)
+                fig_pr = self._build_precision_recall_fig(
+                    y_true,
+                    y_scores,
+                    positive_class_label(score_labels),
+                )
                 if fig_pr is not None:
                     self.explainer_plots["pr_auc"] = fig_pr
             except Exception as e:
                 LOG.warning(f"Could not generate custom PR curve: {e}")
+
+        if getattr(self.exp, "is_multiclass", False) and y_scores is not None:
+            try:
+                fig_roc = self._build_multiclass_roc_fig(
+                    y_true,
+                    y_scores,
+                    score_labels,
+                )
+                if fig_roc is not None:
+                    self.explainer_plots["roc_auc"] = fig_roc
+            except Exception as e:
+                LOG.warning(f"Could not generate custom multiclass ROC curve: {e}")
+            try:
+                fig_pr = self._build_multiclass_precision_recall_fig(
+                    y_true,
+                    y_scores,
+                    score_labels,
+                )
+                if fig_pr is not None:
+                    self.explainer_plots["pr_auc"] = fig_pr
+            except Exception as e:
+                LOG.warning(f"Could not generate custom multiclass PR curve: {e}")
+
+        if explainer is None:
+            return
 
         # these go into the Test tab (don't overwrite overrides)
         for key, fn in [
@@ -281,7 +361,11 @@ class ClassificationModelTrainer(BaseModelTrainer):
                 if fig is not None:
                     self.explainer_plots[key] = fig
             except Exception as e:
-                LOG.error(f"Error generating explainer plot {key}: {e}")
+                LOG.warning(
+                    "Could not generate optional explainer plot %s: %s",
+                    key,
+                    e,
+                )
 
         if self._explainer_feature_count_exceeds_cap():
             LOG.info(
@@ -327,7 +411,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
                         LOG.warning(f"PDP AssertionError for {f!r}: {ae}")
                         return None
                     except Exception as e:
-                        LOG.error(f"Unexpected error plotting PDP for {f!r}: {e}")
+                        LOG.warning(f"Unexpected error plotting PDP for {f!r}: {e}")
                         return None
 
                 return _plot
@@ -345,9 +429,15 @@ class ClassificationModelTrainer(BaseModelTrainer):
         prob_thresh = getattr(self, "probability_threshold", None)
 
         y_scores = None
+        score_labels = []
         try:
             proba = self.best_model.predict_proba(X_test)
-            y_scores = proba
+            y_scores = np.asarray(proba)
+            score_labels = probability_class_labels(
+                y_true,
+                y_scores,
+                getattr(self.best_model, "classes_", []),
+            )
         except Exception:
             LOG.debug("predict_proba unavailable for test predictions.")
 
@@ -359,15 +449,21 @@ class ClassificationModelTrainer(BaseModelTrainer):
                 and y_scores.ndim == 2
                 and y_scores.shape[1] > 1
             ):
-                classes = list(getattr(self.best_model, "classes_", []))
+                classes = score_labels or list(
+                    getattr(self.best_model, "classes_", [])
+                )
+                pos_label = positive_class_label(classes)
                 try:
-                    pos_idx = classes.index(1) if 1 in classes else 1
+                    pos_idx = classes.index(pos_label)
                 except Exception:
-                    pos_idx = 1
+                    pos_idx = min(1, y_scores.shape[1] - 1)
                 neg_idx = 1 - pos_idx if y_scores.shape[1] > 1 else 0
-                pos_label = classes[pos_idx] if len(classes) > pos_idx else 1
                 neg_label = classes[neg_idx] if len(classes) > neg_idx else 0
-                y_pred = np.where(y_scores[:, pos_idx] >= prob_thresh, pos_label, neg_label)
+                y_pred = np.where(
+                    y_scores[:, pos_idx] >= prob_thresh,
+                    pos_label,
+                    neg_label,
+                )
                 y_scores = y_scores[:, pos_idx]
             else:
                 y_pred = self.best_model.predict(X_test)
@@ -380,35 +476,45 @@ class ClassificationModelTrainer(BaseModelTrainer):
             y_scores = np.asarray(y_scores)
             if y_scores.ndim > 1 and y_scores.shape[1] == 1:
                 y_scores = y_scores.ravel()
-            if self.exp.is_multiclass and y_scores.ndim > 1:
-                # Avoid passing multiclass score matrices to ROC/PR utilities
-                y_scores = None
-        label_values = pd.unique(pd.concat([y_true, y_pred], ignore_index=True))
-        return y_true, y_pred, label_values.tolist(), y_scores
+            elif not self.exp.is_multiclass and y_scores.ndim > 1:
+                classes = score_labels or list(
+                    getattr(self.best_model, "classes_", [])
+                )
+                pos_label = positive_class_label(classes)
+                try:
+                    pos_idx = classes.index(pos_label)
+                except Exception:
+                    pos_idx = min(1, y_scores.shape[1] - 1)
+                y_scores = y_scores[:, pos_idx]
+        label_values = labels_in_sample_order(y_true, y_pred)
+        return y_true, y_pred, label_values, y_scores, score_labels
 
-    def _decode_labels_for_display(self, values):
+    def _decode_labels_for_display(self, values, assume_encoded=True):
         """Map transformed class ids back to the original target labels for plots."""
+        if not assume_encoded:
+            return values
         return self._decode_class_labels_for_display(values)
 
     def _get_original_test_labels_for_display(self, fallback):
         """Return original test labels for report plots when PyCaret exposes them."""
         candidates = []
         if self.test_data is not None and self.target in self.test_data.columns:
-            candidates.append(self.test_data[self.target])
+            candidates.append((self.test_data[self.target], False))
         for key in ("y_test", "y_test_transformed"):
             try:
-                candidates.append(self.exp.get_config(key))
+                value = self.exp.get_config(key)
             except Exception:
-                candidates.append(getattr(self.exp, key, None))
+                value = getattr(self.exp, key, None)
+            candidates.append((value, key.endswith("_transformed")))
 
         fallback_len = len(fallback) if fallback is not None else None
-        for candidate in candidates:
+        for candidate, assume_encoded in candidates:
             if candidate is None:
                 continue
             series = pd.Series(candidate).reset_index(drop=True)
             if fallback_len is not None and len(series) != fallback_len:
                 continue
-            return self._decode_labels_for_display(series)
+            return self._decode_labels_for_display(series, assume_encoded=assume_encoded)
 
         return self._decode_labels_for_display(fallback)
 
@@ -455,13 +561,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
     def _plot_labeled_scatter(self, fig, x, y, labels, hover_text=None):
         labels = pd.Series(labels).reset_index(drop=True)
 
-        def _label_sort_key(lbl):
-            try:
-                return (0, float(lbl))
-            except Exception:
-                return (1, str(lbl))
-
-        for label in sorted(pd.unique(labels), key=_label_sort_key):
+        for label in labels_in_sample_order(labels):
             mask = labels == label
             if pd.isna(label):
                 mask = labels.isna()
@@ -593,7 +693,7 @@ class ClassificationModelTrainer(BaseModelTrainer):
         except Exception:
             return f" (threshold={prob_thresh})"
 
-    def _build_precision_recall_fig(self, y_true, y_scores):
+    def _build_precision_recall_fig(self, y_true, y_scores, pos_label=None):
         """
         Build a binary precision-recall curve with recall on X and precision on Y.
         Returns None when class probabilities are unavailable or not binary.
@@ -605,7 +705,12 @@ class ClassificationModelTrainer(BaseModelTrainer):
         if y_scores.ndim != 1:
             return None
 
-        precision, recall, thr_pr = precision_recall_curve(y_true, y_scores)
+        y_true_curve = (
+            (pd.Series(y_true).reset_index(drop=True) == pos_label).astype(int)
+            if pos_label is not None
+            else y_true
+        )
+        precision, recall, thr_pr = precision_recall_curve(y_true_curve, y_scores)
         pr_auc = auc(recall, precision)
         fig_pr = go.Figure()
         fig_pr.add_scatter(
@@ -618,10 +723,10 @@ class ClassificationModelTrainer(BaseModelTrainer):
         prob_thresh = getattr(self, "probability_threshold", None)
         if prob_thresh is not None and len(thr_pr):
             idx_pr = int(np.argmin(np.abs(thr_pr - prob_thresh)))
-            idx_pr = max(0, min(idx_pr, len(recall) - 1))
+            point_idx = max(0, min(idx_pr + 1, len(recall) - 1))
             fig_pr.add_scatter(
-                x=[recall[idx_pr]],
-                y=[precision[idx_pr]],
+                x=[recall[point_idx]],
+                y=[precision[point_idx]],
                 mode="markers",
                 name=f"@ {prob_thresh:.2f}",
                 marker=dict(size=10),
@@ -635,16 +740,97 @@ class ClassificationModelTrainer(BaseModelTrainer):
         _apply_report_layout(fig_pr)
         return fig_pr
 
-    def _build_confusion_matrix_fig(self, y_true, y_pred, labels):
-        def _label_sort_key(lbl):
-            try:
-                return (0, float(lbl))
-            except Exception:
-                return (1, str(lbl))
+    def _score_label_display_names(self, score_labels):
+        decoded = self._decode_labels_for_display(pd.Series(score_labels))
+        return ["NaN" if pd.isna(label) else str(label) for label in decoded]
 
-        ordered_labels = sorted(labels, key=_label_sort_key)
-        cm = confusion_matrix(y_true, y_pred, labels=ordered_labels)
-        label_names = [str(lbl) for lbl in ordered_labels]
+    def _build_multiclass_roc_fig(self, y_true, y_scores, score_labels):
+        y_scores = np.asarray(y_scores)
+        if y_scores.ndim != 2 or y_scores.shape[1] != len(score_labels):
+            return None
+
+        display_labels = self._score_label_display_names(score_labels)
+        y_true_series = pd.Series(y_true).reset_index(drop=True)
+        fig = go.Figure()
+        added = 0
+        for idx, raw_label in enumerate(score_labels):
+            y_true_bin = (y_true_series == raw_label).astype(int)
+            if len(pd.unique(y_true_bin)) < 2:
+                continue
+            fpr, tpr, _ = roc_curve(y_true_bin, y_scores[:, idx])
+            roc_auc = auc(fpr, tpr)
+            fig.add_scatter(
+                x=fpr,
+                y=tpr,
+                mode="lines",
+                name=f"{display_labels[idx]} (AUC={roc_auc:.3f})",
+            )
+            added += 1
+        if not added:
+            return None
+        fig.add_scatter(
+            x=[0, 1],
+            y=[0, 1],
+            mode="lines",
+            line=dict(color="#777777", dash="dash"),
+            name="Chance",
+        )
+        fig.update_layout(
+            title="One-vs-Rest ROC Curves",
+            xaxis_title="False Positive Rate",
+            yaxis_title="True Positive Rate",
+        )
+        _apply_report_layout(fig)
+        return fig
+
+    def _build_multiclass_precision_recall_fig(self, y_true, y_scores, score_labels):
+        y_scores = np.asarray(y_scores)
+        if y_scores.ndim != 2 or y_scores.shape[1] != len(score_labels):
+            return None
+
+        display_labels = self._score_label_display_names(score_labels)
+        y_true_series = pd.Series(y_true).reset_index(drop=True)
+        weighted_auc = weighted_ovr_pr_auc(
+            y_true_series,
+            y_scores,
+            labels=score_labels,
+        )
+        fig = go.Figure()
+        added = 0
+        for idx, raw_label in enumerate(score_labels):
+            y_true_bin = (y_true_series == raw_label).astype(int)
+            if len(pd.unique(y_true_bin)) < 2:
+                continue
+            precision, recall, _ = precision_recall_curve(
+                y_true_bin,
+                y_scores[:, idx],
+            )
+            pr_auc = auc(recall, precision)
+            fig.add_scatter(
+                x=recall,
+                y=precision,
+                mode="lines",
+                name=f"{display_labels[idx]} (AUC={pr_auc:.3f})",
+            )
+            added += 1
+        if not added:
+            return None
+        title = "One-vs-Rest Precision-Recall Curves"
+        if not np.isnan(weighted_auc):
+            title += f" (weighted AUC={weighted_auc:.3f})"
+        fig.update_layout(
+            title=title,
+            xaxis_title="Recall",
+            yaxis_title="Precision",
+        )
+        _apply_report_layout(fig)
+        return fig
+
+    def _build_confusion_matrix_fig(self, y_true, y_pred, labels):
+        label_names = [str(lbl) for lbl in labels]
+        y_true_display = pd.Series(y_true).map(str)
+        y_pred_display = pd.Series(y_pred).map(str)
+        cm = confusion_matrix(y_true_display, y_pred_display, labels=label_names)
         fig_cm = go.Figure(
             data=go.Heatmap(
                 z=cm,
@@ -676,20 +862,15 @@ class ClassificationModelTrainer(BaseModelTrainer):
         return fig_cm
 
     def _build_classification_report_fig(self, y_true, y_pred, labels):
-        precision, recall, f1, support = precision_recall_fscore_support(
-            y_true, y_pred, labels=labels, zero_division=0
-        )
-        mcc_scores = []
-        for lbl in labels:
-            y_true_bin = (y_true == lbl).astype(int)
-            y_pred_bin = (y_pred == lbl).astype(int)
-            try:
-                mcc_val = matthews_corrcoef(y_true_bin, y_pred_bin)
-            except Exception:
-                mcc_val = 0.0
-            mcc_scores.append(mcc_val)
-
         label_names = [str(lbl) for lbl in labels]
+        y_true_display = pd.Series(y_true).map(str)
+        y_pred_display = pd.Series(y_pred).map(str)
+        precision, recall, f1, support = precision_recall_fscore_support(
+            y_true_display,
+            y_pred_display,
+            labels=label_names,
+            zero_division=0,
+        )
         metrics = ["precision", "recall", "f1", "support"]
 
         max_support = float(max(support) if len(support) else 0)
