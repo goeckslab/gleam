@@ -368,6 +368,21 @@ a:hover {
   margin-top: 0;
 }
 
+.tool-card .link-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  min-height: calc(2 * 2.35rem + 0.7rem);
+}
+
+.tool-card .link-row a:first-child {
+  grid-column: 1 / -1;
+}
+
+.tool-card .link-row a:last-child:not(:first-child) {
+  grid-column: 2;
+}
+
 .workflow-button {
   width: 100%;
   align-self: stretch;
@@ -376,6 +391,7 @@ a:hover {
 .link-row a {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   min-height: 2.35rem;
   padding: 0.45rem 0.7rem;
   border: 1px solid rgba(8, 127, 122, 0.25);
@@ -528,6 +544,19 @@ a:hover {
 
   .section-heading.split .button {
     margin-top: 1rem;
+  }
+
+  .tool-card .link-row {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .tool-card .link-row a:first-child {
+    grid-column: auto;
+  }
+
+  .tool-card .link-row a:last-child:not(:first-child) {
+    grid-column: auto;
   }
 
   .site-footer p:last-child {
