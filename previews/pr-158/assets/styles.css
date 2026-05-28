@@ -349,8 +349,10 @@ a:hover {
   font-weight: 800;
 }
 
-.tool-card > a,
-.tool-card > .link-row {
+.tool-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
   margin-top: auto;
 }
 
@@ -367,8 +369,8 @@ a:hover {
 }
 
 .workflow-button {
-  align-self: flex-start;
-  margin-top: auto;
+  width: 100%;
+  align-self: stretch;
 }
 
 .link-row a {
@@ -398,13 +400,14 @@ a:hover {
 
 .tutorial-card dl {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
   gap: 0.7rem;
   margin: 0;
   padding: 0;
 }
 
 .tutorial-card dl div {
+  min-width: 0;
   padding: 0.75rem;
   border-left: 3px solid var(--coral);
   background: var(--soft);
@@ -420,7 +423,10 @@ a:hover {
 .tutorial-card dd {
   margin: 0.12rem 0 0;
   color: var(--ink);
+  font-size: 0.96rem;
   font-weight: 800;
+  line-height: 1.35;
+  overflow-wrap: break-word;
 }
 
 .site-footer {
