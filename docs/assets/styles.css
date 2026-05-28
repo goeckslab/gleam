@@ -68,6 +68,26 @@ a:hover {
   backdrop-filter: blur(12px);
 }
 
+.brand-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 1.1rem;
+  min-width: 0;
+  flex: 0 0 auto;
+}
+
+.galaxy-brand {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.galaxy-brand img {
+  display: block;
+  width: 8.9rem;
+  height: auto;
+}
+
 .brand {
   display: inline-flex;
   align-items: center;
@@ -75,6 +95,7 @@ a:hover {
   min-width: 0;
   color: var(--ink);
   text-decoration: none;
+  white-space: nowrap;
 }
 
 .brand-mark {
@@ -121,13 +142,14 @@ a:hover {
 .hero {
   position: relative;
   display: flex;
-  min-height: 84vh;
+  min-height: 42vh;
   align-items: center;
   overflow: hidden;
   color: var(--paper);
   background-color: var(--navy);
   background-image: url("gleam-hero.png");
   background-position: center;
+  background-repeat: no-repeat;
   background-size: cover;
 }
 
@@ -490,9 +512,18 @@ a:hover {
     margin-top: 0.85rem;
   }
 
+  .galaxy-brand img {
+    width: 6.8rem;
+  }
+
+  .brand small {
+    display: none;
+  }
+
   .hero {
     min-height: auto;
-    background-position: 58% center;
+    background-position: center;
+    background-size: cover;
   }
 
   .hero-content {
