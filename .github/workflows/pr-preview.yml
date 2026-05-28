@@ -21,6 +21,7 @@ on:
 
 permissions:
   contents: write
+  deployments: write
   issues: write
   pull-requests: read
 
@@ -186,6 +187,38 @@ jobs:
               });
             }
 
+      - name: Record preview deployment
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const previewUrl = "${{ env.PREVIEW_URL }}";
+            const environment = `pr-${{ needs.resolve_pr.outputs.pr_number }}-preview`;
+            const headSha = "${{ needs.resolve_pr.outputs.head_sha }}";
+            const { data: deployment } = await github.rest.repos.createDeployment({
+              owner,
+              repo,
+              ref: headSha,
+              task: "deploy:preview",
+              auto_merge: false,
+              required_contexts: [],
+              environment,
+              description: "GLEAM PR preview",
+              transient_environment: true,
+              production_environment: false,
+            });
+            await github.rest.repos.createDeploymentStatus({
+              owner,
+              repo,
+              deployment_id: deployment.id,
+              state: "success",
+              environment,
+              environment_url: previewUrl,
+              log_url: `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
+              description: "GLEAM PR preview is available.",
+              auto_inactive: true,
+            });
+
   cleanup_preview:
     name: Remove closed preview
     needs: resolve_pr
@@ -221,3 +254,28 @@ jobs:
           git commit -m "Remove PR ${{ needs.resolve_pr.outputs.pr_number }} preview"
           git push origin HEAD:gh-pages
           echo "changed=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Mark preview deployment inactive
+        continue-on-error: true
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const environment = `pr-${{ needs.resolve_pr.outputs.pr_number }}-preview`;
+            const { data: deployments } = await github.rest.repos.listDeployments({
+              owner,
+              repo,
+              environment,
+              per_page: 20,
+            });
+            for (const deployment of deployments) {
+              await github.rest.repos.createDeploymentStatus({
+                owner,
+                repo,
+                deployment_id: deployment.id,
+                state: "inactive",
+                environment,
+                log_url: `${context.serverUrl}/${owner}/${repo}/actions/runs/${context.runId}`,
+                description: "GLEAM PR preview was removed.",
+              });
+            }
