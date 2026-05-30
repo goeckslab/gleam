@@ -1,5 +1,4 @@
 import numpy as np
-
 from plotly_plots import _resolve_display_labels, optimize_binary_threshold_values
 
 
