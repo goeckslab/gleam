@@ -1160,10 +1160,7 @@ class BaseModelTrainer:
             "the plot can differ slightly from the automatically selected "
             "decision threshold because the plot and the optimizer may use "
             "different threshold grids, rounding, or tie-breaking among "
-            "near-equivalent metric values. The test results use the selected "
-            "Decision threshold (Test) reported in Experiment and Data "
-            "Parameters, so this visual difference does not change the final "
-            "test scoring.</p>"
+            "near-equivalent metric values.</p>"
         )
 
     def save_model(self):
