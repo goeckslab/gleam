@@ -80,29 +80,11 @@ class RegressionModelTrainer(BaseModelTrainer):
             LOG.error(f"Error creating explainer: {e}")
             return
 
-        if self._explainer_feature_count_exceeds_cap():
-            LOG.info(
-                "Skipping ExplainerDashboard SHAP/permutation importance because "
-                "the transformed test set has %s features; custom SHAP remains capped "
-                "to top %s features.",
-                self.explainer_scope.total_features,
-                self.explainer_scope.feature_cap,
-            )
-            self.explainer_dashboard_importance_skipped = True
-        else:
-            # --- 1) SHAP mean impact (average absolute SHAP values) ---
-            try:
-                self.explainer_plots["shap_mean"] = explainer.plot_importances()
-            except Exception as e:
-                LOG.error(f"Error generating SHAP mean importance: {e}")
-
-            # --- 2) SHAP permutation importance ---
-            try:
-                self.explainer_plots["shap_perm"] = explainer.plot_importances_permutation(
-                    kind="permutation"
-                )
-            except Exception as e:
-                LOG.error(f"Error generating SHAP permutation importance: {e}")
+        LOG.info(
+            "Skipping ExplainerDashboard SHAP/permutation importance; "
+            "custom model-specific SHAP is generated once in Feature Importance."
+        )
+        self.explainer_dashboard_importance_skipped = True
 
         # Pre-filter features so we never call PDP or residual-vs-feature on missing cols
         valid_feats = []

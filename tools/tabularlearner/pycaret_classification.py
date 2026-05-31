@@ -283,29 +283,11 @@ class ClassificationModelTrainer(BaseModelTrainer):
             except Exception as e:
                 LOG.error(f"Error generating explainer plot {key}: {e}")
 
-        if self._explainer_feature_count_exceeds_cap():
-            LOG.info(
-                "Skipping ExplainerDashboard SHAP/permutation importance because "
-                "the transformed test set has %s features; custom SHAP remains capped "
-                "to top %s features.",
-                self.explainer_scope.total_features,
-                self.explainer_scope.feature_cap,
-            )
-            self.explainer_dashboard_importance_skipped = True
-        else:
-            # mean SHAP importances
-            try:
-                self.explainer_plots["shap_mean"] = explainer.plot_importances()
-            except Exception as e:
-                LOG.warning(f"Could not generate shap_mean: {e}")
-
-            # permutation importances
-            try:
-                self.explainer_plots["shap_perm"] = lambda: explainer.plot_importances(
-                    kind="permutation"
-                )
-            except Exception as e:
-                LOG.warning(f"Could not generate shap_perm: {e}")
+        LOG.info(
+            "Skipping ExplainerDashboard SHAP/permutation importance; "
+            "custom model-specific SHAP is generated once in Feature Importance."
+        )
+        self.explainer_dashboard_importance_skipped = True
 
         # PDPs for each feature (appended last)
         valid_feats = []

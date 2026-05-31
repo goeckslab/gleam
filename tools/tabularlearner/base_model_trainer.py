@@ -2697,7 +2697,7 @@ class BaseModelTrainer:
         if getattr(self, "explainer_dashboard_importance_skipped", False):
             cap_rows.append((
                 "ExplainerDashboard SHAP/permutation importance",
-                "Skipped; custom capped SHAP is shown instead",
+                "Skipped to avoid duplicate SHAP computation",
             ))
         if getattr(self, "polynomial_features", False):
             cap_rows.append((
