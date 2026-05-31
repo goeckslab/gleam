@@ -36,6 +36,7 @@ from ludwig.globals import (
 from ludwig.utils.data_utils import get_split_path
 from metaformer_setup import get_visualizations_registry, META_DEFAULT_CFGS
 from plotly_plots import (
+    build_binary_threshold_classification_plots_from_predictions,
     build_binary_threshold_plot,
     build_classification_plots,
     build_multiclass_metric_plots,
@@ -1946,17 +1947,37 @@ class LudwigDirectBackend:
 
         if output_type in ("binary", "category") and test_stats_path.exists():
             try:
-                interactive_plots = build_classification_plots(
-                    str(test_stats_path),
-                    str(train_stats_path) if train_stats_path.exists() else None,
-                    metadata_csv_path=str(label_metadata_path)
-                    if label_metadata_path and label_metadata_path.exists()
-                    else None,
-                    train_set_metadata_path=str(train_set_metadata_path)
-                    if train_set_metadata_path.exists()
-                    else None,
-                    threshold=threshold_value,
-                )
+                if output_type == "binary" and predictions_csv_path.exists():
+                    interactive_plots = build_binary_threshold_classification_plots_from_predictions(
+                        str(predictions_csv_path),
+                        float(threshold_value) if threshold_value is not None else 0.5,
+                        label_data_path=str(config.get("label_column_data_path"))
+                        if config.get("label_column_data_path")
+                        else None,
+                        split_value=2,
+                    )
+                    if not interactive_plots:
+                        interactive_plots = build_classification_plots(
+                            str(test_stats_path),
+                            str(train_stats_path) if train_stats_path.exists() else None,
+                            metadata_csv_path=str(label_metadata_path)
+                            if label_metadata_path and label_metadata_path.exists()
+                            else None,
+                            train_set_metadata_path=str(train_set_metadata_path)
+                            if train_set_metadata_path.exists()
+                            else None,
+                        )
+                else:
+                    interactive_plots = build_classification_plots(
+                        str(test_stats_path),
+                        str(train_stats_path) if train_stats_path.exists() else None,
+                        metadata_csv_path=str(label_metadata_path)
+                        if label_metadata_path and label_metadata_path.exists()
+                        else None,
+                        train_set_metadata_path=str(train_set_metadata_path)
+                        if train_set_metadata_path.exists()
+                        else None,
+                    )
                 tab3_content = append_plot_blocks(tab3_content, interactive_plots)
                 if interactive_plots:
                     logger.info(f"Generated {len(interactive_plots)} interactive Plotly plots")

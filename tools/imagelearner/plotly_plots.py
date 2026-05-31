@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -12,6 +12,7 @@ from sklearn.metrics import (
     auc,
     average_precision_score,
     balanced_accuracy_score,
+    confusion_matrix,
     f1_score,
     matthews_corrcoef,
     precision_recall_curve,
@@ -56,6 +57,47 @@ def _wrap_plot(
 ) -> Dict[str, str]:
     """Package a figure with its title for downstream HTML rendering."""
     return {"title": title, "html": _fig_to_html(fig, include_js=include_js, config=config)}
+
+
+def _strip_prob_prefix(col: str) -> str:
+    if col.startswith("label_probabilities_"):
+        return col.replace("label_probabilities_", "")
+    if col.startswith("probabilities_"):
+        return col.replace("probabilities_", "")
+    return col
+
+
+def _select_positive_probability_column(
+    prob_cols: List[str],
+) -> Tuple[Optional[str], Optional[str]]:
+    if not prob_cols:
+        return None, None
+    prob_cols_sorted = sorted(prob_cols)
+    preferred_keys = ("event", "true", "positive", "pos", "1")
+    for col in prob_cols_sorted:
+        suffix = _strip_prob_prefix(col)
+        if any(k in suffix.lower() for k in preferred_keys):
+            return col, suffix
+    return prob_cols_sorted[-1], _strip_prob_prefix(prob_cols_sorted[-1])
+
+
+def _resolve_positive_label_from_probability(
+    labels: np.ndarray,
+    positive_label_hint: Optional[str],
+) -> Optional[object]:
+    unique_labels = list(pd.unique(labels))
+    if not unique_labels:
+        return None
+
+    if positive_label_hint is not None:
+        hint = str(positive_label_hint)
+        for label in unique_labels:
+            if str(label) == hint:
+                return label
+
+    if len(unique_labels) == 2:
+        return unique_labels[1]
+    return unique_labels[0]
 
 
 def _line_chart(
@@ -941,13 +983,6 @@ def build_prediction_diagnostics(
         if split_value != 2:
             return []
 
-    def _strip_prob_prefix(col: str) -> str:
-        if col.startswith("label_probabilities_"):
-            return col.replace("label_probabilities_", "")
-        if col.startswith("probabilities_"):
-            return col.replace("probabilities_", "")
-        return col
-
     def _maybe_expand_probabilities_column(df: pd.DataFrame, labels_guess: List[str]) -> List[str]:
         """If only a single 'probabilities' column exists (list-like), expand it into per-class columns."""
         if "probabilities" not in df.columns:
@@ -996,22 +1031,7 @@ def build_prediction_diagnostics(
         prob_cols = _maybe_expand_probabilities_column(df_pred, labels_guess)
     prob_cols_sorted = sorted(prob_cols)
 
-    def _select_positive_prob():
-        if not prob_cols_sorted:
-            return None, None
-        # Prefer a column indicating positive/event/true/1
-        preferred_keys = ("event", "true", "positive", "pos", "1")
-        for col in prob_cols_sorted:
-            suffix = _strip_prob_prefix(col).lower()
-            if any(k in suffix for k in preferred_keys):
-                return col, suffix
-        if len(prob_cols_sorted) == 2:
-            col = prob_cols_sorted[1]
-            return col, _strip_prob_prefix(col)
-        col = prob_cols_sorted[0]
-        return col, _strip_prob_prefix(col)
-
-    pos_prob_col, pos_label_hint = _select_positive_prob()
+    pos_prob_col, pos_label_hint = _select_positive_probability_column(prob_cols_sorted)
     pos_prob_series = df_pred[pos_prob_col] if pos_prob_col and pos_prob_col in df_pred else None
 
     # Confidence series: prefer label_probability, otherwise positive prob, otherwise max prob
@@ -1095,16 +1115,14 @@ def build_prediction_diagnostics(
     y_true_raw = labels_series.iloc[:min_len]
     y_score = np.array(pos_prob_series.iloc[:min_len], dtype=float)
 
-    # Determine positive label
+    # Determine positive label from the selected probability column suffix.
     unique_labels = pd.unique(y_true_raw)
     unique_labels_list = list(unique_labels)
-    positive_label = None
-    if pos_label_hint and str(pos_label_hint) in [str(u) for u in unique_labels_list]:
-        positive_label = pos_label_hint
-    elif len(unique_labels_list) == 2:
-        positive_label = unique_labels_list[1]
-    else:
-        positive_label = unique_labels_list[0]
+    positive_label = _resolve_positive_label_from_probability(
+        np.array(y_true_raw), pos_label_hint
+    )
+    if positive_label is None:
+        return plots
 
     y_true = (y_true_raw == positive_label).astype(int).values
 
@@ -1350,15 +1368,9 @@ def load_binary_threshold_data(
     if labels_series is None or not prob_cols_sorted:
         return None
 
-    preferred_keys = ("event", "true", "positive", "pos", "1")
-    pos_prob_col = None
-    for col in prob_cols_sorted:
-        suffix = _strip_prob_prefix(col).lower()
-        if any(k in suffix for k in preferred_keys):
-            pos_prob_col = col
-            break
+    pos_prob_col, pos_label_hint = _select_positive_probability_column(prob_cols_sorted)
     if pos_prob_col is None:
-        pos_prob_col = prob_cols_sorted[-1]
+        return None
 
     min_len = min(len(labels_series), len(df_pred[pos_prob_col]))
     if min_len == 0:
@@ -1368,17 +1380,24 @@ def load_binary_threshold_data(
     unique_labels = pd.unique(y_true)
     if len(unique_labels) < 2:
         return None
-    positive_label = unique_labels[1]
+    positive_label = _resolve_positive_label_from_probability(y_true, pos_label_hint)
+    if positive_label is None:
+        return None
     y_true_bin = (y_true == positive_label).astype(int)
     y_score = np.array(df_pred[pos_prob_col].iloc[:min_len], dtype=float)
     finite_mask = np.isfinite(y_score)
     if not finite_mask.any():
         return None
+    finite_labels = y_true[finite_mask]
+    negative_labels = [label for label in pd.unique(finite_labels) if label != positive_label]
+    negative_label = negative_labels[0] if negative_labels else None
 
     return {
         "y_true_bin": y_true_bin[finite_mask],
         "y_score": y_score[finite_mask],
         "positive_label": positive_label,
+        "negative_label": negative_label,
+        "positive_probability_column": pos_prob_col,
     }
 
 
@@ -1486,6 +1505,223 @@ def compute_binary_threshold_metrics_from_predictions(
         "f1": f1_score(y_true_bin, y_pred, zero_division=0),
         "mcc": matthews_corrcoef(y_true_bin, y_pred),
     }
+
+
+def build_binary_threshold_classification_plots_from_predictions(
+    predictions_path: str,
+    threshold: float,
+    label_data_path: Optional[str] = None,
+    split_value: int = 2,
+) -> List[Dict[str, str]]:
+    """Build binary test plots from predictions.csv using the selected decision threshold."""
+    data = load_binary_threshold_data(
+        predictions_path, label_data_path=label_data_path, split_value=split_value
+    )
+    if data is None:
+        return []
+
+    y_true_bin = data["y_true_bin"]
+    y_score = data["y_score"]
+    y_pred = (y_score >= float(threshold)).astype(int)
+    if len(y_true_bin) == 0:
+        return []
+
+    positive_label = data.get("positive_label")
+    negative_label = data.get("negative_label")
+    labels = [
+        str(negative_label) if negative_label is not None else f"Not {positive_label}",
+        str(positive_label),
+    ]
+    threshold_text = f"{float(threshold):.3f}"
+    common_cfg = {"displayModeBar": True, "scrollZoom": True}
+    plots: List[Dict[str, str]] = []
+
+    cm = confusion_matrix(y_true_bin, y_pred, labels=[0, 1])
+    total = cm.sum()
+    fig_cm = go.Figure(
+        go.Heatmap(
+            z=cm,
+            x=labels,
+            y=labels,
+            colorscale="Blues",
+            showscale=True,
+            colorbar=dict(title="Count"),
+        )
+    )
+    fig_cm.update_traces(xgap=2, ygap=2)
+    fig_cm.update_layout(
+        title=dict(
+            text=f"Confusion Matrix (Selected Threshold: {threshold_text})",
+            x=0.5,
+        ),
+        xaxis_title="Predicted",
+        yaxis_title="Observed",
+        yaxis_autorange="reversed",
+        width=600,
+        height=600,
+        margin=dict(t=100, l=80, r=80, b=80),
+    )
+    _style_fig(fig_cm)
+    mval = cm.max() if cm.size else 0
+    color_threshold = mval / 2
+    for i in range(cm.shape[0]):
+        for j in range(cm.shape[1]):
+            value = int(cm[i, j])
+            pct = (value / total * 100) if total > 0 else 0
+            color = "white" if value > color_threshold else "black"
+            fig_cm.add_annotation(
+                x=labels[j],
+                y=labels[i],
+                text=f"<b>{value}</b><br>{pct:.1f}%",
+                showarrow=False,
+                font=dict(color=color, size=14),
+            )
+    plots.append(
+        _wrap_plot("Confusion Matrix", fig_cm, include_js=True, config=common_cfg)
+    )
+
+    if len(np.unique(y_true_bin)) == 2:
+        fpr, tpr, roc_thresholds = roc_curve(y_true_bin, y_score)
+        roc_auc = auc(fpr, tpr)
+        fig_roc = go.Figure()
+        fig_roc.add_trace(
+            go.Scatter(
+                x=fpr,
+                y=tpr,
+                mode="lines",
+                name=f"ROC Curve (AUC={roc_auc:.3f})",
+                line=dict(color="#1f77b4", width=4),
+            )
+        )
+        fig_roc.add_trace(
+            go.Scatter(
+                x=[0, 1],
+                y=[0, 1],
+                mode="lines",
+                name="Random Classifier",
+                line=dict(color="gray", width=2, dash="dash"),
+            )
+        )
+        if len(roc_thresholds) == len(fpr):
+            marker_idx = int(np.argmin(np.abs(np.asarray(roc_thresholds) - float(threshold))))
+            fig_roc.add_trace(
+                go.Scatter(
+                    x=[fpr[marker_idx]],
+                    y=[tpr[marker_idx]],
+                    mode="markers",
+                    marker=dict(color="black", size=10, symbol="x"),
+                    name=f"Selected threshold={threshold_text}",
+                )
+            )
+        fig_roc.update_layout(
+            title=dict(text=f"ROC Curve (Positive Class: {positive_label})", x=0.5),
+            xaxis_title="False Positive Rate",
+            yaxis_title="True Positive Rate",
+            width=700,
+            height=600,
+            margin=dict(t=80, l=80, r=80, b=80),
+        )
+        _style_fig(fig_roc)
+        fig_roc.update_xaxes(range=[0, 1.0])
+        fig_roc.update_yaxes(range=[0, 1.05])
+        plots.append(_wrap_plot("ROC Curve", fig_roc, config=common_cfg))
+
+        precision, recall, pr_thresholds = precision_recall_curve(y_true_bin, y_score)
+        avg_precision = average_precision_score(y_true_bin, y_score)
+        fig_pr = go.Figure()
+        fig_pr.add_trace(
+            go.Scatter(
+                x=recall,
+                y=precision,
+                mode="lines",
+                name=f"Precision-Recall (AP={avg_precision:.3f})",
+                line=dict(color="#d62728", width=4),
+            )
+        )
+        if len(pr_thresholds) > 0:
+            marker_idx = int(np.argmin(np.abs(np.asarray(pr_thresholds) - float(threshold))))
+            point_idx = min(marker_idx + 1, len(precision) - 1)
+            fig_pr.add_trace(
+                go.Scatter(
+                    x=[recall[point_idx]],
+                    y=[precision[point_idx]],
+                    mode="markers",
+                    marker=dict(color="black", size=10, symbol="x"),
+                    name=f"Selected threshold={threshold_text}",
+                )
+            )
+        fig_pr.update_layout(
+            title=dict(text=f"Precision-Recall Curve (Positive Class: {positive_label})", x=0.5),
+            xaxis_title="Recall",
+            yaxis_title="Precision",
+            width=700,
+            height=600,
+            margin=dict(t=80, l=80, r=80, b=80),
+        )
+        _style_fig(fig_pr)
+        fig_pr.update_xaxes(range=[0, 1.0])
+        fig_pr.update_yaxes(range=[0, 1.05])
+        plots.append(_wrap_plot("Precision-Recall Curve", fig_pr, config=common_cfg))
+
+    tn, fp, fn, tp = [int(v) for v in cm.ravel()]
+
+    def _ratio(num: float, den: float) -> float:
+        return float(num / den) if den else 0.0
+
+    class_rows = [
+        {
+            "label": labels[0],
+            "precision": _ratio(tn, tn + fn),
+            "recall": _ratio(tn, tn + fp),
+            "f1_score": _ratio(2 * tn, 2 * tn + fp + fn),
+            "accuracy": accuracy_score(y_true_bin, y_pred),
+            "matthews_correlation_coefficient": matthews_corrcoef(y_true_bin, y_pred),
+            "specificity": _ratio(tp, tp + fn),
+        },
+        {
+            "label": labels[1],
+            "precision": _ratio(tp, tp + fp),
+            "recall": _ratio(tp, tp + fn),
+            "f1_score": _ratio(2 * tp, 2 * tp + fp + fn),
+            "accuracy": accuracy_score(y_true_bin, y_pred),
+            "matthews_correlation_coefficient": matthews_corrcoef(y_true_bin, y_pred),
+            "specificity": _ratio(tn, tn + fp),
+        },
+    ]
+    metrics = [
+        "precision",
+        "recall",
+        "f1_score",
+        "accuracy",
+        "matthews_correlation_coefficient",
+        "specificity",
+    ]
+    z = [[row[m] for m in metrics] for row in class_rows]
+    text = [[f"{row[m]:.2f}" for m in metrics] for row in class_rows]
+    fig_cr = go.Figure(
+        go.Heatmap(
+            z=z,
+            x=[m.replace("_", " ") for m in metrics],
+            y=[row["label"] for row in class_rows],
+            text=text,
+            texttemplate="%{text}",
+            colorscale="Reds",
+            showscale=True,
+            colorbar=dict(title="Value"),
+        )
+    )
+    fig_cr.update_layout(
+        title=dict(text=f"Per-Class Metrics (Selected Threshold: {threshold_text})", x=0.5),
+        xaxis_title="",
+        yaxis_title="Class",
+        width=700,
+        height=520,
+        margin=dict(t=80, l=80, r=80, b=80),
+    )
+    _style_fig(fig_cr)
+    plots.append(_wrap_plot("Per-Class metrics", fig_cr, config=common_cfg))
+
+    return plots
 
 
 def build_multiclass_roc_pr_plots(
