@@ -1,5 +1,4 @@
 import base64
-import inspect
 import logging
 import tempfile
 from pathlib import Path
@@ -14,6 +13,7 @@ from feature_importance import FeatureImportanceAnalyzer
 from sklearn.metrics import (
     accuracy_score,
     auc,
+    cohen_kappa_score,
     confusion_matrix,
     f1_score,
     matthews_corrcoef,
@@ -160,6 +160,7 @@ class BaseModelTrainer:
         self.imputed_training_data = None
         self._best_model_metric_used = None
         self.threshold_metadata = None
+        self._threshold_cv_predictions = None
         self.cv_fold_adjustment = None
         self.setup_params = {}
         self.test_file = test_file
@@ -844,6 +845,7 @@ class BaseModelTrainer:
             threshold = float(threshold)
             self._validate_probability_threshold(threshold)
             self.probability_threshold = threshold
+            self._threshold_cv_predictions = None
             self.threshold_metadata = {
                 "threshold": threshold,
                 "threshold_source": "Manual",
@@ -853,67 +855,31 @@ class BaseModelTrainer:
 
         metric = str(getattr(self, "threshold_metric", "F1") or "F1")
         try:
-            optimize_kwargs = {"optimize": metric, "return_data": True}
-            try:
-                optimize_signature = inspect.signature(
-                    self.exp.optimize_threshold
-                )
-                if "verbose" in optimize_signature.parameters:
-                    optimize_kwargs["verbose"] = False
-            except (TypeError, ValueError):
-                pass
-
-            optimized_result = self.exp.optimize_threshold(
-                self.best_model,
-                **optimize_kwargs,
-            )
-            threshold_data = None
-            optimized_model = optimized_result
-            if isinstance(optimized_result, tuple):
-                threshold_data = next(
-                    (
-                        item
-                        for item in optimized_result
-                        if isinstance(item, pd.DataFrame)
-                    ),
-                    None,
-                )
-                optimized_model = next(
-                    (
-                        item
-                        for item in optimized_result
-                        if not isinstance(item, pd.DataFrame)
-                    ),
-                    optimized_result[-1],
-                )
-
-            threshold = self._extract_optimized_threshold(
-                optimized_model,
-                threshold_data,
-                metric,
-            )
-            if threshold is None:
-                raise ValueError(
-                    "PyCaret did not return an optimized probability threshold "
-                    "or threshold search table."
-                )
-            threshold = float(threshold)
+            result = self._optimize_threshold_from_training_cv(metric)
+            threshold = float(result["threshold"])
             self._validate_probability_threshold(threshold)
-            self.best_model = optimized_model
             self.probability_threshold = threshold
+            self._threshold_cv_predictions = result.get("predictions")
             self.threshold_metadata = {
                 "threshold": threshold,
-                "threshold_source": "Optimized on validation split",
+                "threshold_source": (
+                    "Optimized on cross-validated training predictions"
+                ),
                 "threshold_metric": metric,
+                "threshold_score": result["score"],
+                "threshold_candidates": result["n_candidates"],
             }
             LOG.info(
-                "Optimized binary decision threshold using %s: %.6f",
+                "Optimized binary decision threshold using %s: %.6f "
+                "(validation score %.6f)",
                 metric,
                 threshold,
+                result["score"],
             )
         except Exception as exc:
             fallback = 0.5
             self.probability_threshold = fallback
+            self._threshold_cv_predictions = None
             self.threshold_metadata = {
                 "threshold": fallback,
                 "threshold_source": (
@@ -923,38 +889,219 @@ class BaseModelTrainer:
                 "threshold_reason": str(exc),
             }
             LOG.warning(
-                "Could not optimize binary decision threshold with PyCaret; "
+                "Could not optimize binary decision threshold; "
                 "using default threshold %.1f: %s",
                 fallback,
                 exc,
             )
 
+    def _get_pycaret_config(self, keys):
+        for key in keys:
+            try:
+                val = self.exp.get_config(key)
+            except Exception:
+                val = getattr(self.exp, key, None)
+            if val is not None:
+                return val
+        return None
+
+    def _optimize_threshold_from_training_cv(self, metric):
+        """
+        Select a binary classification threshold from out-of-fold training
+        probabilities. The external/held-out test set is not used.
+        """
+        if getattr(self, "cross_validation", None) is False:
+            raise ValueError(
+                "Automatic threshold optimization requires cross-validation."
+            )
+
+        try:
+            from sklearn.model_selection import cross_val_predict
+        except Exception as exc:
+            raise ValueError(f"cross_val_predict unavailable: {exc}") from exc
+
+        X_train = self._get_pycaret_config(["X_train_transformed", "X_train"])
+        y_train = self._get_pycaret_config(["y_train_transformed", "y_train"])
+        if X_train is None or y_train is None:
+            raise ValueError(
+                "Training data unavailable for threshold optimization."
+            )
+
+        y_series = pd.Series(y_train).reset_index(drop=True)
+        if y_series.empty:
+            raise ValueError("Training labels are empty.")
+
+        X_df = pd.DataFrame(X_train).reset_index(drop=True)
+        if len(X_df) != len(y_series):
+            X_df = X_df.iloc[: len(y_series)].reset_index(drop=True)
+
+        cv_gen = self._get_cv_generator(y_series)
+        if cv_gen is None:
+            raise ValueError("Cross-validation splitter unavailable.")
+
+        cv_groups = getattr(self, "sample_id_series", None)
+        if cv_groups is not None:
+            cv_groups = pd.Series(cv_groups).reset_index(drop=True)
+            if len(cv_groups) != len(y_series):
+                LOG.warning(
+                    "Skipping group labels for threshold optimization because "
+                    "group count (%s) does not match training rows (%s).",
+                    len(cv_groups),
+                    len(y_series),
+                )
+                cv_groups = None
+
+        classes = list(getattr(self.best_model, "classes_", []))
+        if not classes:
+            classes = pd.unique(y_series).tolist()
+            try:
+                classes = sorted(classes)
+            except Exception:
+                pass
+        if len(classes) != 2:
+            raise ValueError(
+                "Automatic threshold optimization only supports binary classification."
+            )
+
+        try:
+            pos_idx = classes.index(1)
+        except Exception:
+            pos_idx = 1
+        pos_idx = min(pos_idx, len(classes) - 1)
+        pos_label = classes[pos_idx]
+        neg_label = classes[1 - pos_idx]
+
+        cv_predict_kwargs = {
+            "cv": cv_gen,
+            "method": "predict_proba",
+            "n_jobs": getattr(self, "n_jobs", None),
+        }
+        if cv_groups is not None:
+            cv_predict_kwargs["groups"] = cv_groups
+
+        try:
+            proba = cross_val_predict(
+                self.best_model,
+                X_df,
+                y_series,
+                **cv_predict_kwargs,
+            )
+        except Exception as exc:
+            raise ValueError(
+                f"Could not compute cross-validated probabilities: {exc}"
+            ) from exc
+
+        scores = np.asarray(proba)
+        if scores.ndim != 2 or scores.shape[1] < 2:
+            raise ValueError(
+                "Cross-validated probabilities are not available for both classes."
+            )
+        pos_scores = scores[:, min(pos_idx, scores.shape[1] - 1)]
+
+        finite_scores = pos_scores[np.isfinite(pos_scores)]
+        if finite_scores.size == 0:
+            raise ValueError("Cross-validated probabilities are all non-finite.")
+        finite_mask = np.isfinite(pos_scores)
+        if not finite_mask.all():
+            y_series = y_series[finite_mask].reset_index(drop=True)
+            pos_scores = pos_scores[finite_mask]
+
+        thresholds = np.unique(np.concatenate(([0.0, 1.0], finite_scores)))
+        metric_key = self._normalize_threshold_metric(metric)
+        candidates = []
+        for threshold in thresholds:
+            y_pred = np.where(pos_scores >= threshold, pos_label, neg_label)
+            score = self._score_threshold_metric(
+                y_series,
+                pd.Series(y_pred),
+                metric_key,
+                pos_label,
+            )
+            if score is None or not np.isfinite(score):
+                continue
+            candidates.append((float(threshold), float(score)))
+
+        if not candidates:
+            raise ValueError(
+                f"No valid threshold candidates for metric {metric}."
+            )
+
+        best_threshold, best_score = max(
+            candidates,
+            key=lambda item: (
+                item[1],
+                -abs(item[0] - 0.5),
+                -item[0],
+            ),
+        )
+        best_pred = np.where(pos_scores >= best_threshold, pos_label, neg_label)
+        return {
+            "threshold": best_threshold,
+            "score": best_score,
+            "n_candidates": len(candidates),
+            "predictions": {
+                "y_true": y_series,
+                "y_pred": pd.Series(best_pred).reset_index(drop=True),
+                "y_scores": pos_scores,
+                "pos_label": pos_label,
+                "neg_label": neg_label,
+                "classes": classes,
+            },
+        }
+
     @staticmethod
-    def _extract_optimized_threshold(optimized_model, threshold_data, metric):
-        threshold = getattr(optimized_model, "probability_threshold", None)
-        if threshold is not None:
-            return threshold
+    def _normalize_threshold_metric(metric):
+        normalized = str(metric or "F1").strip().lower()
+        aliases = {
+            "f1": "f1",
+            "f1-score": "f1",
+            "f1_score": "f1",
+            "accuracy": "accuracy",
+            "precision": "precision",
+            "recall": "recall",
+            "kappa": "kappa",
+            "cohen's kappa": "kappa",
+            "cohens kappa": "kappa",
+            "mcc": "mcc",
+            "matthews correlation coefficient": "mcc",
+        }
+        if normalized not in aliases:
+            raise ValueError(
+                "Unsupported threshold metric "
+                f"'{metric}'. Use F1, Accuracy, Precision, Recall, Kappa, "
+                "or MCC."
+            )
+        return aliases[normalized]
 
-        if threshold_data is None or threshold_data.empty:
-            return None
-        if "probability_threshold" not in threshold_data.columns:
-            return None
-
-        metric_df = threshold_data.copy()
-        if "variable" in metric_df.columns and "value" in metric_df.columns:
-            metric_name = str(metric).lower()
-            metric_df = metric_df[
-                metric_df["variable"].astype(str).str.lower() == metric_name
-            ]
-            if metric_df.empty:
-                return None
-            best_idx = metric_df["value"].astype(float).idxmax()
-            return metric_df.loc[best_idx, "probability_threshold"]
-
-        if metric in metric_df.columns:
-            best_idx = metric_df[metric].astype(float).idxmax()
-            return metric_df.loc[best_idx, "probability_threshold"]
-
+    @staticmethod
+    def _score_threshold_metric(y_true, y_pred, metric_key, pos_label):
+        if metric_key == "accuracy":
+            return accuracy_score(y_true, y_pred)
+        if metric_key == "precision":
+            return precision_score(
+                y_true,
+                y_pred,
+                pos_label=pos_label,
+                zero_division=0,
+            )
+        if metric_key == "recall":
+            return recall_score(
+                y_true,
+                y_pred,
+                pos_label=pos_label,
+                zero_division=0,
+            )
+        if metric_key == "f1":
+            return f1_score(
+                y_true,
+                y_pred,
+                pos_label=pos_label,
+                zero_division=0,
+            )
+        if metric_key == "kappa":
+            return cohen_kappa_score(y_true, y_pred)
+        if metric_key == "mcc":
+            return matthews_corrcoef(y_true, y_pred)
         return None
 
     @staticmethod
@@ -987,7 +1134,7 @@ class BaseModelTrainer:
         if threshold_display is None:
             return []
 
-        return [
+        rows = [
             ["Decision threshold (Test)", threshold_display],
             ["Threshold source", metadata.get("threshold_source", "Unknown")],
             [
@@ -995,6 +1142,15 @@ class BaseModelTrainer:
                 metadata.get("threshold_metric", "Not used"),
             ],
         ]
+        score_display = self._format_threshold_value(
+            metadata.get("threshold_score")
+        )
+        if score_display is not None:
+            rows.append([
+                "Threshold optimization score",
+                score_display,
+            ])
+        return rows
 
     def save_model(self):
         hdf5_path = Path(self.output_dir) / "pycaret_model.h5"
@@ -1553,6 +1709,9 @@ class BaseModelTrainer:
             return None
         if getattr(self, "cross_validation", None) is False:
             return None
+        cached = getattr(self, "_threshold_cv_predictions", None)
+        if cached is not None:
+            return cached
         if X is None or y is None:
             return None
 
