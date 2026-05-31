@@ -1144,6 +1144,28 @@ class BaseModelTrainer:
         ]
         return rows
 
+    def _threshold_plot_note_html(self):
+        if self.task_type != "classification":
+            return ""
+        if getattr(self.exp, "is_multiclass", False):
+            return ""
+
+        metadata = self.threshold_metadata or {}
+        source = str(metadata.get("threshold_source", "")).lower()
+        if "optimized" not in source:
+            return ""
+
+        return (
+            "<p class='report-footnote'>Note: The threshold marker shown in "
+            "the plot can differ slightly from the automatically selected "
+            "decision threshold because the plot and the optimizer may use "
+            "different threshold grids, rounding, or tie-breaking among "
+            "near-equivalent metric values. The test results use the selected "
+            "Decision threshold (Test) reported in Experiment and Data "
+            "Parameters, so this visual difference does not change the final "
+            "test scoring.</p>"
+        )
+
     def save_model(self):
         hdf5_path = Path(self.output_dir) / "pycaret_model.h5"
         with h5py.File(hdf5_path, "w") as f:
@@ -2511,6 +2533,11 @@ class BaseModelTrainer:
                     "<hr>"
                     f"<h2>{title}</h2>"
                     + add_plot_to_html(fig)
+                    + (
+                        self._threshold_plot_note_html()
+                        if name == "threshold"
+                        else ""
+                    )
                 )
             elif name in self.plots:
                 summary_html += "<hr>"
@@ -2525,6 +2552,11 @@ class BaseModelTrainer:
                     'style="max-width:90%;max-height:600px;'
                     'border:1px solid #ddd;"/>'
                     "</div>"
+                    + (
+                        self._threshold_plot_note_html()
+                        if name == "threshold"
+                        else ""
+                    )
                 )
 
         # — Test Summary —
