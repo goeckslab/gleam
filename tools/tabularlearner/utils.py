@@ -74,6 +74,14 @@ def get_html_template() -> str:
           .table-perf-summary th:nth-child(n+2) {
               text-align: center;
           }
+          .table-model-comparison td:nth-child(n+2),
+          .table-model-comparison th:nth-child(n+2) {
+              text-align: center;
+          }
+          .table-model-comparison td:first-child,
+          .table-model-comparison th:first-child {
+              text-align: left;
+          }
           .table-cv-fold-allocation td,
           .table-cv-fold-allocation th {
               text-align: center;

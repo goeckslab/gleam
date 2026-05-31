@@ -498,13 +498,8 @@ class FeatureImportanceAnalyzer:
 
             # 6) AdaBoost
             if "adaboostclassifier" in lname:
-                return (
-                    shap.TreeExplainer(
-                        model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
-                    ),
-                    "tree_path_dependent",
-                    True,
-                )
+                fn = model.predict_proba if hasattr(model, "predict_proba") else predict_fn
+                return _permutation(fn), "permutation-adaboost", False
 
             # 7) Extra Trees
             if "extratreesclassifier" in lname:
@@ -626,7 +621,6 @@ class FeatureImportanceAnalyzer:
             "decisiontreeregressor",
             "randomforestregressor",
             "extratreesregressor",
-            "adaboostregressor",
             "gradientboostingregressor",
         ]
         if any(k in lname for k in tree_class_names):
@@ -637,6 +631,8 @@ class FeatureImportanceAnalyzer:
                 "tree_path_dependent",
                 True,
             )
+        if "adaboostregressor" in lname:
+            return _permutation(predict_fn), "permutation-adaboost", False
 
         # Boosting libraries
         if "lgbmregressor" in lname or "lightgbm" in lname:

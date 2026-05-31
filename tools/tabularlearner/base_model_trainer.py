@@ -1135,12 +1135,12 @@ class BaseModelTrainer:
             return []
 
         rows = [
-            ["Decision threshold (Test)", threshold_display],
             ["Threshold source", metadata.get("threshold_source", "Unknown")],
             [
                 "Threshold optimization metric",
                 metadata.get("threshold_metric", "Not used"),
             ],
+            ["Decision threshold (Test)", threshold_display],
         ]
         score_display = self._format_threshold_value(
             metadata.get("threshold_score")
@@ -2289,9 +2289,16 @@ class BaseModelTrainer:
             all_params["probability_threshold"] = (
                 self.probability_threshold
             )
+        metric_label = self._best_model_metric_used or getattr(
+            self.exp, "_fold_metric", None
+        )
+        setup_rows = []
+        if metric_label:
+            setup_rows.append(["Best Model Metric", metric_label])
+
         display_keys = [
             "Target",
-            "Session ID",
+            "Random Seed",
             "Train Size",
             "Normalize",
             "Feature Selection",
@@ -2306,17 +2313,13 @@ class BaseModelTrainer:
             display_keys.extend([
                 "Fix Imbalance",
             ])
-        setup_rows = []
         for key in display_keys:
             pk = key.lower().replace(" ", "_")
+            if key == "Random Seed":
+                pk = "session_id"
             v = all_params.get(pk)
             if key == "Train Size":
-                frac = (
-                    float(v)
-                    if v is not None
-                    else (n_train / total_rows if total_rows else 0)
-                )
-                dv = f"{frac:.2f} ({n_train} rows)"
+                dv = f"{n_train} rows"
             elif key in {
                 "Normalize",
                 "Feature Selection",
@@ -2348,11 +2351,6 @@ class BaseModelTrainer:
                 dv = v if v is not None else "None"
             setup_rows.append([key, dv])
         setup_rows.extend(self._threshold_report_rows())
-        metric_label = self._best_model_metric_used or getattr(
-            self.exp, "_fold_metric", None
-        )
-        if metric_label:
-            setup_rows.append(["Best Model Metric", metric_label])
         adjustment = getattr(self, "cv_fold_adjustment", None)
         if adjustment:
             setup_rows.append([
@@ -2469,7 +2467,10 @@ class BaseModelTrainer:
             cv_fold_allocation_html
             + f"<h2>{summary_heading}</h2>"
             + '<div class="table-wrapper">'
-            + val_df.to_html(index=False, classes="table sortable")
+            + val_df.to_html(
+                index=False,
+                classes=["table", "sortable", "table-model-comparison"],
+            )
             + "</div>"
             + f"<p class='report-footnote'>{model_selection_note}</p>"
         )
@@ -2829,7 +2830,6 @@ class BaseModelTrainer:
         from sklearn.ensemble import (
             RandomForestClassifier, RandomForestRegressor
         )
-        from xgboost import XGBClassifier, XGBRegressor
 
         LOG.info("Generating tree plots")
         X_test = self.exp.X_test_transformed.copy()
@@ -2839,10 +2839,12 @@ class BaseModelTrainer:
             self.best_model, (RandomForestClassifier, RandomForestRegressor)
         ):
             n_trees = self.best_model.n_estimators
-        elif isinstance(self.best_model, (XGBClassifier, XGBRegressor)):
-            n_trees = len(self.best_model.get_booster().get_dump())
         else:
-            LOG.warning("Tree plots not supported for this model type.")
+            LOG.info(
+                "Skipping decision-tree explainer plots for unsupported model "
+                "type %s.",
+                type(self.best_model).__name__,
+            )
             return
 
         explainer = RandomForestExplainer(self.best_model, X_test, y_test)
