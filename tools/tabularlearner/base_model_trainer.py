@@ -36,6 +36,9 @@ from utils import (
 logging.basicConfig(level=logging.DEBUG)
 LOG = logging.getLogger(__name__)
 EXPENSIVE_SHAP_ROW_CAP = 200
+RFE_MAX_ROWS = 5000
+RFE_MAX_FEATURES = 100
+RFE_MAX_ROW_FEATURE_CELLS = 250000
 
 
 def pr_auc_curve_score(y_true, y_score):
@@ -96,6 +99,7 @@ class BaseModelTrainer:
         self.plots = {}
         self.explainer_plots = {}
         self.plots_explainer_html = None
+        self.skipped_plot_notes = {}
         self.explainer_scope = None
         self.explainer_dashboard_importance_skipped = False
         self.trees = []
@@ -542,6 +546,94 @@ class BaseModelTrainer:
             limit,
         )
         return selected
+
+    def _rfe_data_shape(self):
+        X_train = None
+        if self.exp is not None:
+            for key in ("X_train_transformed", "X_train"):
+                try:
+                    X_train = self.exp.get_config(key)
+                    if X_train is not None:
+                        break
+                except Exception:
+                    continue
+        if X_train is not None:
+            return int(X_train.shape[0]), int(X_train.shape[1])
+
+        if self.data is not None and self.target in self.data.columns:
+            return int(len(self.data)), int(len(self.data.columns) - 1)
+        if self.data is not None:
+            return int(len(self.data)), int(len(self.data.columns))
+        return 0, 0
+
+    def _rfe_skip_reason(self):
+        if getattr(self, "polynomial_features", False):
+            rows, features = self._rfe_data_shape()
+            return (
+                "polynomial features are enabled, which expands the transformed "
+                "feature space and makes recursive feature elimination too "
+                "expensive for the automatic report"
+            ), rows, features
+
+        rows, features = self._rfe_data_shape()
+        cells = rows * features
+        reasons = []
+        if rows > RFE_MAX_ROWS:
+            reasons.append(f"{rows:,} rows > {RFE_MAX_ROWS:,} row limit")
+        if features > RFE_MAX_FEATURES:
+            reasons.append(
+                f"{features:,} transformed features > "
+                f"{RFE_MAX_FEATURES:,} feature limit"
+            )
+        if cells > RFE_MAX_ROW_FEATURE_CELLS:
+            reasons.append(
+                f"{cells:,} row-feature cells > "
+                f"{RFE_MAX_ROW_FEATURE_CELLS:,} cell limit"
+            )
+        if not reasons:
+            return None, rows, features
+        return "; ".join(reasons), rows, features
+
+    def _should_skip_rfe_plot(self):
+        force_rfe = bool(getattr(self, "force_rfe_plot", False))
+        reason, rows, features = self._rfe_skip_reason()
+        if reason is None:
+            return False
+        if force_rfe:
+            LOG.warning(
+                "Generating RFE plot despite feasibility warning: %s.",
+                reason,
+            )
+            return False
+
+        cells = rows * features
+        note = (
+            "Recursive Feature Elimination was skipped because it is "
+            "computationally expensive for this dataset "
+            f"({rows:,} rows x {features:,} transformed features = "
+            f"{cells:,} row-feature cells). Reason: {reason}. "
+            "The automatic report only runs RFE when the training data is at "
+            f"or below {RFE_MAX_ROWS:,} rows, {RFE_MAX_FEATURES:,} "
+            f"transformed features, and {RFE_MAX_ROW_FEATURE_CELLS:,} "
+            "row-feature cells. These limits are chosen to avoid RFECV-style "
+            "diagnostics running for multiple hours; use model feature "
+            "importance and SHAP plots for large datasets."
+        )
+        self.skipped_plot_notes["rfe"] = note
+        LOG.info("Skipping RFE plot: %s", note)
+        return True
+
+    def _skipped_plot_note_html(self, name, title):
+        note = self.skipped_plot_notes.get(name)
+        if not note:
+            return ""
+        return (
+            "<hr>"
+            f"<h2>{title}</h2>"
+            "<div class='report-notice'>"
+            f"<strong>{title} skipped:</strong> {note}"
+            "</div>"
+        )
 
     def setup_pycaret(self):
         LOG.info("Initializing PyCaret")
@@ -2536,7 +2628,7 @@ class BaseModelTrainer:
                 "percentage_above_below",
             ]
         else:
-            summary_plots = ["learning", "vc", "parameter"]
+            summary_plots = ["learning", "vc", "rfe", "parameter"]
 
         for name in summary_plots:
             fig_or_fn = self.explainer_plots.pop(name, None)
@@ -2578,6 +2670,11 @@ class BaseModelTrainer:
                         else ""
                     )
                 )
+            elif name in self.skipped_plot_notes:
+                title = plot_title_map.get(
+                    name, name.replace("_", " ").title()
+                )
+                summary_html += self._skipped_plot_note_html(name, title)
 
         # — Test Summary —
         test_html = (

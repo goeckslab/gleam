@@ -52,6 +52,8 @@ class RegressionModelTrainer(BaseModelTrainer):
         ]
         for plot_name in plots:
             try:
+                if plot_name == "rfe" and self._should_skip_rfe_plot():
+                    continue
                 plot_path = self.exp.plot_model(
                     self.best_model, plot=plot_name, save=True
                 )

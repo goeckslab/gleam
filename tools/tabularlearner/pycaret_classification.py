@@ -113,6 +113,8 @@ class ClassificationModelTrainer(BaseModelTrainer):
         ]
         for plot_name in plots:
             try:
+                if plot_name == "rfe" and self._should_skip_rfe_plot():
+                    continue
                 if _should_skip_pycaret_plot(plot_name, self.exp):
                     LOG.info(
                         "Skipping PyCaret %s plot for multiclass classification.",
