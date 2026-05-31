@@ -311,6 +311,27 @@ class FeatureImportanceAnalyzer:
                     )
                     self.shap_model_name = None
                     return
+            elif explainer_label == "linear":
+                LOG.warning(
+                    "SHAP computation failed using LinearExplainer (%s). "
+                    "Falling back to model-agnostic permutation explainer.",
+                    error_message,
+                )
+                try:
+                    agnostic_explainer = shap.Explainer(
+                        predict_fn, bg, algorithm="permutation"
+                    )
+                    shap_values = agnostic_explainer(X_data)
+                    self.shap_model_name = (
+                        f"{agnostic_explainer.__class__.__name__} (fallback)"
+                    )
+                except Exception as fallback_exc:
+                    LOG.error(
+                        "Model-agnostic SHAP fallback also failed: %s",
+                        fallback_exc,
+                    )
+                    self.shap_model_name = None
+                    return
             else:
                 LOG.error(f"SHAP computation failed: {e}")
                 self.shap_model_name = None
@@ -461,7 +482,7 @@ class FeatureImportanceAnalyzer:
         if task == "classification":
             # 1) Logistic Regression
             if "logisticregression" in lname:
-                return _permutation(model.predict_proba), "permutation-proba", False
+                return shap.LinearExplainer(model, bg), "linear", False
 
             # 2) Ridge Classifier
             if "ridgeclassifier" in lname:

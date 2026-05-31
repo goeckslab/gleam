@@ -1142,14 +1142,6 @@ class BaseModelTrainer:
             ],
             ["Decision threshold (Test)", threshold_display],
         ]
-        score_display = self._format_threshold_value(
-            metadata.get("threshold_score")
-        )
-        if score_display is not None:
-            rows.append([
-                "Threshold optimization score",
-                score_display,
-            ])
         return rows
 
     def save_model(self):
@@ -1300,10 +1292,8 @@ class BaseModelTrainer:
         else:
             y_test = y_test_cfg
 
-        validation_enabled = getattr(self, "cross_validation", None) is not False
-        train_label = "Training / CV Pool" if validation_enabled else "Train"
         split_map = {
-            train_label: _safe_series(y_train_series),
+            "Training": _safe_series(y_train_series),
             "Test": _safe_series(y_test),
         }
         split_map = {
@@ -1342,21 +1332,13 @@ class BaseModelTrainer:
                 if cnt is None or total is None:
                     cell = "—"
                 else:
-                    pct = (cnt / total * 100) if total else 0
-                    cell = f"{cnt} ({pct:.1f}%)"
+                    cell = str(cnt)
                 row.append(cell)
             rows.append(row)
 
         df = pd.DataFrame(rows, columns=["Label", *split_map.keys()])
         df.sort_values("Label", inplace=True)
 
-        note = (
-            "<p class='report-footnote'>Note: The Training / CV Pool column "
-            "shows the total samples used for training and validation rather "
-            "than separate fixed train and validation count columns.</p>"
-            if validation_enabled
-            else ""
-        )
         return (
             "<h2>Dataset Overview</h2>"
             + '<div class="table-wrapper">'
@@ -1365,7 +1347,6 @@ class BaseModelTrainer:
                 classes=["table", "sortable", "table-dataset-overview"],
             )
             + "</div>"
-            + note
         )
 
     def _predict_with_thresholds(self, X, y_true):
@@ -2155,13 +2136,6 @@ class BaseModelTrainer:
             rows.append(row)
 
         df = pd.DataFrame(rows, columns=columns)
-        note = (
-            "Note: Train and Test metrics are computed by scoring the selected "
-            "best model on the training/CV pool and held-out test set. These "
-            "values can differ from PyCaret's candidate-model table."
-            if validation_enabled
-            else ""
-        )
         return (
             "<h2>Best Model Performance</h2>"
             + '<div class="table-wrapper">'
@@ -2170,7 +2144,6 @@ class BaseModelTrainer:
                 classes=["table", "sortable", "table-perf-summary"],
             )
             + "</div>"
-            + (f"<p class='report-footnote'>{note}</p>" if note else "")
         )
 
     @staticmethod
