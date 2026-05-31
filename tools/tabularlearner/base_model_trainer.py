@@ -108,6 +108,30 @@ def pr_auc_curve_score(y_true, y_score):
     return _weighted_ovr_pr_auc(y_true, y_score)
 
 
+def _add_pr_auc_metric_if_supported(exp):
+    """
+    Register PyCaret's custom PR-AUC metric only for binary classification.
+
+    PyCaret 3.3.2 can pass multiclass probability matrices through a
+    single-column prediction-score path during predict_model(), which raises
+    a DataFrame shape error. Multiclass PR-AUC is still computed later by the
+    report code from the model's probability matrix.
+    """
+    if getattr(exp, "is_multiclass", False):
+        LOG.info(
+            "Skipping PyCaret custom PR-AUC metric for multiclass "
+            "classification; report PR-AUC will be computed separately."
+        )
+        return False
+    exp.add_metric(
+        id="PR-AUC",
+        name="PR-AUC",
+        target="pred_proba",
+        score_func=pr_auc_curve_score,
+    )
+    return True
+
+
 class BaseModelTrainer:
     def __init__(
         self,
@@ -738,12 +762,7 @@ class BaseModelTrainer:
     def train_model(self):
         LOG.info("Training and selecting the best model")
         if self.task_type == "classification":
-            self.exp.add_metric(
-                id="PR-AUC",
-                name="PR-AUC",
-                target="pred_proba",
-                score_func=pr_auc_curve_score,
-            )
+            _add_pr_auc_metric_if_supported(self.exp)
         # Build arguments for compare_models()
         compare_kwargs = {}
         if getattr(self, "models", None):
@@ -794,23 +813,7 @@ class BaseModelTrainer:
             )
             self._configure_decision_threshold()
 
-        prob_thresh = getattr(self, "probability_threshold", None)
-        is_multiclass = (
-            self.task_type == "classification"
-            and getattr(self.exp, "is_multiclass", False)
-        )
-        if (
-            self.task_type == "classification"
-            and prob_thresh is not None
-            and not is_multiclass
-        ):
-            _ = self.exp.predict_model(
-                self.best_model, probability_threshold=prob_thresh
-            )
-        else:
-            _ = self.exp.predict_model(self.best_model)
-
-        self.test_result_df = self.exp.pull()
+        self._collect_test_results_from_pycaret()
         if self.task_type == "classification":
             self.test_result_df.rename(
                 columns={"AUC": "ROC-AUC"}, inplace=True
@@ -819,6 +822,73 @@ class BaseModelTrainer:
                 columns={"PR-AUC-Weighted": "PR-AUC"}, inplace=True
             )
             self._replace_test_pr_auc()
+
+    def _collect_test_results_from_pycaret(self):
+        """
+        Collect PyCaret's held-out metric table, falling back to local metric
+        computation when PyCaret's multiclass predict_model path fails while
+        constructing its prediction DataFrame.
+        """
+        prob_thresh = getattr(self, "probability_threshold", None)
+        is_multiclass = (
+            self.task_type == "classification"
+            and getattr(self.exp, "is_multiclass", False)
+        )
+        predict_kwargs = {}
+        if (
+            self.task_type == "classification"
+            and prob_thresh is not None
+            and not is_multiclass
+        ):
+            predict_kwargs["probability_threshold"] = prob_thresh
+
+        try:
+            _ = self.exp.predict_model(self.best_model, **predict_kwargs)
+            self.test_result_df = self.exp.pull()
+            return
+        except ValueError as exc:
+            if not (
+                is_multiclass
+                and "Shape of passed values" in str(exc)
+                and "indices imply" in str(exc)
+            ):
+                raise
+            LOG.warning(
+                "PyCaret predict_model failed on multiclass prediction shape; "
+                "using GLEAM-computed held-out test metrics instead: %s",
+                exc,
+            )
+
+        self.test_result_df = self._build_fallback_test_result_df()
+
+    def _build_fallback_test_result_df(self):
+        """
+        Build a one-row held-out test metric table without PyCaret predict_model.
+        This is used only when PyCaret cannot format multiclass predictions.
+        """
+        preds = self._get_test_predictions_for_report()
+        if preds is None:
+            LOG.warning(
+                "Could not compute fallback held-out test metrics; no test "
+                "prediction bundle was available."
+            )
+            return pd.DataFrame()
+
+        metric_columns = [
+            ("Accuracy", "Accuracy"),
+            ("ROC-AUC", "ROC-AUC"),
+            ("Precision", "Prec."),
+            ("Recall", "Recall"),
+            ("F1-Score", "F1"),
+            ("PR-AUC", "PR-AUC"),
+            ("Kappa", "Kappa"),
+            ("MCC", "MCC"),
+        ]
+        row = {}
+        for metric_name, column_name in metric_columns:
+            value = self._compute_metric_value(metric_name, preds, "Test")
+            row[column_name] = value if value is not None else np.nan
+        return pd.DataFrame([row])
 
     def _configure_decision_threshold(self):
         """
@@ -2006,6 +2076,8 @@ class BaseModelTrainer:
                     )
             if metric_name == "PR-AUC":
                 return self._compute_pr_auc_from_predictions(preds)
+            if metric_name == "Kappa":
+                return cohen_kappa_score(y_true, y_pred)
             if metric_name == "Specificity":
                 labels = pd.unique(pd.concat([y_true, y_pred], ignore_index=True))
                 if len(labels) != 2:
