@@ -204,6 +204,33 @@ def test_multiclass_train_model_does_not_register_pr_auc_before_predict_model(tm
     assert trainer.exp.predict_kwargs == {}
 
 
+def test_shap_row_cap_defaults_for_all_models(tmp_path):
+    trainer = BaseModelTrainer(
+        input_file="unused.tsv",
+        target_col="1",
+        output_dir=str(tmp_path),
+        task_type="classification",
+        random_seed=42,
+    )
+
+    assert trainer._shap_row_cap == 200
+    assert trainer.plot_feature_limit == 30
+
+
+def test_polynomial_features_keep_shap_row_cap_and_reduce_feature_limit(tmp_path):
+    trainer = BaseModelTrainer(
+        input_file="unused.tsv",
+        target_col="1",
+        output_dir=str(tmp_path),
+        task_type="classification",
+        random_seed=42,
+        polynomial_features=True,
+    )
+
+    assert trainer._shap_row_cap == 200
+    assert trainer.plot_feature_limit == 15
+
+
 def test_multiclass_shape_error_falls_back_to_gleam_test_metrics(tmp_path):
     trainer = BaseModelTrainer(
         input_file="unused.tsv",

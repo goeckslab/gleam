@@ -35,6 +35,7 @@ from utils import (
 
 logging.basicConfig(level=logging.DEBUG)
 LOG = logging.getLogger(__name__)
+EXPENSIVE_SHAP_ROW_CAP = 200
 
 
 def pr_auc_curve_score(y_true, y_score):
@@ -103,7 +104,7 @@ class BaseModelTrainer:
             setattr(self, key, value)
         if not hasattr(self, "plot_feature_limit"):
             self.plot_feature_limit = 30
-        self._shap_row_cap = None
+        self._shap_row_cap = EXPENSIVE_SHAP_ROW_CAP
         if getattr(self, "polynomial_features", False):
             # Keep feature importance responsive by trimming plots/SHAP rows
             try:
@@ -111,7 +112,6 @@ class BaseModelTrainer:
             except (TypeError, ValueError):
                 limit_val = 30
             self.plot_feature_limit = min(limit_val, 15)
-            self._shap_row_cap = 200
             LOG.info(
                 "Polynomial features enabled; limiting feature plots to %s and SHAP rows to %s",
                 self.plot_feature_limit,
