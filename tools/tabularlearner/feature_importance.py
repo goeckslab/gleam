@@ -337,6 +337,27 @@ class FeatureImportanceAnalyzer:
                     )
                     self.shap_model_name = None
                     return
+            elif explainer_label == "linear":
+                LOG.warning(
+                    "SHAP computation failed using LinearExplainer (%s). "
+                    "Falling back to model-agnostic permutation explainer.",
+                    error_message,
+                )
+                try:
+                    agnostic_explainer = shap.Explainer(
+                        predict_fn, bg, algorithm="permutation"
+                    )
+                    shap_values = agnostic_explainer(X_data)
+                    self.shap_model_name = (
+                        f"{agnostic_explainer.__class__.__name__} (fallback)"
+                    )
+                except Exception as fallback_exc:
+                    LOG.error(
+                        "Model-agnostic SHAP fallback also failed: %s",
+                        fallback_exc,
+                    )
+                    self.shap_model_name = None
+                    return
             else:
                 LOG.error(f"SHAP computation failed: {e}")
                 self.shap_model_name = None
@@ -493,7 +514,7 @@ class FeatureImportanceAnalyzer:
         if task == "classification":
             # 1) Logistic Regression
             if "logisticregression" in lname:
-                return _permutation(model.predict_proba), "permutation-proba", False
+                return shap.LinearExplainer(model, bg), "linear", False
 
             # 2) Ridge Classifier
             if "ridgeclassifier" in lname:
@@ -530,13 +551,12 @@ class FeatureImportanceAnalyzer:
 
             # 6) AdaBoost
             if "adaboostclassifier" in lname:
-                return (
-                    self._tree_explainer(
-                        model, bg, feature_perturbation="tree_path_dependent"
-                    ),
-                    "tree_path_dependent",
-                    True,
+                fn = (
+                    model.predict_proba
+                    if hasattr(model, "predict_proba")
+                    else predict_fn
                 )
+                return _permutation(fn), "permutation-adaboost", False
 
             # 7) Extra Trees
             if "extratreesclassifier" in lname:
@@ -657,7 +677,6 @@ class FeatureImportanceAnalyzer:
             "decisiontreeregressor",
             "randomforestregressor",
             "extratreesregressor",
-            "adaboostregressor",
             "gradientboostingregressor",
         ]
         if any(k in lname for k in tree_class_names):
@@ -668,6 +687,8 @@ class FeatureImportanceAnalyzer:
                 "tree_path_dependent",
                 True,
             )
+        if "adaboostregressor" in lname:
+            return _permutation(predict_fn), "permutation-adaboost", False
 
         # Boosting libraries
         if "lgbmregressor" in lname or "lightgbm" in lname:

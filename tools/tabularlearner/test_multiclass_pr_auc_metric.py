@@ -436,7 +436,7 @@ def test_multiclass_custom_curves_use_model_class_order_and_display_labels():
     ]
 
 
-def test_regression_permutation_importance_uses_supported_explainer_api(monkeypatch):
+def test_regression_explainer_skips_duplicate_shap_importance(monkeypatch):
     calls = []
     explainerdashboard = types.ModuleType("explainerdashboard")
 
@@ -484,9 +484,11 @@ def test_regression_permutation_importance_uses_supported_explainer_api(monkeypa
     trainer._explainer_feature_count_exceeds_cap = lambda: False
 
     trainer.generate_plots_explainer()
-    trainer.explainer_plots["shap_perm"]()
 
-    assert {"kind": "permutation"} in calls
+    assert calls == []
+    assert "shap_mean" not in trainer.explainer_plots
+    assert "shap_perm" not in trainer.explainer_plots
+    assert trainer.explainer_dashboard_importance_skipped is True
 
 
 def test_tree_plot_failure_does_not_block_html_report(caplog):
