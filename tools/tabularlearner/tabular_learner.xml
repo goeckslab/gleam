@@ -65,8 +65,14 @@
         #if $customize_defaults_section.fix_imbalance
             --fix_imbalance
         #end if
-        #if $customize_defaults_section.probability_threshold
-            --probability_threshold '$customize_defaults_section.probability_threshold'
+        #if $model_hyperparameter_configuration.model_selection.model_type == "classification"
+            #if $customize_defaults_section.binary_threshold_policy.mode == "auto"
+                --threshold_mode auto
+                --threshold_metric '$customize_defaults_section.binary_threshold_policy.threshold_metric'
+            #else
+                --threshold_mode manual
+                --probability_threshold '$customize_defaults_section.binary_threshold_policy.probability_threshold'
+            #end if
         #end if
         #if $data_configuration.test_data_choice.has_test_file == "yes"
             --test_file '$data_configuration.test_data_choice.test_file'
@@ -207,7 +213,28 @@
             <param name="remove_multicollinearity" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Remove Multicollinearity" help="Whether to remove multicollinear features before training." />
             <param name="polynomial_features" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Polynomial Features" help="Whether to create polynomial features before training." />
             <param name="fix_imbalance" type="boolean" truevalue="True" falsevalue="False" checked="false" label="Fix Imbalance" help="ONLY for classfication! Whether to use SMOTE or similar methods to fix imbalance in the input dataset." />
-            <param name="probability_threshold" type="float" min="0.0" max="1.0" value="0.5" label="Classification Probability Threshold" help="Only applies to classification. Probability above which a prediction is considered positive. Default is 0.5." />
+            <conditional name="binary_threshold_policy">
+                <param name="mode" type="select" label="Binary classification threshold">
+                    <option value="auto" selected="true">Auto: optimize threshold by metric</option>
+                    <option value="manual">Manual: set threshold value</option>
+                </param>
+                <when value="auto">
+                    <param name="threshold_metric" type="select" label="Threshold optimization metric"
+                           help="Used only for binary classification. PyCaret optimizes the decision threshold for the selected metric.">
+                        <option value="F1" selected="true">F1</option>
+                        <option value="Accuracy">Accuracy</option>
+                        <option value="Precision">Precision</option>
+                        <option value="Recall">Recall</option>
+                        <option value="Kappa">Cohen's Kappa</option>
+                        <option value="MCC">Matthews Correlation Coefficient</option>
+                    </param>
+                </when>
+                <when value="manual">
+                    <param name="probability_threshold" type="float" min="0.0" max="1.0" value="0.5"
+                           label="Manual threshold value"
+                           help="Only applies to binary classification. Probability above which a prediction is considered positive." />
+                </when>
+            </conditional>
         </section>
     </inputs>
     <outputs>
@@ -229,7 +256,8 @@
             <param name="cross_validation|cross_validation_folds" value="5"/>
             <param name="remove_outliers" value="true"/>
             <param name="remove_multicollinearity" value="true"/>
-            <param name="probability_threshold" value="0.4" />
+            <param name="binary_threshold_policy|mode" value="manual" />
+            <param name="binary_threshold_policy|probability_threshold" value="0.4" />
             <output name="model" file="expected_model_classification_customized.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
@@ -240,10 +268,13 @@
                     <has_text text="Cross-Validation Fold Allocation" />
                     <has_text text="Validation Samples" />
                     <has_text text="Internal Cross-Validation Summary Across Candidate Models" />
-                    <has_text text="The Training / CV Pool column shows the total samples used for training and validation" />
-                    <has_text text="Train and Test metrics are computed by scoring the selected best model on the training/CV pool and held-out test set" />
+                    <has_text text="Dataset Overview" />
+                    <has_text text="Best Model Performance" />
+                    <has_text text="Training" />
                     <has_text text="These values can slightly differ from Best Model Performance table." />
                     <has_text text="F1" />
+                    <has_text text="Decision threshold (Test)" />
+                    <has_text text="Threshold source" />
                 </assert_contents>
             </output>
             <output name="best_model_csv" value="expected_best_model_classification_customized.csv" />
@@ -259,7 +290,8 @@
             <param name="cross_validation|enable_cross_validation" value="false"/>
             <param name="remove_outliers" value="true"/>
             <param name="remove_multicollinearity" value="true"/>
-            <param name="probability_threshold" value="0.6" />
+            <param name="binary_threshold_policy|mode" value="manual" />
+            <param name="binary_threshold_policy|probability_threshold" value="0.6" />
             <output name="model" file="expected_model_classification_customized_cross_off.h5" compare="sim_size"/>
             <output name="comparison_result">
                 <assert_contents>
@@ -280,6 +312,8 @@
             <param name="random_seed" value="42"/>
             <param name="cross_validation|enable_cross_validation" value="false"/>
             <param name="tune_model" value="true"/>
+            <param name="binary_threshold_policy|mode" value="manual" />
+            <param name="binary_threshold_policy|probability_threshold" value="0.5" />
             <output name="model" file="expected_model_classification.h5" compare="sim_size"/>
             <output name="comparison_result"> 
                 <assert_contents>
@@ -305,6 +339,8 @@
             <param name="model_selection|classification_models" value="lightgbm"/>
             <param name="random_seed" value="42"/>
             <param name="cross_validation|enable_cross_validation" value="false"/>
+            <param name="binary_threshold_policy|mode" value="manual" />
+            <param name="binary_threshold_policy|probability_threshold" value="0.5" />
             <output name="model" file="expected_model_classification.h5" compare="sim_size"/>
             <output name="comparison_result"> 
                 <assert_contents>
