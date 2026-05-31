@@ -1,4 +1,5 @@
 import base64
+import inspect
 import logging
 import tempfile
 from pathlib import Path
@@ -852,15 +853,49 @@ class BaseModelTrainer:
 
         metric = str(getattr(self, "threshold_metric", "F1") or "F1")
         try:
-            optimized_model = self.exp.optimize_threshold(
+            optimize_kwargs = {"optimize": metric, "return_data": True}
+            try:
+                optimize_signature = inspect.signature(
+                    self.exp.optimize_threshold
+                )
+                if "verbose" in optimize_signature.parameters:
+                    optimize_kwargs["verbose"] = False
+            except (TypeError, ValueError):
+                pass
+
+            optimized_result = self.exp.optimize_threshold(
                 self.best_model,
-                optimize=metric,
-                verbose=False,
+                **optimize_kwargs,
             )
-            threshold = getattr(optimized_model, "probability_threshold", None)
+            threshold_data = None
+            optimized_model = optimized_result
+            if isinstance(optimized_result, tuple):
+                threshold_data = next(
+                    (
+                        item
+                        for item in optimized_result
+                        if isinstance(item, pd.DataFrame)
+                    ),
+                    None,
+                )
+                optimized_model = next(
+                    (
+                        item
+                        for item in optimized_result
+                        if not isinstance(item, pd.DataFrame)
+                    ),
+                    optimized_result[-1],
+                )
+
+            threshold = self._extract_optimized_threshold(
+                optimized_model,
+                threshold_data,
+                metric,
+            )
             if threshold is None:
                 raise ValueError(
-                    "PyCaret did not return an optimized probability threshold."
+                    "PyCaret did not return an optimized probability threshold "
+                    "or threshold search table."
                 )
             threshold = float(threshold)
             self._validate_probability_threshold(threshold)
@@ -893,6 +928,34 @@ class BaseModelTrainer:
                 fallback,
                 exc,
             )
+
+    @staticmethod
+    def _extract_optimized_threshold(optimized_model, threshold_data, metric):
+        threshold = getattr(optimized_model, "probability_threshold", None)
+        if threshold is not None:
+            return threshold
+
+        if threshold_data is None or threshold_data.empty:
+            return None
+        if "probability_threshold" not in threshold_data.columns:
+            return None
+
+        metric_df = threshold_data.copy()
+        if "variable" in metric_df.columns and "value" in metric_df.columns:
+            metric_name = str(metric).lower()
+            metric_df = metric_df[
+                metric_df["variable"].astype(str).str.lower() == metric_name
+            ]
+            if metric_df.empty:
+                return None
+            best_idx = metric_df["value"].astype(float).idxmax()
+            return metric_df.loc[best_idx, "probability_threshold"]
+
+        if metric in metric_df.columns:
+            best_idx = metric_df[metric].astype(float).idxmax()
+            return metric_df.loc[best_idx, "probability_threshold"]
+
+        return None
 
     @staticmethod
     def _validate_probability_threshold(threshold):
