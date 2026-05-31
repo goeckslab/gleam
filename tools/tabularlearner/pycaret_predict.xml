@@ -4,6 +4,11 @@
         <import>pycaret_macros.xml</import>
     </macros>
     <expand macro="python_requirements" />
+    <required_files>
+        <include path="classification_metrics.py" />
+        <include path="pycaret_predict.py" />
+        <include path="utils.py" />
+    </required_files>
     <command>
         <![CDATA[
         echo $target_feature && 

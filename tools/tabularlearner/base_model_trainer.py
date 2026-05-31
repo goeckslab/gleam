@@ -7,17 +7,19 @@ import h5py
 import joblib
 import numpy as np
 import pandas as pd
+from classification_metrics import (
+    labels_in_sample_order,
+    weighted_ovr_pr_auc as _weighted_ovr_pr_auc,
+)
 from explainability_limits import limit_explainability_data
 from feature_help_modal import get_feature_metrics_help_modal
 from feature_importance import FeatureImportanceAnalyzer
 from sklearn.metrics import (
     accuracy_score,
-    auc,
     cohen_kappa_score,
     confusion_matrix,
     f1_score,
     matthews_corrcoef,
-    precision_recall_curve,
     precision_score,
     recall_score,
     roc_auc_score,
@@ -33,72 +35,6 @@ from utils import (
 
 logging.basicConfig(level=logging.DEBUG)
 LOG = logging.getLogger(__name__)
-
-
-def _weighted_ovr_pr_auc(y_true, y_score, labels=None):
-    """
-    Compute PR-AUC from precision-recall curves.
-
-    Binary tasks use the positive-class probability curve. Multiclass tasks use
-    one-vs-rest curves per class and return a support-weighted mean.
-    """
-    y_true_series = pd.Series(y_true).reset_index(drop=True)
-    if labels is not None:
-        class_labels = list(labels)
-    else:
-        class_labels = list(pd.unique(y_true_series))
-        try:
-            class_labels = sorted(class_labels)
-        except Exception:
-            pass
-    if len(class_labels) < 2:
-        return np.nan
-
-    scores = np.asarray(y_score)
-    if len(scores) != len(y_true_series):
-        return np.nan
-
-    if len(class_labels) == 2:
-        try:
-            pos_label = 1 if 1 in class_labels else sorted(class_labels)[-1]
-        except Exception:
-            pos_label = class_labels[-1]
-        if scores.ndim == 2:
-            if scores.shape[1] < 2:
-                scores = scores.ravel()
-            else:
-                try:
-                    pos_idx = class_labels.index(pos_label)
-                except ValueError:
-                    pos_idx = scores.shape[1] - 1
-                pos_idx = min(pos_idx, scores.shape[1] - 1)
-                scores = scores[:, pos_idx]
-        precision, recall, _ = precision_recall_curve(
-            (y_true_series == pos_label).astype(int),
-            scores,
-        )
-        return auc(recall, precision)
-
-    if scores.ndim != 2 or scores.shape[1] < len(class_labels):
-        return np.nan
-
-    weighted_total = 0.0
-    support_total = 0
-    for class_idx, class_label in enumerate(class_labels):
-        if class_idx >= scores.shape[1]:
-            break
-        y_true_bin = (y_true_series == class_label).astype(int)
-        if len(pd.unique(y_true_bin)) < 2:
-            continue
-        precision, recall, _ = precision_recall_curve(
-            y_true_bin,
-            scores[:, class_idx],
-        )
-        support = int(y_true_bin.sum())
-        weighted_total += auc(recall, precision) * support
-        support_total += support
-
-    return weighted_total / support_total if support_total else np.nan
 
 
 def pr_auc_curve_score(y_true, y_score):
@@ -762,7 +698,9 @@ class BaseModelTrainer:
     def train_model(self):
         LOG.info("Training and selecting the best model")
         if self.task_type == "classification":
-            _add_pr_auc_metric_if_supported(self.exp)
+            self._pycaret_pr_auc_metric_added = _add_pr_auc_metric_if_supported(
+                self.exp
+            )
         # Build arguments for compare_models()
         compare_kwargs = {}
         if getattr(self, "models", None):
@@ -778,6 +716,17 @@ class BaseModelTrainer:
 
         best_metric = getattr(self, "best_model_metric", None)
         if best_metric:
+            if (
+                self.task_type == "classification"
+                and best_metric == "PR-AUC"
+                and not getattr(self, "_pycaret_pr_auc_metric_added", False)
+            ):
+                LOG.warning(
+                    "PR-AUC model ranking is not supported for multiclass "
+                    "classification in this PyCaret path; ranking models by "
+                    "ROC-AUC instead."
+                )
+                best_metric = "AUC"
             compare_kwargs["sort"] = best_metric
             self._best_model_metric_used = best_metric
             LOG.info(f"Ranking models using metric: {best_metric}")
@@ -1230,7 +1179,10 @@ class BaseModelTrainer:
             "the plot can differ slightly from the automatically selected "
             "decision threshold because the plot and the optimizer may use "
             "different threshold grids, rounding, or tie-breaking among "
-            "near-equivalent metric values.</p>"
+            "near-equivalent metric values. The test results use the selected "
+            "Decision threshold (Test) reported in Experiment and Data "
+            "Parameters, so this visual difference does not change the final "
+            "test scoring.</p>"
         )
 
     def save_model(self):
@@ -1303,6 +1255,15 @@ class BaseModelTrainer:
                 return arr
 
             encoded_vals = flat[mask]
+            original_classes = set(getattr(label_encoder, "classes_", []))
+            if original_classes:
+                try:
+                    value_set = set(encoded_vals)
+                    encoded_range = set(range(len(original_classes)))
+                    if value_set.issubset(original_classes) and not value_set.issubset(encoded_range):
+                        return arr
+                except Exception:
+                    pass
             try:
                 decoded_vals = label_encoder.inverse_transform(encoded_vals)
             except Exception:
@@ -1426,7 +1387,6 @@ class BaseModelTrainer:
             rows.append(row)
 
         df = pd.DataFrame(rows, columns=["Label", *split_map.keys()])
-        df.sort_values("Label", inplace=True)
 
         return (
             "<h2>Dataset Overview</h2>"
@@ -1705,11 +1665,7 @@ class BaseModelTrainer:
         label_values = []
         if self.task_type == "classification":
             y_display_series = self._decode_class_labels_for_display(y_display_series)
-            label_values = pd.unique(y_display_series)
-            try:
-                label_values = sorted(label_values, key=lambda item: str(item))
-            except Exception:
-                label_values = list(label_values)
+            label_values = labels_in_sample_order(y_display_series)
 
         def _format_label_counts(indices):
             if self.task_type != "classification":
@@ -2125,7 +2081,11 @@ class BaseModelTrainer:
         y_true = preds["y_true"]
         classes = preds.get("classes")
         try:
-            pr_auc = _weighted_ovr_pr_auc(y_true, y_scores, labels=classes)
+            pr_auc = _weighted_ovr_pr_auc(
+                y_true,
+                y_scores,
+                labels=classes if classes else None,
+            )
             if np.isnan(pr_auc):
                 return None
             return pr_auc
@@ -2135,22 +2095,17 @@ class BaseModelTrainer:
 
     def _replace_test_pr_auc(self):
         """
-        Replace PyCaret's custom PR-AUC output with the report's curve-based
-        PR-AUC for the held-out test split.
+        Add or replace PyCaret's custom PR-AUC output with the report's
+        curve-based PR-AUC for the held-out test split.
         """
         if not isinstance(self.test_result_df, pd.DataFrame):
-            return
-        if (
-            "PR-AUC" not in self.test_result_df.columns
-            and "PR-AUC-Weighted" not in self.test_result_df.columns
-        ):
             return
 
         preds = self._get_test_predictions_for_report()
         pr_auc = self._compute_pr_auc_from_predictions(preds)
         if pr_auc is None:
             LOG.warning(
-                "Could not replace PR-AUC-Weighted; test PR-AUC was unavailable."
+                "Could not add or replace PR-AUC; test PR-AUC was unavailable."
             )
             return
 
@@ -2933,6 +2888,9 @@ class BaseModelTrainer:
         self.save_model()
         self.generate_plots()
         self.generate_plots_explainer()
-        self.generate_tree_plots()
+        try:
+            self.generate_tree_plots()
+        except Exception as exc:
+            LOG.warning("Tree plots skipped: %s", exc)
         self.save_html_report()
         # self.save_dashboard()

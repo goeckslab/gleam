@@ -5,12 +5,15 @@ import os
 import matplotlib.pyplot as plt
 import pandas as pd
 import shap
+from classification_metrics import positive_class_label
 from explainability_limits import limit_explainability_data
 from pycaret.classification import ClassificationExperiment
 from pycaret.regression import RegressionExperiment
 
 logging.basicConfig(level=logging.DEBUG)
 LOG = logging.getLogger(__name__)
+logging.getLogger("matplotlib").setLevel(logging.WARNING)
+logging.getLogger("matplotlib.font_manager").setLevel(logging.ERROR)
 
 
 class FeatureImportanceAnalyzer:
@@ -38,6 +41,7 @@ class FeatureImportanceAnalyzer:
         self.shap_total_rows = None
         self.shap_used_rows = None
         self.shap_scope = None
+        self.plot_titles = {}
         if isinstance(max_plot_features, int) and max_plot_features > 0:
             self.max_plot_features = max_plot_features
         elif max_plot_features is None:
@@ -46,9 +50,15 @@ class FeatureImportanceAnalyzer:
             self.max_plot_features = None
 
         if exp is not None:
-            # Assume all configs (data, target) are in exp
-            self.data = exp.dataset.copy()
-            self.target = exp.target_param
+            # Prefer explicit data from the trainer. Some PyCaret versions
+            # mutate exp.dataset after setup when imbalance handling is enabled.
+            self.target = getattr(exp, "target_param", None)
+            if processed_data is not None:
+                self.data = processed_data.copy()
+            elif data is not None:
+                self.data = data.copy()
+            else:
+                self.data = exp.dataset.copy()
             LOG.info("Using provided experiment object")
         else:
             if data is not None:
@@ -65,7 +75,9 @@ class FeatureImportanceAnalyzer:
                 if task_type == "classification"
                 else RegressionExperiment()
             )
-        if processed_data is not None:
+        if self.target is None and target_col is not None:
+            self.target = self.data.columns[int(target_col) - 1]
+        if exp is None and processed_data is not None:
             self.data = processed_data
 
         self.plots = {}
@@ -88,6 +100,24 @@ class FeatureImportanceAnalyzer:
             if names is not None:
                 return list(names)
         return None
+
+    def _experiment_is_setup(self):
+        if self.exp is None:
+            return False
+
+        is_setup = getattr(self.exp, "is_setup", None)
+        if is_setup is not None:
+            return bool(is_setup)
+
+        for key in ("X_test_transformed", "X_train_transformed", "X_transformed"):
+            try:
+                value = self.exp.get_config(key)
+            except Exception:
+                value = getattr(self.exp, key, None)
+            if value is not None:
+                return True
+
+        return False
 
     def _get_transformed_frame(self, model=None, prefer_test=True):
         """Return a DataFrame that mirrors the matrix fed to the estimator."""
@@ -117,7 +147,7 @@ class FeatureImportanceAnalyzer:
         return None
 
     def setup_pycaret(self):
-        if self.exp is not None and hasattr(self.exp, "is_setup") and self.exp.is_setup:
+        if self._experiment_is_setup():
             LOG.info("Experiment already set up. Skipping PyCaret setup.")
             return
         LOG.info("Initializing PyCaret")
@@ -196,6 +226,7 @@ class FeatureImportanceAnalyzer:
         plt.savefig(plot_path, bbox_inches="tight")
         plt.close()
         self.plots["tree_importance"] = plot_path
+        self.plot_titles["tree_importance"] = f"Feature importance from {model_type}"
 
     def save_shap_values(self, max_samples=None, max_display=None, max_features=None):
         model = self.best_model or self.exp.get_config("best_model")
@@ -210,14 +241,11 @@ class FeatureImportanceAnalyzer:
         X_data, _, scope = limit_explainability_data(
             X_data,
             model=model,
-            max_features=(
-                self.max_plot_features
-                if max_features is None
-                else min(max_features, self.max_plot_features or max_features)
-            ),
+            max_features=self.max_plot_features,
             max_rows=row_cap,
             random_seed=42,
             polynomial_features=self.polynomial_features,
+            cap_features=False,
             context="Custom SHAP",
         )
         self.shap_scope = scope
@@ -228,7 +256,6 @@ class FeatureImportanceAnalyzer:
         display_features = list(X_data.columns)
         n_rows, n_features = X_data.shape
 
-        # --- Adaptive feature display ---
         display_cap = (
             min(self.max_plot_features, len(display_features))
             if self.max_plot_features is not None
@@ -273,11 +300,10 @@ class FeatureImportanceAnalyzer:
                     error_message,
                 )
                 try:
-                    explainer = shap.TreeExplainer(
+                    explainer = self._tree_explainer(
                         model,
                         bg,
                         feature_perturbation="interventional",
-                        n_jobs=-1,
                     )
                     shap_values = explainer(X_data)
                     self.shap_model_name = (
@@ -337,33 +363,23 @@ class FeatureImportanceAnalyzer:
                 self.shap_model_name = None
                 return
 
-        def _limit_explanation_features(explanation):
-            if len(display_features) >= n_features:
-                return explanation
-            try:
-                limited = explanation[:, display_features]
-                LOG.info(
-                    "SHAP explanation trimmed to %s display features.",
-                    len(display_features),
-                )
-                return limited
-            except Exception as exc:
-                LOG.warning(
-                    "Failed to restrict SHAP explanation to top features "
-                    "(sample=%s); plot will include all features. Error: %s",
-                    display_features[:5],
-                    exc,
-                )
-                # Keep using full feature list if trimming fails
-                return explanation
-
         shap_shape = getattr(shap_values, "shape", None)
         class_labels = list(getattr(model, "classes_", []))
         shap_outputs = []
         if shap_shape is not None and len(shap_shape) == 3:
             output_count = shap_shape[2]
             LOG.info("Detected multi-output SHAP explanation with %s classes.", output_count)
-            for class_idx in range(output_count):
+            output_indices = list(range(output_count))
+            if self.task_type == "classification" and output_count == 2:
+                pos_label = positive_class_label(class_labels)
+                try:
+                    output_indices = [class_labels.index(pos_label)]
+                except ValueError:
+                    output_indices = [1]
+                LOG.info(
+                    "Binary SHAP explanation detected; plotting positive class only."
+                )
+            for class_idx in output_indices:
                 try:
                     class_expl = shap_values[..., class_idx]
                 except Exception as exc:
@@ -378,7 +394,9 @@ class FeatureImportanceAnalyzer:
                     if class_labels and class_idx < len(class_labels)
                     else class_idx
                 )
-                shap_outputs.append((class_idx, label, class_expl))
+                shap_outputs.append(
+                    (class_idx, self._class_label_for_display(label), class_expl)
+                )
         else:
             shap_outputs.append((None, None, shap_values))
 
@@ -389,17 +407,16 @@ class FeatureImportanceAnalyzer:
 
         # --- Plot SHAP summary (one per class if needed) ---
         for class_idx, class_label, class_expl in shap_outputs:
-            expl_to_plot = _limit_explanation_features(class_expl)
             suffix = ""
             plot_key = "shap_summary"
             if class_idx is not None:
-                safe_label = str(class_label).replace("/", "_").replace(" ", "_")
+                safe_label = self._safe_label(class_label)
                 suffix = f"_class_{safe_label}"
                 plot_key = f"shap_summary_class_{safe_label}"
             out_filename = f"shap_summary{suffix}.png"
             out_path = os.path.join(self.output_dir, out_filename)
             plt.figure()
-            shap.plots.beeswarm(expl_to_plot, max_display=max_display, show=False)
+            shap.plots.beeswarm(class_expl, max_display=max_display, show=False)
             title = f"SHAP Summary for {model.__class__.__name__}"
             if class_idx is not None:
                 title += f" (class {class_label})"
@@ -408,6 +425,7 @@ class FeatureImportanceAnalyzer:
             plt.savefig(out_path, bbox_inches="tight")
             plt.close()
             self.plots[plot_key] = out_path
+            self.plot_titles[plot_key] = f"{title} (top {max_display} features)"
 
         # --- Log summary ---
         LOG.info(
@@ -428,22 +446,7 @@ class FeatureImportanceAnalyzer:
             ):
                 continue
             encoded_image = self.encode_image_to_base64(plot_path)
-            if plot_name == "tree_importance" and getattr(
-                self, "tree_model_name", None
-            ):
-                section_title = f"Feature importance from {self.tree_model_name}"
-            elif plot_name == "shap_summary":
-                section_title = (
-                    f"SHAP Summary from {getattr(self, 'shap_model_name', 'model')}"
-                )
-            elif plot_name.startswith("shap_summary_class_"):
-                class_label = plot_name.replace("shap_summary_class_", "")
-                section_title = (
-                    f"SHAP Summary for class {class_label} "
-                    f"({getattr(self, 'shap_model_name', 'model')})"
-                )
-            else:
-                section_title = plot_name
+            section_title = self.plot_titles.get(plot_name, plot_name)
             plots_html += f"""
             <div class="plot" id="{plot_name}" style="text-align:center;margin-bottom:24px;">
                 <h2>{section_title}</h2>
@@ -463,6 +466,35 @@ class FeatureImportanceAnalyzer:
         if hasattr(model, "decision_function"):
             return model.decision_function
         return model.predict
+
+    def _tree_explainer(self, model, background, **kwargs):
+        return shap.TreeExplainer(model, background, **kwargs)
+
+    @staticmethod
+    def _safe_label(label):
+        return (
+            str(label)
+            .replace("/", "_")
+            .replace("\\", "_")
+            .replace(" ", "_")
+        )
+
+    def _class_label_for_display(self, label):
+        if self.exp is None:
+            return label
+        try:
+            from pycaret.utils.generic import get_label_encoder
+
+            label_encoder = get_label_encoder(self.exp.pipeline)
+        except Exception:
+            label_encoder = None
+        if label_encoder is None:
+            return label
+        try:
+            decoded = label_encoder.inverse_transform([label])
+            return decoded[0]
+        except Exception:
+            return label
 
     def _choose_shap_explainer(self, model, bg, predict_fn):
         """
@@ -500,8 +532,8 @@ class FeatureImportanceAnalyzer:
             # 4) Random Forest
             if "randomforestclassifier" in lname:
                 return (
-                    shap.TreeExplainer(
-                        model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                    self._tree_explainer(
+                        model, bg, feature_perturbation="tree_path_dependent"
                     ),
                     "tree_path_dependent",
                     True,
@@ -510,8 +542,8 @@ class FeatureImportanceAnalyzer:
             # 5) Gradient Boosting
             if "gradientboostingclassifier" in lname:
                 return (
-                    shap.TreeExplainer(
-                        model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                    self._tree_explainer(
+                        model, bg, feature_perturbation="tree_path_dependent"
                     ),
                     "tree_path_dependent",
                     True,
@@ -519,14 +551,18 @@ class FeatureImportanceAnalyzer:
 
             # 6) AdaBoost
             if "adaboostclassifier" in lname:
-                fn = model.predict_proba if hasattr(model, "predict_proba") else predict_fn
+                fn = (
+                    model.predict_proba
+                    if hasattr(model, "predict_proba")
+                    else predict_fn
+                )
                 return _permutation(fn), "permutation-adaboost", False
 
             # 7) Extra Trees
             if "extratreesclassifier" in lname:
                 return (
-                    shap.TreeExplainer(
-                        model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                    self._tree_explainer(
+                        model, bg, feature_perturbation="tree_path_dependent"
                     ),
                     "tree_path_dependent",
                     True,
@@ -535,12 +571,11 @@ class FeatureImportanceAnalyzer:
             # 8) LightGBM
             if "lgbmclassifier" in lname:
                 return (
-                    shap.TreeExplainer(
+                    self._tree_explainer(
                         model,
                         bg,
                         model_output="raw",
                         feature_perturbation="tree_path_dependent",
-                        n_jobs=-1,
                     ),
                     "tree_path_dependent",
                     True,
@@ -549,8 +584,8 @@ class FeatureImportanceAnalyzer:
             # 9) XGBoost
             if "xgbclassifier" in lname:
                 return (
-                    shap.TreeExplainer(
-                        model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                    self._tree_explainer(
+                        model, bg, feature_perturbation="tree_path_dependent"
                     ),
                     "tree_path_dependent",
                     True,
@@ -559,8 +594,8 @@ class FeatureImportanceAnalyzer:
             # 10) CatBoost (classifier)
             if "catboost" in lname:
                 return (
-                    shap.TreeExplainer(
-                        model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                    self._tree_explainer(
+                        model, bg, feature_perturbation="tree_path_dependent"
                     ),
                     "tree_path_dependent",
                     True,
@@ -580,8 +615,8 @@ class FeatureImportanceAnalyzer:
             # 13) Decision Tree
             if "decisiontreeclassifier" in lname:
                 return (
-                    shap.TreeExplainer(
-                        model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                    self._tree_explainer(
+                        model, bg, feature_perturbation="tree_path_dependent"
                     ),
                     "tree_path_dependent",
                     True,
@@ -646,8 +681,8 @@ class FeatureImportanceAnalyzer:
         ]
         if any(k in lname for k in tree_class_names):
             return (
-                shap.TreeExplainer(
-                    model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                self._tree_explainer(
+                    model, bg, feature_perturbation="tree_path_dependent"
                 ),
                 "tree_path_dependent",
                 True,
@@ -658,28 +693,27 @@ class FeatureImportanceAnalyzer:
         # Boosting libraries
         if "lgbmregressor" in lname or "lightgbm" in lname:
             return (
-                shap.TreeExplainer(
+                self._tree_explainer(
                     model,
                     bg,
                     model_output="raw",
                     feature_perturbation="tree_path_dependent",
-                    n_jobs=-1,
                 ),
                 "tree_path_dependent",
                 True,
             )
         if "xgbregressor" in lname or "xgboost" in lname:
             return (
-                shap.TreeExplainer(
-                    model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                self._tree_explainer(
+                    model, bg, feature_perturbation="tree_path_dependent"
                 ),
                 "tree_path_dependent",
                 True,
             )
         if "catboost" in lname:
             return (
-                shap.TreeExplainer(
-                    model, bg, feature_perturbation="tree_path_dependent", n_jobs=-1
+                self._tree_explainer(
+                    model, bg, feature_perturbation="tree_path_dependent"
                 ),
                 "tree_path_dependent",
                 True,
@@ -689,11 +723,7 @@ class FeatureImportanceAnalyzer:
         return _permutation(predict_fn), "permutation-default", False
 
     def run(self):
-        if (
-            self.exp is None
-            or not hasattr(self.exp, "is_setup")
-            or not self.exp.is_setup
-        ):
+        if not self._experiment_is_setup():
             self.setup_pycaret()
         self.save_tree_importance()
         self.save_shap_values()
