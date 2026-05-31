@@ -15,6 +15,7 @@
     <include path="plot_logic.py"/>
     <include path="report_utils.py"/>
     <include path="feature_help_modal.py"/>
+    <include path="feature_importance.py"/>
   </required_files>
 
   <stdio>

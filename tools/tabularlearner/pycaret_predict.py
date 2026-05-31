@@ -4,11 +4,10 @@ import tempfile
 
 import h5py
 import joblib
-import numpy as np
 import pandas as pd
+from classification_metrics import weighted_ovr_pr_auc as _weighted_ovr_pr_auc
 from pycaret.classification import ClassificationExperiment
 from pycaret.regression import RegressionExperiment
-from sklearn.metrics import auc, precision_recall_curve
 from utils import (
     build_tabbed_html,
     encode_image_to_base64,
@@ -20,65 +19,36 @@ from utils import (
 LOG = logging.getLogger(__name__)
 
 
-def _weighted_ovr_pr_auc(y_true, y_score, labels=None):
-    y_true_series = pd.Series(y_true).reset_index(drop=True)
-    if labels is not None:
-        class_labels = list(labels)
-    else:
-        class_labels = list(pd.unique(y_true_series))
-        try:
-            class_labels = sorted(class_labels)
-        except Exception:
-            pass
-    if len(class_labels) < 2:
-        return np.nan
+MULTICLASS_UNAVAILABLE_PYCARET_PLOTS = {
+    "calibration",
+    "rfe",
+    "threshold",
+}
 
-    scores = np.asarray(y_score)
-    if len(scores) != len(y_true_series):
-        return np.nan
 
-    if len(class_labels) == 2:
-        try:
-            pos_label = 1 if 1 in class_labels else sorted(class_labels)[-1]
-        except Exception:
-            pos_label = class_labels[-1]
-        if scores.ndim == 2:
-            if scores.shape[1] < 2:
-                scores = scores.ravel()
-            else:
-                try:
-                    pos_idx = class_labels.index(pos_label)
-                except ValueError:
-                    pos_idx = scores.shape[1] - 1
-                scores = scores[:, min(pos_idx, scores.shape[1] - 1)]
-        precision, recall, _ = precision_recall_curve(
-            (y_true_series == pos_label).astype(int),
-            scores,
-        )
-        return auc(recall, precision)
-
-    if scores.ndim != 2 or scores.shape[1] < len(class_labels):
-        return np.nan
-
-    weighted_total = 0.0
-    support_total = 0
-    for class_idx, class_label in enumerate(class_labels):
-        y_true_bin = (y_true_series == class_label).astype(int)
-        if len(pd.unique(y_true_bin)) < 2:
-            continue
-        precision, recall, _ = precision_recall_curve(
-            y_true_bin,
-            scores[:, class_idx],
-        )
-        support = int(y_true_bin.sum())
-        weighted_total += auc(recall, precision) * support
-        support_total += support
-
-    return weighted_total / support_total if support_total else np.nan
+def _should_skip_pycaret_plot(plot_name, exp):
+    return (
+        getattr(exp, "is_multiclass", False)
+        and plot_name in MULTICLASS_UNAVAILABLE_PYCARET_PLOTS
+    )
 
 
 def pr_auc_curve_score(y_true, y_score):
     return _weighted_ovr_pr_auc(y_true, y_score)
+
+
+def _add_pr_auc_metric_if_supported(exp):
+    if getattr(exp, "is_multiclass", False):
+        LOG.info(
+            "Skipping PyCaret custom PR-AUC metric for multiclass "
+            "classification."
+        )
+        return False
+    exp.add_metric(id='PR-AUC',
+                   name='PR-AUC',
+                   target='pred_proba',
+                   score_func=pr_auc_curve_score)
+    return True
 
 
 class PyCaretModelEvaluator:
@@ -115,10 +85,7 @@ class ClassificationEvaluator(PyCaretModelEvaluator):
             target_index = int(self.target) - 1
             target_name = names[target_index]
             exp.setup(data, target=target_name, test_data=data, index=False)
-            exp.add_metric(id='PR-AUC',
-                           name='PR-AUC',
-                           target='pred_proba',
-                           score_func=pr_auc_curve_score)
+            _add_pr_auc_metric_if_supported(exp)
             predictions = exp.predict_model(self.model)
             metrics = exp.pull()
             plots = ['confusion_matrix', 'auc', 'threshold', 'pr',
@@ -127,6 +94,13 @@ class ClassificationEvaluator(PyCaretModelEvaluator):
                      'feature_all']
             for plot_name in plots:
                 try:
+                    if _should_skip_pycaret_plot(plot_name, exp):
+                        LOG.info(
+                            "Skipping PyCaret %s plot for multiclass "
+                            "classification.",
+                            plot_name,
+                        )
+                        continue
                     if plot_name == 'auc' and not exp.is_multiclass:
                         plot_path = exp.plot_model(self.model,
                                                    plot=plot_name,
@@ -143,7 +117,11 @@ class ClassificationEvaluator(PyCaretModelEvaluator):
                                                plot=plot_name, save=True)
                     plot_paths[plot_name] = plot_path
                 except Exception as e:
-                    LOG.error(f"Error generating plot {plot_name}: {e}")
+                    LOG.warning(
+                        "Could not generate optional PyCaret plot %s: %s",
+                        plot_name,
+                        e,
+                    )
                     continue
             generate_html_report(plot_paths, metrics)
 
@@ -177,7 +155,11 @@ class RegressionEvaluator(PyCaretModelEvaluator):
                                                plot=plot_name, save=True)
                     plot_paths[plot_name] = plot_path
                 except Exception as e:
-                    LOG.error(f"Error generating plot {plot_name}: {e}")
+                    LOG.warning(
+                        "Could not generate optional PyCaret plot %s: %s",
+                        plot_name,
+                        e,
+                    )
                     continue
             generate_html_report(plot_paths, metrics)
         else:

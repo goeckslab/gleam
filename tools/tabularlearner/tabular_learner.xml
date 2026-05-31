@@ -4,6 +4,18 @@
         <import>pycaret_macros.xml</import>
     </macros>
     <expand macro="python_requirements" />
+    <required_files>
+        <include path="base_model_trainer.py" />
+        <include path="classification_metrics.py" />
+        <include path="dashboard.py" />
+        <include path="explainability_limits.py" />
+        <include path="feature_help_modal.py" />
+        <include path="feature_importance.py" />
+        <include path="pycaret_classification.py" />
+        <include path="pycaret_regression.py" />
+        <include path="pycaret_train.py" />
+        <include path="utils.py" />
+    </required_files>
     <command>
         <![CDATA[
         python $__tool_directory__/pycaret_train.py --input_file '$data_configuration.input_file' --target_col '$data_configuration.target_feature' --output_dir '.' --random_seed '$customize_defaults_section.random_seed' --n-jobs \${GALAXY_SLOTS:-1}
