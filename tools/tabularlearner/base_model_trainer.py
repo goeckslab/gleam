@@ -2295,7 +2295,6 @@ class BaseModelTrainer:
             n_train = getattr(
                 self.exp, "X_train_transformed", pd.DataFrame()
             ).shape[0]
-        total_rows = self.data.shape[0]
 
         # 3) Build setup parameters table
         all_params = self.setup_params.copy()
