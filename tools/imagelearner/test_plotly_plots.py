@@ -1,6 +1,5 @@
 import numpy as np
 import pandas as pd
-
 from plotly_plots import (
     _resolve_display_labels,
     build_binary_threshold_classification_plots_from_predictions,
