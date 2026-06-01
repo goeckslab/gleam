@@ -31,6 +31,8 @@ def format_config_table_html(
         "validation_metric",
         "loss_function",
         "threshold",
+        "threshold_source",
+        "threshold_metric",
         "epochs",
         "total_epochs",
         "batch_size",
@@ -45,6 +47,11 @@ def format_config_table_html(
     ]
 
     rows = []
+    label_map = {
+        "threshold": "Decision Threshold (Test)",
+        "threshold_source": "Threshold Source",
+        "threshold_metric": "Threshold Optimization Metric",
+    }
 
     for key in display_keys:
         val_str = "N/A"
@@ -53,9 +60,11 @@ def format_config_table_html(
             if output_type != "binary":
                 continue
             val = val if val is not None else 0.5
-            val_str = f"{val:.2f}"
-            if val == 0.5:
-                val_str += " (default)"
+            val_str = f"{float(val):.3f}"
+        elif key in {"threshold_source", "threshold_metric"}:
+            if output_type != "binary":
+                continue
+            val_str = str(val) if val is not None else "N/A"
         else:
             if key == "task_type":
                 val_str = val.title() if isinstance(val, str) else "N/A"
@@ -168,7 +177,7 @@ def format_config_table_html(
             f"<tr>"
             f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: left; "
             f"white-space: normal; word-break: break-word; overflow-wrap: anywhere;'>"
-            f"{key.replace('_', ' ').title()}</td>"
+            f"{label_map.get(key, key.replace('_', ' ').title())}</td>"
             f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: center; "
             f"white-space: normal; word-break: break-word; overflow-wrap: anywhere;'>"
             f"{val_str}</td>"

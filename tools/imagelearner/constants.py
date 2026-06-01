@@ -184,6 +184,8 @@ METRIC_DISPLAY_NAMES = {
     "precision": "Precision",
     "recall": "Recall",
     "specificity": "Specificity",
+    "f1": "F1",
+    "mcc": "Matthews Correlation Coefficient",
     "kappa_score": "Cohen's Kappa",
     "token_accuracy": "Token Accuracy",
     "avg_precision_macro": "Macro Precision",

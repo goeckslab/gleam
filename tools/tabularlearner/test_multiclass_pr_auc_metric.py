@@ -111,6 +111,19 @@ class FakeModelWithoutProba:
         return np.resize(np.asarray([1, 2, 3, 4, 5]), n_rows)
 
 
+class FakeRfeExperiment:
+    def __init__(self, rows, features):
+        self.X_train_transformed = pd.DataFrame(
+            np.zeros((rows, features)),
+            columns=[f"feature_{i}" for i in range(features)],
+        )
+
+    def get_config(self, key):
+        if key == "X_train_transformed":
+            return self.X_train_transformed
+        raise KeyError(key)
+
+
 class FakeExperiment:
     def __init__(self, is_multiclass, always_shape_error=False):
         self.is_multiclass = is_multiclass
@@ -202,6 +215,67 @@ def test_multiclass_train_model_does_not_register_pr_auc_before_predict_model(tm
     assert trainer.exp.compare_kwargs["sort"] == "AUC"
     assert trainer.exp.predict_called is True
     assert trainer.exp.predict_kwargs == {}
+
+
+def test_shap_row_cap_defaults_for_all_models(tmp_path):
+    trainer = BaseModelTrainer(
+        input_file="unused.tsv",
+        target_col="1",
+        output_dir=str(tmp_path),
+        task_type="classification",
+        random_seed=42,
+    )
+
+    assert trainer._shap_row_cap == 200
+    assert trainer.plot_feature_limit == 30
+
+
+def test_polynomial_features_keep_shap_row_cap_and_reduce_feature_limit(tmp_path):
+    trainer = BaseModelTrainer(
+        input_file="unused.tsv",
+        target_col="1",
+        output_dir=str(tmp_path),
+        task_type="classification",
+        random_seed=42,
+        polynomial_features=True,
+    )
+
+    assert trainer._shap_row_cap == 200
+    assert trainer.plot_feature_limit == 15
+
+
+def test_rfe_plot_is_allowed_under_feasibility_limits(tmp_path):
+    trainer = BaseModelTrainer(
+        input_file="unused.tsv",
+        target_col="1",
+        output_dir=str(tmp_path),
+        task_type="classification",
+        random_seed=42,
+    )
+    trainer.exp = FakeRfeExperiment(rows=1000, features=50)
+
+    assert trainer._should_skip_rfe_plot() is False
+    assert "rfe" not in trainer.skipped_plot_notes
+
+
+def test_rfe_plot_is_skipped_for_large_datasets_with_report_note(tmp_path):
+    trainer = BaseModelTrainer(
+        input_file="unused.tsv",
+        target_col="1",
+        output_dir=str(tmp_path),
+        task_type="classification",
+        random_seed=42,
+    )
+    trainer.exp = FakeRfeExperiment(rows=6000, features=80)
+
+    assert trainer._should_skip_rfe_plot() is True
+    note = trainer._skipped_plot_note_html(
+        "rfe", "Recursive Feature Elimination"
+    )
+    assert "Recursive Feature Elimination skipped" in note
+    assert "5,000 rows" in note
+    assert "100 transformed features" in note
+    assert "250,000 row-feature cells" in note
 
 
 def test_multiclass_shape_error_falls_back_to_gleam_test_metrics(tmp_path):
