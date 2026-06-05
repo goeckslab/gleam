@@ -2002,7 +2002,7 @@ class LudwigDirectBackend:
                 except Exception as e:
                     logger.warning(f"Could not generate multi-class metric plots: {e}")
 
-            # Test diagnostics (confidence histogram) from predictions.csv, using split=2
+            # Test diagnostics (binary calibration first, then confidence histogram) from predictions.csv, using split=2
             if predictions_csv_path.exists():
                 try:
                     test_diag_plots = build_prediction_diagnostics(
@@ -2012,12 +2012,9 @@ class LudwigDirectBackend:
                         else None,
                         split_value=2,
                     )
-                    test_conf_plots = [
-                        p for p in test_diag_plots if "Prediction Confidence Distribution" in p.get("title", "")
-                    ]
-                    if test_conf_plots:
-                        tab3_content = append_plot_blocks(tab3_content, test_conf_plots)
-                        logger.info("Added test prediction confidence plot")
+                    if test_diag_plots:
+                        tab3_content = append_plot_blocks(tab3_content, test_diag_plots)
+                        logger.info("Added test prediction diagnostic plots")
                 except Exception as e:
                     logger.warning(f"Could not generate test diagnostics: {e}")
 

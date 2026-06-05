@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 from plotly_plots import (
     _resolve_display_labels,
+    build_prediction_diagnostics,
     build_binary_threshold_classification_plots_from_predictions,
     load_binary_threshold_data,
     optimize_binary_threshold_values,
@@ -78,3 +79,22 @@ def test_binary_threshold_plots_are_recomputed_from_predictions(tmp_path):
         "Per-Class metrics",
     ]
     assert "Selected Threshold: 0.500" in plots[0]["html"]
+
+
+def test_binary_prediction_diagnostics_put_calibration_before_confidence(tmp_path):
+    predictions_path = tmp_path / "predictions.csv"
+    pd.DataFrame(
+        {
+            "split": [2, 2, 2, 2],
+            "label": [1, 0, 1, 0],
+            "label_probabilities_0": [0.1, 0.8, 0.4, 0.7],
+            "label_probabilities_1": [0.9, 0.2, 0.6, 0.3],
+        }
+    ).to_csv(predictions_path, index=False)
+
+    plots = build_prediction_diagnostics(str(predictions_path), split_value=2)
+
+    assert [plot["title"] for plot in plots] == [
+        "Calibration Curve (Test)",
+        "Prediction Confidence Distribution",
+    ]

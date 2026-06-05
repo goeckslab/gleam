@@ -1083,7 +1083,7 @@ def build_prediction_diagnostics(
 
     labels_series = _extract_labels()
 
-    # Plot 1: Confidence Histogram
+    confidence_plot = None
     if confidence_series is not None:
         fig_conf = go.Figure()
         fig_conf.add_trace(
@@ -1104,15 +1104,19 @@ def build_prediction_diagnostics(
             height=500,
         )
         _style_fig(fig_conf)
-        plots.append(_wrap_plot("Prediction Confidence Distribution", fig_conf))
+        confidence_plot = _wrap_plot("Prediction Confidence Distribution", fig_conf)
 
     # The remaining plots require true labels and a positive-class probability
     if labels_series is None or pos_prob_series is None:
+        if confidence_plot is not None:
+            plots.append(confidence_plot)
         return plots
 
     # Align lengths
     min_len = min(len(labels_series), len(pos_prob_series))
     if min_len == 0:
+        if confidence_plot is not None:
+            plots.append(confidence_plot)
         return plots
     y_true_raw = labels_series.iloc[:min_len]
     y_score = np.array(pos_prob_series.iloc[:min_len], dtype=float)
@@ -1124,11 +1128,13 @@ def build_prediction_diagnostics(
         np.array(y_true_raw), pos_label_hint
     )
     if positive_label is None:
+        if confidence_plot is not None:
+            plots.append(confidence_plot)
         return plots
 
     y_true = (y_true_raw == positive_label).astype(int).values
 
-    # Plot 2: Calibration Curve. Requires binary true labels plus positive-class
+    # Plot 1: Calibration Curve. Requires binary true labels plus positive-class
     # probabilities; multiclass calibration is skipped until a one-vs-rest
     # reliability diagram is explicitly supported in the report.
     label_prob_map = {}
@@ -1189,6 +1195,10 @@ def build_prediction_diagnostics(
                     fig_cal,
                 )
             )
+
+    # Plot 2: Confidence Histogram
+    if confidence_plot is not None:
+        plots.append(confidence_plot)
 
     return plots
 
