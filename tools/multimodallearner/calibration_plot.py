@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Mapping, Optional, Sequence, Tuple
+from typing import Mapping, Optional, Sequence, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -12,7 +12,7 @@ from matplotlib.figure import Figure
 from sklearn.calibration import calibration_curve
 
 
-ArrayLike = Sequence[float] | np.ndarray
+ArrayLike = Union[Sequence[float], np.ndarray]
 ModelCalibrationData = Mapping[str, Mapping[str, ArrayLike]]
 
 
