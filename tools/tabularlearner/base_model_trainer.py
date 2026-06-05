@@ -1309,11 +1309,38 @@ class BaseModelTrainer:
                     self.best_model, plot=name, save=False
                 )
                 out_path = Path(self.output_dir) / f"plot_{name}.png"
-                fig = ax.get_figure()
+                if name == "calibration":
+                    self._apply_calibration_axis_labels(ax)
+                fig = self._get_pycaret_figure(ax)
                 fig.savefig(out_path, bbox_inches="tight")
                 self.plots[name] = str(out_path)
             except Exception as e:
                 LOG.warning(f"Could not generate {name} plot: {e}")
+
+    @staticmethod
+    def _apply_calibration_axis_labels(ax):
+        """
+        Patch PyCaret's calibration matplotlib axis when it omits labels.
+
+        PyCaret builds the reliability curve correctly, but some versions leave
+        the x-axis label blank. Mutating the returned axis preserves the plot.
+        """
+        axes = list(ax.ravel()) if hasattr(ax, "ravel") else [ax]
+        for axis in axes:
+            if not hasattr(axis, "set_xlabel"):
+                continue
+            if not axis.get_xlabel():
+                axis.set_xlabel("Mean predicted probability")
+            if not axis.get_ylabel():
+                axis.set_ylabel("Fraction of positives")
+
+    @staticmethod
+    def _get_pycaret_figure(ax):
+        axes = list(ax.ravel()) if hasattr(ax, "ravel") else [ax]
+        for axis in axes:
+            if hasattr(axis, "get_figure"):
+                return axis.get_figure()
+        return ax.get_figure()
 
     def encode_image_to_base64(self, img_path: str) -> str:
         with open(img_path, "rb") as img_file:

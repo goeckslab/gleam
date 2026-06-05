@@ -1,5 +1,6 @@
 import logging
 import types
+from pathlib import Path
 from typing import Dict
 
 import numpy as np
@@ -144,6 +145,17 @@ class ClassificationModelTrainer(BaseModelTrainer):
                         },
                     )
                     self.plots[plot_name] = plot_path
+                elif plot_name == "calibration":
+                    ax = self.exp.plot_model(
+                        self.best_model,
+                        plot=plot_name,
+                        save=False,
+                    )
+                    self._apply_calibration_axis_labels(ax)
+                    out_path = Path(self.output_dir) / f"plot_{plot_name}.png"
+                    fig = self._get_pycaret_figure(ax)
+                    fig.savefig(out_path, bbox_inches="tight")
+                    self.plots[plot_name] = str(out_path)
                 else:
                     plot_path = self.exp.plot_model(
                         self.best_model, plot=plot_name, save=True
