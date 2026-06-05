@@ -969,16 +969,28 @@ def build_prediction_diagnostics(
     elif label_data_path and Path(label_data_path).exists():
         try:
             df_labels_all = pd.read_csv(label_data_path)
-            if SPLIT_COLUMN_NAME in df_labels_all.columns and len(df_labels_all) == len(df_pred):
-                split_mask = pd.to_numeric(df_labels_all[SPLIT_COLUMN_NAME], errors="coerce") == split_value
-                labels_from_dataset = df_labels_all.loc[split_mask, LABEL_COLUMN_NAME].reset_index(drop=True)
-                df_pred = df_pred.loc[split_mask].reset_index(drop=True)
-                if df_pred.empty:
-                    return []
-                filtered_by_split = True
+
+            if SPLIT_COLUMN_NAME in df_labels_all.columns:
+                split_mask = (
+                    pd.to_numeric(df_labels_all[SPLIT_COLUMN_NAME], errors="coerce")
+                    == split_value
+                )
+                labels_split = df_labels_all.loc[split_mask, LABEL_COLUMN_NAME].reset_index(drop=True)
+
+                if len(df_labels_all) == len(df_pred):
+                    df_pred = df_pred.loc[split_mask].reset_index(drop=True)
+                    labels_from_dataset = labels_split
+                    if df_pred.empty:
+                        return []
+                    filtered_by_split = True
+
+                elif len(labels_split) == len(df_pred):
+                    # predictions.csv is already filtered to this split
+                    labels_from_dataset = labels_split
+                    filtered_by_split = True
+
         except Exception as exc:
             print(f"Warning: Unable to filter predictions by split from label data: {exc}")
-
     # Fallback: no split info available. Assume the predictions file is already filtered
     # (common for test-only exports) and avoid heuristic slicing that could discard rows.
     if not filtered_by_split:
@@ -1314,15 +1326,34 @@ def load_binary_threshold_data(
     if label_data_path and Path(label_data_path).exists():
         try:
             df_labels_all = pd.read_csv(label_data_path)
-            if SPLIT_COLUMN_NAME in df_labels_all.columns and len(df_labels_all) == len(df_full):
-                mask = (
-                    pd.to_numeric(df_labels_all[SPLIT_COLUMN_NAME], errors="coerce") == used_split
-                    if used_split is not None and SPLIT_COLUMN_NAME in df_labels_all.columns
-                    else pd.Series([True] * len(df_full))
-                )
-                labels_from_dataset = df_labels_all.loc[mask, LABEL_COLUMN_NAME].reset_index(drop=True)
-                if len(labels_from_dataset) == len(df_pred):
-                    labels_from_dataset = labels_from_dataset.reset_index(drop=True)
+
+            if LABEL_COLUMN_NAME in df_labels_all.columns:
+                if SPLIT_COLUMN_NAME in df_labels_all.columns and used_split is not None:
+                    mask = (
+                        pd.to_numeric(df_labels_all[SPLIT_COLUMN_NAME], errors="coerce")
+                        == used_split
+                    )
+                    labels_split = df_labels_all.loc[mask, LABEL_COLUMN_NAME].reset_index(drop=True)
+
+                    if len(df_labels_all) == len(df_full):
+                        # predictions.csv contains all splits, so filter predictions and labels together
+                        df_pred = df_full.loc[mask].reset_index(drop=True)
+                        labels_from_dataset = labels_split
+
+                    elif len(labels_split) == len(df_pred):
+                        # predictions.csv is already filtered to this split
+                        labels_from_dataset = labels_split
+
+                    else:
+                        print(
+                            "Warning: Unable to align labels for threshold optimization: "
+                            f"split labels length={len(labels_split)}, predictions length={len(df_pred)}"
+                        )
+
+                elif len(df_labels_all) == len(df_pred):
+                    # No split column, but label table and predictions have same row count
+                    labels_from_dataset = df_labels_all[LABEL_COLUMN_NAME].reset_index(drop=True)
+
         except Exception as exc:
             print(f"Warning: Unable to align labels for threshold optimization: {exc}")
 
@@ -1369,8 +1400,6 @@ def load_binary_threshold_data(
             f"{LABEL_COLUMN_NAME}__target",
             "label",
             "label_true",
-            "label_predictions",
-            "prediction",
         ]:
             if col in df_pred.columns and col not in prob_cols_sorted:
                 return df_pred[col]
