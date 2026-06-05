@@ -11,6 +11,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import shap
+from calibration_plot import expected_calibration_error
 from feature_help_modal import get_metrics_help_modal
 from report_utils import build_tabbed_html, get_html_closing, get_html_template
 from sklearn.calibration import calibration_curve
@@ -282,10 +283,11 @@ def generate_calibration_plot(
     """
     Binary calibration curve (Plotly).
     """
+    ece = expected_calibration_error(y_true_bin, y_prob, n_bins=n_bins)
     prob_true, prob_pred = calibration_curve(y_true_bin, y_prob, n_bins=n_bins, strategy="uniform")
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=prob_pred, y=prob_true, mode="lines+markers", name="Model",
+        x=prob_pred, y=prob_true, mode="lines+markers", name=f"Model - ECE: {ece:.3f}",
         line=dict(color="#1f77b4", width=3), marker=dict(size=7, color="#1f77b4")
     ))
     fig.add_trace(
@@ -293,13 +295,13 @@ def generate_calibration_plot(
             x=[0, 1], y=[0, 1],
             mode="lines",
             line=dict(dash="dash", color="#808080", width=2),
-            name="Perfect"
+            name="Perfect calibration"
         )
     )
     fig.update_layout(
         title=None,
-        xaxis_title="Predicted Probability",
-        yaxis_title="Observed Probability",
+        xaxis_title="Mean predicted probability",
+        yaxis_title="Fraction of positives",
         yaxis=dict(range=[0, 1]),
         xaxis=dict(range=[0, 1]),
         template="plotly_white",
@@ -1621,6 +1623,10 @@ def build_test_html_and_plots(
 
             fig_pr = generate_pr_curve_plot(y_bin, pos_scores, title="Precision–Recall Curve", marker_threshold=threshold)
             plots.append(plot_with_table_style_title(fig_pr, f"Precision–Recall Curve{'' if threshold is None else f' (marker at threshold={threshold:.2f})'}"))
+
+            if problem_type == "binary":
+                fig_cal = generate_calibration_plot(y_bin, pos_scores, title="Calibration Curve (Test)")
+                plots.append(plot_with_table_style_title(fig_cal, "Calibration Curve (Test)"))
 
             # Additional diagnostics aligned with ImageLearner style
             if problem_type == "binary":

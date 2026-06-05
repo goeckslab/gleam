@@ -6,7 +6,9 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
+from calibration_plot import expected_calibration_error
 from constants import LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME
+from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
     accuracy_score,
     auc,
@@ -1126,20 +1128,9 @@ def build_prediction_diagnostics(
 
     y_true = (y_true_raw == positive_label).astype(int).values
 
-    # Utility: compute calibration points
-    def _calibration_points(y_true_bin: np.ndarray, scores: np.ndarray):
-        bins = np.linspace(0.0, 1.0, 11)
-        bin_ids = np.digitize(scores, bins, right=True)
-        bin_centers, frac_positives = [], []
-        for b in range(1, len(bins)):
-            mask = bin_ids == b
-            if not np.any(mask):
-                continue
-            bin_centers.append(scores[mask].mean())
-            frac_positives.append(y_true_bin[mask].mean())
-        return bin_centers, frac_positives
-
-    # Plot 2: Calibration Curve (multi-class aware; one-vs-rest per label)
+    # Plot 2: Calibration Curve. Requires binary true labels plus positive-class
+    # probabilities; multiclass calibration is skipped until a one-vs-rest
+    # reliability diagram is explicitly supported in the report.
     label_prob_map = {}
     for col in prob_cols_sorted:
         if col.startswith("label_probabilities_"):
@@ -1152,15 +1143,24 @@ def build_prediction_diagnostics(
         pass
     else:
         # Binary/unknown fallback (previous behavior)
-        bin_centers, frac_positives = _calibration_points(y_true, y_score)
-        if bin_centers and frac_positives:
+        finite_mask = np.isfinite(y_score)
+        y_score_finite = y_score[finite_mask]
+        y_true_finite = y_true[finite_mask]
+        if len(y_true_finite) and np.all((y_score_finite >= 0.0) & (y_score_finite <= 1.0)):
+            prob_true, prob_pred = calibration_curve(
+                y_true_finite,
+                y_score_finite,
+                n_bins=10,
+                strategy="uniform",
+            )
+            ece = expected_calibration_error(y_true_finite, y_score_finite, n_bins=10)
             fig_cal = go.Figure()
             fig_cal.add_trace(
                 go.Scatter(
-                    x=bin_centers,
-                    y=frac_positives,
+                    x=prob_pred,
+                    y=prob_true,
                     mode="lines+markers",
-                    name="Calibration",
+                    name=f"Model - ECE: {ece:.3f}",
                     line=dict(color="#2ca02c", width=4),
                 )
             )
@@ -1169,21 +1169,23 @@ def build_prediction_diagnostics(
                     x=[0, 1],
                     y=[0, 1],
                     mode="lines",
-                    name="Perfect Calibration",
+                    name="Perfect calibration",
                     line=dict(color="gray", width=2, dash="dash"),
                 )
             )
             fig_cal.update_layout(
                 title=dict(text="Calibration Curve", x=0.5),
-                xaxis_title="Predicted probability",
-                yaxis_title="Observed frequency",
+                xaxis_title="Mean predicted probability",
+                yaxis_title="Fraction of positives",
+                xaxis=dict(range=[0, 1]),
+                yaxis=dict(range=[0, 1]),
                 width=700,
                 height=500,
             )
             _style_fig(fig_cal)
             plots.append(
                 _wrap_plot(
-                    "Calibration Curve (Predicted Probability vs Observed Frequency)",
+                    "Calibration Curve (Test)",
                     fig_cal,
                 )
             )

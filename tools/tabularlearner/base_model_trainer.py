@@ -2523,6 +2523,7 @@ class BaseModelTrainer:
             "class_report": "Per-Class Metrics",
             "pr_auc": "Precision-Recall Curve",
             "roc_auc": "Receiver Operating Characteristic AUC",
+            "calibration_curve": "Calibration Curve",
             "predicted_vs_actual": "Predicted vs Actual",
             "residuals": "Residuals Distribution",
             "error": "Prediction Error Distribution",
@@ -2723,6 +2724,7 @@ class BaseModelTrainer:
                 "class_report",
                 "roc_auc",
                 "pr_auc",
+                "calibration_curve",
                 "lift_curve",
                 "cumulative_precision",
             ]

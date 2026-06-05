@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from base_model_trainer import BaseModelTrainer
+from calibration_plot import expected_calibration_error
 from classification_metrics import (
     labels_in_sample_order,
     positive_class_label,
@@ -14,6 +15,7 @@ from classification_metrics import (
 )
 from dashboard import generate_classifier_explainer_dashboard
 from pycaret.classification import ClassificationExperiment
+from sklearn.calibration import calibration_curve
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.metrics import (
@@ -322,6 +324,19 @@ class ClassificationModelTrainer(BaseModelTrainer):
                     self.explainer_plots["pr_auc"] = fig_pr
             except Exception as e:
                 LOG.warning(f"Could not generate custom PR curve: {e}")
+
+        if not getattr(self.exp, "is_multiclass", False):
+            try:
+                calibration_labels = score_labels or list(pd.unique(y_true))
+                fig_cal = self._build_calibration_fig(
+                    y_true,
+                    y_scores,
+                    positive_class_label(calibration_labels),
+                )
+                if fig_cal is not None:
+                    self.explainer_plots["calibration_curve"] = fig_cal
+            except Exception as e:
+                LOG.warning(f"Could not generate calibration curve: {e}")
 
         if getattr(self.exp, "is_multiclass", False) and y_scores is not None:
             try:
@@ -723,6 +738,70 @@ class ClassificationModelTrainer(BaseModelTrainer):
         )
         _apply_report_layout(fig_pr)
         return fig_pr
+
+    def _build_calibration_fig(self, y_true, y_scores, pos_label=None):
+        """
+        Build a binary calibration curve with ECE.
+
+        The tool can only build this plot when the test split has aligned true
+        labels and positive-class probabilities; otherwise callers skip it.
+        """
+        if y_scores is None or getattr(self.exp, "is_multiclass", False):
+            return None
+
+        y_scores = np.asarray(y_scores, dtype=float)
+        if y_scores.ndim != 1:
+            return None
+
+        y_true_curve = (
+            (pd.Series(y_true).reset_index(drop=True) == pos_label).astype(int)
+            if pos_label is not None
+            else pd.Series(y_true).reset_index(drop=True).astype(int)
+        ).to_numpy()
+        min_len = min(len(y_true_curve), len(y_scores))
+        if min_len == 0:
+            return None
+        y_true_curve = y_true_curve[:min_len]
+        y_scores = y_scores[:min_len]
+        finite_mask = np.isfinite(y_scores)
+        if not finite_mask.any():
+            return None
+        y_true_curve = y_true_curve[finite_mask]
+        y_scores = y_scores[finite_mask]
+        if not np.all((y_scores >= 0.0) & (y_scores <= 1.0)):
+            return None
+
+        prob_true, prob_pred = calibration_curve(
+            y_true_curve,
+            y_scores,
+            n_bins=10,
+            strategy="uniform",
+        )
+        ece = expected_calibration_error(y_true_curve, y_scores, n_bins=10)
+
+        fig = go.Figure()
+        fig.add_scatter(
+            x=prob_pred,
+            y=prob_true,
+            mode="lines+markers",
+            name=f"Model - ECE: {ece:.3f}",
+        )
+        fig.add_scatter(
+            x=[0, 1],
+            y=[0, 1],
+            mode="lines",
+            line=dict(color="#777777", dash="dash"),
+            name="Perfect calibration",
+        )
+        fig.update_layout(
+            title="Calibration Curve",
+            xaxis_title="Mean predicted probability",
+            yaxis_title="Fraction of positives",
+            xaxis=dict(range=[0, 1]),
+            yaxis=dict(range=[0, 1]),
+        )
+        _apply_report_layout(fig)
+        return fig
 
     def _score_label_display_names(self, score_labels):
         decoded = self._decode_labels_for_display(pd.Series(score_labels))
