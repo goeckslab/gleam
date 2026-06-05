@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 from plotly_plots import (
     _resolve_display_labels,
-    build_prediction_diagnostics,
     build_binary_threshold_classification_plots_from_predictions,
+    build_prediction_diagnostics,
     load_binary_threshold_data,
     optimize_binary_threshold_values,
 )
