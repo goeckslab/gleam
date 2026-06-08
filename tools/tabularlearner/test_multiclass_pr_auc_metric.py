@@ -343,6 +343,33 @@ def test_multiclass_plot_generation_does_not_add_binary_proba_patch():
     assert not hasattr(model, "predict_proba")
 
 
+def test_binary_calibration_fig_includes_ece_for_valid_test_probabilities():
+    trainer = object.__new__(ClassificationModelTrainer)
+    trainer.exp = FakeExperiment(is_multiclass=False)
+
+    fig = trainer._build_calibration_fig(
+        pd.Series([0, 1, 1, 0]),
+        np.array([0.1, 0.8, 0.7, 0.2]),
+        pos_label=1,
+    )
+
+    assert fig is not None
+    assert any("ECE:" in trace.name for trace in fig.data)
+
+
+def test_binary_calibration_fig_skips_one_class_test_labels():
+    trainer = object.__new__(ClassificationModelTrainer)
+    trainer.exp = FakeExperiment(is_multiclass=False)
+
+    fig = trainer._build_calibration_fig(
+        pd.Series([1, 1, 1]),
+        np.array([0.8, 0.7, 0.9]),
+        pos_label=1,
+    )
+
+    assert fig is None
+
+
 def test_multiclass_explainer_failure_keeps_custom_plots(monkeypatch):
     explainerdashboard = types.ModuleType("explainerdashboard")
 

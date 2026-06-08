@@ -98,3 +98,36 @@ def test_binary_prediction_diagnostics_put_calibration_before_confidence(tmp_pat
         "Calibration Curve (Test)",
         "Prediction Confidence Distribution",
     ]
+
+
+def test_prediction_diagnostics_skip_calibration_for_multiclass_labels(tmp_path):
+    predictions_path = tmp_path / "predictions.csv"
+    pd.DataFrame(
+        {
+            "split": [2, 2, 2, 2],
+            "label": ["a", "b", "c", "a"],
+            "label_probability": [0.7, 0.8, 0.6, 0.9],
+        }
+    ).to_csv(predictions_path, index=False)
+
+    plots = build_prediction_diagnostics(str(predictions_path), split_value=2)
+
+    assert [plot["title"] for plot in plots] == [
+        "Prediction Confidence Distribution",
+    ]
+
+
+def test_prediction_diagnostics_handles_probability_export_without_labels(tmp_path):
+    predictions_path = tmp_path / "predictions.csv"
+    pd.DataFrame(
+        {
+            "split": [2, 2],
+            "probabilities": ["[0.2, 0.8]", "[0.7, 0.3]"],
+        }
+    ).to_csv(predictions_path, index=False)
+
+    plots = build_prediction_diagnostics(str(predictions_path), split_value=2)
+
+    assert [plot["title"] for plot in plots] == [
+        "Prediction Confidence Distribution",
+    ]

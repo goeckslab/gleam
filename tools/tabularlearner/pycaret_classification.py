@@ -780,6 +780,8 @@ class ClassificationModelTrainer(BaseModelTrainer):
             return None
         y_true_curve = y_true_curve[finite_mask]
         y_scores = y_scores[finite_mask]
+        if len(np.unique(y_true_curve)) != 2:
+            return None
         if not np.all((y_scores >= 0.0) & (y_scores <= 1.0)):
             return None
 

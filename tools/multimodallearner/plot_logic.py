@@ -279,10 +279,15 @@ def generate_calibration_plot(
     n_bins: int = 10,
     title: str = "Calibration Plot",
     path: Optional[str] = None,
-) -> go.Figure:
+) -> Optional[go.Figure]:
     """
     Binary calibration curve (Plotly).
     """
+    prepared = _prepare_binary_calibration_inputs(y_true_bin, y_prob)
+    if prepared is None:
+        return None
+    y_true_bin, y_prob = prepared
+
     ece = expected_calibration_error(y_true_bin, y_prob, n_bins=n_bins)
     prob_true, prob_pred = calibration_curve(y_true_bin, y_prob, n_bins=n_bins, strategy="uniform")
     fig = go.Figure()
@@ -309,6 +314,37 @@ def generate_calibration_plot(
     )
     _save_plotly(fig, path)
     return fig
+
+
+def _prepare_binary_calibration_inputs(
+    y_true_bin: np.ndarray,
+    y_prob: np.ndarray,
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    try:
+        y_true_arr = np.asarray(y_true_bin).ravel()
+        y_prob_arr = np.asarray(y_prob, dtype=float).ravel()
+    except Exception:
+        return None
+
+    min_len = min(len(y_true_arr), len(y_prob_arr))
+    if min_len == 0:
+        return None
+
+    y_true_arr = y_true_arr[:min_len]
+    y_prob_arr = y_prob_arr[:min_len]
+    finite_mask = np.isfinite(y_prob_arr)
+    if not finite_mask.any():
+        return None
+
+    y_true_arr = y_true_arr[finite_mask]
+    y_prob_arr = y_prob_arr[finite_mask]
+    labels = set(np.unique(y_true_arr).tolist())
+    if not labels.issubset({0, 1, False, True}) or len(labels) != 2:
+        return None
+    if not np.all((y_prob_arr >= 0.0) & (y_prob_arr <= 1.0)):
+        return None
+
+    return y_true_arr.astype(int), y_prob_arr
 
 
 def generate_threshold_plot(
@@ -1626,7 +1662,8 @@ def build_test_html_and_plots(
 
             if problem_type == "binary":
                 fig_cal = generate_calibration_plot(y_bin, pos_scores, title="Calibration Curve (Test)")
-                plots.append(plot_with_table_style_title(fig_cal, "Calibration Curve (Test)"))
+                if fig_cal is not None:
+                    plots.append(plot_with_table_style_title(fig_cal, "Calibration Curve (Test)"))
 
             # Additional diagnostics aligned with ImageLearner style
             if problem_type == "binary":

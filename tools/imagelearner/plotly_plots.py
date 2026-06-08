@@ -1041,7 +1041,11 @@ def build_prediction_diagnostics(
     if not prob_cols and "prediction_probability" in df_pred.columns:
         prob_cols = ["prediction_probability"]
     if not prob_cols and "probabilities" in df_pred.columns:
-        labels_guess = sorted([str(u) for u in pd.unique(df_pred[LABEL_COLUMN_NAME])])
+        labels_guess = (
+            sorted([str(u) for u in pd.unique(df_pred[LABEL_COLUMN_NAME])])
+            if LABEL_COLUMN_NAME in df_pred.columns
+            else []
+        )
         prob_cols = _maybe_expand_probabilities_column(df_pred, labels_guess)
     prob_cols_sorted = sorted(prob_cols)
 
@@ -1130,14 +1134,22 @@ def build_prediction_diagnostics(
         if confidence_plot is not None:
             plots.append(confidence_plot)
         return plots
-    y_true_raw = labels_series.iloc[:min_len]
-    y_score = np.array(pos_prob_series.iloc[:min_len], dtype=float)
+    y_true_raw = labels_series.iloc[:min_len].reset_index(drop=True)
+    y_score_series = pd.to_numeric(
+        pos_prob_series.iloc[:min_len],
+        errors="coerce",
+    ).reset_index(drop=True)
+    y_score = y_score_series.to_numpy(dtype=float)
+
+    observed_labels = pd.unique(y_true_raw.dropna())
+    if len(observed_labels) != 2:
+        if confidence_plot is not None:
+            plots.append(confidence_plot)
+        return plots
 
     # Determine positive label from the selected probability column suffix.
-    unique_labels = pd.unique(y_true_raw)
-    unique_labels_list = list(unique_labels)
     positive_label = _resolve_positive_label_from_probability(
-        np.array(y_true_raw), pos_label_hint
+        np.array(y_true_raw.dropna()), pos_label_hint
     )
     if positive_label is None:
         if confidence_plot is not None:
@@ -1146,67 +1158,62 @@ def build_prediction_diagnostics(
 
     y_true = (y_true_raw == positive_label).astype(int).values
 
-    # Plot 1: Calibration Curve. Requires binary true labels plus positive-class
-    # probabilities; multiclass calibration is skipped until a one-vs-rest
-    # reliability diagram is explicitly supported in the report.
-    label_prob_map = {}
-    for col in prob_cols_sorted:
-        if col.startswith("label_probabilities_"):
-            cls = col.replace("label_probabilities_", "")
-            label_prob_map[cls] = col
-
-    unique_label_strs = [str(u) for u in unique_labels_list]
-    if len(label_prob_map) > 1 and len(unique_label_strs) > 2:
-        # Skip multi-class calibration curve for now (not informative in current report)
-        pass
-    else:
-        # Binary/unknown fallback (previous behavior)
-        finite_mask = np.isfinite(y_score)
+    # Plot 1: Calibration Curve. Requires exactly two true labels plus valid
+    # positive-class probabilities; multiclass and malformed probability exports
+    # keep the confidence histogram fallback without adding a reliability curve.
+    finite_mask = np.isfinite(y_score) & y_true_raw.notna().to_numpy()
+    if finite_mask.any():
         y_score_finite = y_score[finite_mask]
         y_true_finite = y_true[finite_mask]
-        if len(y_true_finite) and np.all((y_score_finite >= 0.0) & (y_score_finite <= 1.0)):
-            prob_true, prob_pred = calibration_curve(
-                y_true_finite,
-                y_score_finite,
-                n_bins=10,
-                strategy="uniform",
-            )
-            ece = expected_calibration_error(y_true_finite, y_score_finite, n_bins=10)
-            fig_cal = go.Figure()
-            fig_cal.add_trace(
-                go.Scatter(
-                    x=prob_pred,
-                    y=prob_true,
-                    mode="lines+markers",
-                    name=f"Model - ECE: {ece:.3f}",
-                    line=dict(color="#2ca02c", width=4),
+        if (
+            len(np.unique(y_true_finite)) == 2
+            and np.all((y_score_finite >= 0.0) & (y_score_finite <= 1.0))
+        ):
+            try:
+                prob_true, prob_pred = calibration_curve(
+                    y_true_finite,
+                    y_score_finite,
+                    n_bins=10,
+                    strategy="uniform",
                 )
-            )
-            fig_cal.add_trace(
-                go.Scatter(
-                    x=[0, 1],
-                    y=[0, 1],
-                    mode="lines",
-                    name="Perfect calibration",
-                    line=dict(color="gray", width=2, dash="dash"),
+                ece = expected_calibration_error(y_true_finite, y_score_finite, n_bins=10)
+                fig_cal = go.Figure()
+                fig_cal.add_trace(
+                    go.Scatter(
+                        x=prob_pred,
+                        y=prob_true,
+                        mode="lines+markers",
+                        name=f"Model - ECE: {ece:.3f}",
+                        line=dict(color="#2ca02c", width=4),
+                    )
                 )
-            )
-            fig_cal.update_layout(
-                title=dict(text="Calibration Curve", x=0.5),
-                xaxis_title="Mean predicted probability",
-                yaxis_title="Fraction of positives",
-                xaxis=dict(range=[0, 1]),
-                yaxis=dict(range=[0, 1]),
-                width=700,
-                height=500,
-            )
-            _style_fig(fig_cal)
-            plots.append(
-                _wrap_plot(
-                    "Calibration Curve (Test)",
-                    fig_cal,
+                fig_cal.add_trace(
+                    go.Scatter(
+                        x=[0, 1],
+                        y=[0, 1],
+                        mode="lines",
+                        name="Perfect calibration",
+                        line=dict(color="gray", width=2, dash="dash"),
+                    )
                 )
-            )
+                fig_cal.update_layout(
+                    title=dict(text="Calibration Curve", x=0.5),
+                    xaxis_title="Mean predicted probability",
+                    yaxis_title="Fraction of positives",
+                    xaxis=dict(range=[0, 1]),
+                    yaxis=dict(range=[0, 1]),
+                    width=700,
+                    height=500,
+                )
+                _style_fig(fig_cal)
+                plots.append(
+                    _wrap_plot(
+                        "Calibration Curve (Test)",
+                        fig_cal,
+                    )
+                )
+            except ValueError as exc:
+                print(f"Warning: Skipping calibration curve: {exc}")
 
     # Plot 2: Confidence Histogram
     if confidence_plot is not None:
