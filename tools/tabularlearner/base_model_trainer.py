@@ -635,6 +635,25 @@ class BaseModelTrainer:
             "</div>"
         )
 
+    def _summary_plot_order(self):
+        if self.task_type != "classification":
+            return ["learning", "vc", "rfe", "parameter"]
+
+        plots = ["threshold", "learning"]
+        is_binary = not getattr(self.exp, "is_multiclass", False)
+        if is_binary and "calibration_curve" in self.explainer_plots:
+            plots.append("calibration_curve")
+        else:
+            plots.append("calibration")
+        plots.extend([
+            "rfe",
+            "vc",
+            "dimension",
+            "manifold",
+            "percentage_above_below",
+        ])
+        return plots
+
     def setup_pycaret(self):
         LOG.info("Initializing PyCaret")
         self._validate_and_adjust_cross_validation_folds()
@@ -2643,20 +2662,7 @@ class BaseModelTrainer:
             + "</div>"
         )
 
-        # choose summary plots based on task type
-        if self.task_type == "classification":
-            summary_plots = [
-                "threshold",
-                "learning",
-                "calibration",
-                "rfe",
-                "vc",
-                "dimension",
-                "manifold",
-                "percentage_above_below",
-            ]
-        else:
-            summary_plots = ["learning", "vc", "rfe", "parameter"]
+        summary_plots = self._summary_plot_order()
 
         for name in summary_plots:
             fig_or_fn = self.explainer_plots.pop(name, None)

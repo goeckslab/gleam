@@ -370,6 +370,80 @@ def test_binary_calibration_fig_skips_one_class_test_labels():
     assert fig is None
 
 
+def test_binary_calibration_curve_renders_in_validation_summary(monkeypatch, tmp_path):
+    import base_model_trainer as trainer_module
+
+    class BinaryExperiment:
+        is_multiclass = False
+        X_train = pd.DataFrame({"feature": [1, 2]})
+
+    class FakeFeatureImportanceAnalyzer:
+        def __init__(self, *args, **kwargs):
+            self.shap_scope = None
+            self.shap_total_features = None
+            self.shap_used_features = None
+
+        def run(self):
+            return ""
+
+    monkeypatch.setattr(
+        trainer_module,
+        "FeatureImportanceAnalyzer",
+        FakeFeatureImportanceAnalyzer,
+    )
+    monkeypatch.setattr(
+        trainer_module,
+        "add_plot_to_html",
+        lambda fig, include_plotlyjs=True: f"<div>{fig}</div>",
+    )
+
+    trainer = object.__new__(BaseModelTrainer)
+    trainer.output_dir = str(tmp_path)
+    trainer.results = pd.DataFrame({"Model": ["FakeModel"], "Accuracy": [0.9]})
+    trainer.best_model = types.SimpleNamespace(get_params=lambda: {})
+    trainer.exp = BinaryExperiment()
+    trainer.setup_params = {}
+    trainer.task_type = "classification"
+    trainer.tuning_results = None
+    trainer.test_result_df = pd.DataFrame({"Accuracy": [0.8]})
+    trainer.explainer_plots = {"calibration_curve": "CALIBRATION_CURVE_HTML"}
+    trainer.plots = {}
+    trainer.skipped_plot_notes = {}
+    trainer._best_model_metric_used = None
+    trainer.data = pd.DataFrame({"feature": [1, 2], "target": [0, 1]})
+    trainer.target = "target"
+    trainer.target_col = "2"
+    trainer.imputed_training_data = None
+    trainer.plot_feature_limit = 30
+    trainer._shap_row_cap = 200
+    trainer.explainer_scope = None
+    trainer.explainer_dashboard_importance_skipped = False
+    trainer._prepare_model_comparison_display_df = lambda df: df
+    trainer._build_dataset_overview = lambda: ""
+    trainer._build_performance_summary_table = lambda: ""
+    trainer._build_cv_fold_allocation_table = lambda: ""
+    trainer._threshold_report_rows = lambda: []
+    trainer._threshold_plot_note_html = lambda: ""
+    trainer._format_parameter_label = lambda name: name
+    trainer._resolve_plot_callable = lambda name, plot, section: plot
+
+    trainer.save_html_report()
+
+    html = (tmp_path / "comparison_result.html").read_text(encoding="utf-8")
+    summary_section = html.split('<div id="summary"', 1)[1].split(
+        '<div id="test"', 1
+    )[0]
+    test_section = html.split('<div id="test"', 1)[1].split(
+        '<div id="feature"', 1
+    )[0]
+
+    assert (
+        "<h2>Calibration Curve</h2><div>CALIBRATION_CURVE_HTML</div>"
+        in summary_section
+    )
+    assert "CALIBRATION_CURVE_HTML" not in test_section
+
+
 def test_multiclass_explainer_failure_keeps_custom_plots(monkeypatch):
     explainerdashboard = types.ModuleType("explainerdashboard")
 
