@@ -1,3 +1,4 @@
+import importlib
 import sys
 import types
 from pathlib import Path
@@ -28,11 +29,25 @@ sys.modules["ludwig.utils.data_utils"] = ludwig_data_utils
 
 sys.modules.pop("ludwig_backend", None)
 
-from constants import IMAGE_PATH_COLUMN_NAME, LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME
-from ludwig_backend import LudwigDirectBackend
+
+def _load_backend_test_objects():
+    constants = importlib.import_module("constants")
+    ludwig_backend = importlib.import_module("ludwig_backend")
+    return (
+        constants.IMAGE_PATH_COLUMN_NAME,
+        constants.LABEL_COLUMN_NAME,
+        constants.SPLIT_COLUMN_NAME,
+        ludwig_backend.LudwigDirectBackend,
+    )
 
 
 def test_generate_validation_predictions_writes_split_specific_file(tmp_path):
+    (
+        image_path_col,
+        label_col,
+        split_col,
+        LudwigDirectBackend,
+    ) = _load_backend_test_objects()
     exp_dir = tmp_path / "experiment_run"
     (exp_dir / "model").mkdir(parents=True)
     data_dir = tmp_path / "prepared"
@@ -40,14 +55,14 @@ def test_generate_validation_predictions_writes_split_specific_file(tmp_path):
     prepared_csv = data_dir / "prepared_data.csv"
     pd.DataFrame(
         {
-            IMAGE_PATH_COLUMN_NAME: [
+            image_path_col: [
                 "images/train.jpg",
                 "images/val_a.jpg",
                 "images/val_b.jpg",
                 "images/test.jpg",
             ],
-            LABEL_COLUMN_NAME: [0, 1, 0, 1],
-            SPLIT_COLUMN_NAME: [0, 1, 1, 2],
+            label_col: [0, 1, 0, 1],
+            split_col: [0, 1, 1, 2],
         }
     ).to_csv(prepared_csv, index=False)
 
@@ -59,7 +74,7 @@ def test_generate_validation_predictions_writes_split_specific_file(tmp_path):
 
         def predict(self, dataset=None, **_kwargs):
             assert len(dataset) == 2
-            assert all(Path(path).is_absolute() for path in dataset[IMAGE_PATH_COLUMN_NAME])
+            assert all(Path(path).is_absolute() for path in dataset[image_path_col])
             return pd.DataFrame(
                 {
                     "label_probabilities_0": [0.2, 0.7],
@@ -80,6 +95,6 @@ def test_generate_validation_predictions_writes_split_specific_file(tmp_path):
 
     assert output_path == exp_dir / "validation_predictions.csv"
     df = pd.read_csv(output_path)
-    assert df[SPLIT_COLUMN_NAME].tolist() == [1, 1]
-    assert df[LABEL_COLUMN_NAME].tolist() == [1, 0]
+    assert df[split_col].tolist() == [1, 1]
+    assert df[label_col].tolist() == [1, 0]
     assert df["label_probabilities_1"].tolist() == [0.8, 0.3]

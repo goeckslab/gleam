@@ -1,3 +1,4 @@
+import importlib
 import sys
 import types
 from pathlib import Path
@@ -26,12 +27,24 @@ if "ludwig_backend" not in sys.modules:
     ludwig_backend.Backend = Backend
     sys.modules["ludwig_backend"] = ludwig_backend
 
-from constants import IMAGE_PATH_COLUMN_NAME, LABEL_COLUMN_NAME
-from html_structure import format_image_match_notice
-from image_workflow import ImageLearnerCLI
+
+def _load_test_objects():
+    constants = importlib.import_module("constants")
+    html_structure = importlib.import_module("html_structure")
+    image_workflow = importlib.import_module("image_workflow")
+    return (
+        constants.IMAGE_PATH_COLUMN_NAME,
+        constants.LABEL_COLUMN_NAME,
+        html_structure.format_image_match_notice,
+        image_workflow.ImageLearnerCLI,
+    )
 
 
 def test_map_image_paths_filters_to_matching_images_and_records_summary(tmp_path):
+    test_objects = _load_test_objects()
+    image_path_col = test_objects[0]
+    label_col = test_objects[1]
+    ImageLearnerCLI = test_objects[3]
     image_dir = tmp_path / "images"
     nested_dir = image_dir / "nested"
     nested_dir.mkdir(parents=True)
@@ -42,8 +55,8 @@ def test_map_image_paths_filters_to_matching_images_and_records_summary(tmp_path
 
     df = pd.DataFrame(
         {
-            IMAGE_PATH_COLUMN_NAME: ["case_a.jpg", "case_b", "missing.png"],
-            LABEL_COLUMN_NAME: ["akiec", "bcc", "akiec"],
+            image_path_col: ["case_a.jpg", "case_b", "missing.png"],
+            label_col: ["akiec", "bcc", "akiec"],
         }
     )
     cli = object.__new__(ImageLearnerCLI)
@@ -52,11 +65,11 @@ def test_map_image_paths_filters_to_matching_images_and_records_summary(tmp_path
 
     filtered = ImageLearnerCLI._map_image_paths_with_search(cli, df)
 
-    assert filtered[IMAGE_PATH_COLUMN_NAME].tolist() == [
+    assert filtered[image_path_col].tolist() == [
         "images/case_a.jpg",
         "images/nested/case_b.png",
     ]
-    assert filtered[LABEL_COLUMN_NAME].tolist() == ["akiec", "bcc"]
+    assert filtered[label_col].tolist() == ["akiec", "bcc"]
     assert cli.image_match_summary == {
         "csv_rows_total": 3,
         "matched_rows": 2,
@@ -67,6 +80,7 @@ def test_map_image_paths_filters_to_matching_images_and_records_summary(tmp_path
 
 
 def test_format_image_match_notice_summarizes_matching_sample_count():
+    format_image_match_notice = _load_test_objects()[2]
     html = format_image_match_notice(
         {
             "csv_rows_total": 10,
@@ -85,6 +99,7 @@ def test_format_image_match_notice_summarizes_matching_sample_count():
 
 
 def test_format_image_match_notice_omits_clean_matches():
+    format_image_match_notice = _load_test_objects()[2]
     assert (
         format_image_match_notice(
             {

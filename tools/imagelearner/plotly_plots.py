@@ -1308,13 +1308,11 @@ def load_binary_threshold_data(
         return None
 
     labels_from_dataset: Optional[pd.Series] = None
-    used_split: Optional[int] = None
 
     if SPLIT_COLUMN_NAME in df_full.columns:
         df_pred = df_full[df_full[SPLIT_COLUMN_NAME] == split_value].reset_index(drop=True)
         if df_pred.empty:
             return None
-        used_split = split_value
     else:
         df_pred = df_full.reset_index(drop=True)
 
