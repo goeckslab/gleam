@@ -629,11 +629,14 @@ class BaseModelTrainer:
             return ""
         return (
             "<hr>"
-            f"<h2>{title}</h2>"
+            f"{self._summary_plot_title_html(title)}"
             "<div class='report-notice'>"
             f"<strong>{title} skipped:</strong> {note}"
             "</div>"
         )
+
+    def _summary_plot_title_html(self, title):
+        return f'<h2 class="validation-plot-title">{title}</h2>'
 
     def _summary_plot_order(self):
         if self.task_type != "classification":
@@ -2677,7 +2680,7 @@ class BaseModelTrainer:
                 )
                 summary_html += (
                     "<hr>"
-                    f"<h2>{title}</h2>"
+                    + self._summary_plot_title_html(title)
                     + add_plot_to_html(fig)
                     + (
                         self._threshold_plot_note_html()
@@ -2693,7 +2696,7 @@ class BaseModelTrainer:
                 )
                 summary_html += (
                     '<div class="plot">'
-                    f"<h2>{title}</h2>"
+                    f"{self._summary_plot_title_html(title)}"
                     f'<img src="data:image/png;base64,{b64}" '
                     'style="max-width:90%;max-height:600px;'
                     'border:1px solid #ddd;"/>'

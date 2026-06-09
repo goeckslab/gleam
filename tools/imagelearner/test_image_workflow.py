@@ -66,7 +66,7 @@ def test_map_image_paths_filters_to_matching_images_and_records_summary(tmp_path
     }
 
 
-def test_format_image_match_notice_lists_both_mismatch_counts():
+def test_format_image_match_notice_summarizes_matching_sample_count():
     html = format_image_match_notice(
         {
             "csv_rows_total": 10,
@@ -77,10 +77,11 @@ def test_format_image_match_notice_lists_both_mismatch_counts():
         }
     )
 
-    assert "CSV/ZIP image matching notice" in html
-    assert "2 metadata row(s) were excluded" in html
-    assert "1 extracted image file(s) were not used" in html
-    assert "The experiment used 8 matched row(s)" in html
+    assert "CSV/ZIP Matching Notice" in html
+    assert "Mismatches were detected between the CSV and ZIP files." in html
+    assert "The final experiment utilized 8 fully matched samples." in html
+    assert "metadata row(s) were excluded" not in html
+    assert "extracted image file(s) were not used" not in html
 
 
 def test_format_image_match_notice_omits_clean_matches():

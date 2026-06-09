@@ -272,6 +272,10 @@ def test_rfe_plot_is_skipped_for_large_datasets_with_report_note(tmp_path):
     note = trainer._skipped_plot_note_html(
         "rfe", "Recursive Feature Elimination"
     )
+    assert (
+        '<h2 class="validation-plot-title">Recursive Feature Elimination</h2>'
+        in note
+    )
     assert "Recursive Feature Elimination skipped" in note
     assert "5,000 rows" in note
     assert "100 transformed features" in note
@@ -509,7 +513,8 @@ def test_binary_calibration_curves_render_in_phase_tabs(monkeypatch, tmp_path):
     )[0]
 
     assert (
-        "<h2>Calibration Curve</h2><div>VALIDATION_CALIBRATION_HTML</div>"
+        '<h2 class="validation-plot-title">Calibration Curve</h2>'
+        "<div>VALIDATION_CALIBRATION_HTML</div>"
         in summary_section
     )
     assert "TEST_CALIBRATION_HTML" not in summary_section

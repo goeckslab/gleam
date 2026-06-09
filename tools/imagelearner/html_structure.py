@@ -831,37 +831,21 @@ def format_image_match_notice(match_summary: Optional[Dict[str, Any]]) -> str:
         csv_missing = int(match_summary.get("csv_rows_missing_images") or 0)
         image_missing = int(match_summary.get("zip_images_missing_csv_rows") or 0)
         matched_rows = int(match_summary.get("matched_rows") or 0)
-        csv_rows_total = int(match_summary.get("csv_rows_total") or 0)
-        zip_images_total = int(match_summary.get("zip_images_total") or 0)
     except (TypeError, ValueError):
         return ""
 
     if csv_missing <= 0 and image_missing <= 0:
         return ""
 
-    parts = []
-    if csv_missing > 0:
-        parts.append(
-            f"{csv_missing} metadata row(s) were excluded because no matching "
-            "image file was found in the provided ZIP/directory"
-        )
-    if image_missing > 0:
-        parts.append(
-            f"{image_missing} extracted image file(s) were not used because no "
-            "matching metadata row was found"
-        )
-
-    context = (
-        f"The experiment used {matched_rows} matched row(s)"
-        f" from {csv_rows_total} metadata row(s) and {zip_images_total} image file(s)."
-    )
+    sample_label = "sample" if matched_rows == 1 else "samples"
     return (
         "<div style='max-width: 900px; margin: 0 auto 18px auto; "
         "padding: 10px 14px; border-left: 4px solid #b7791f; "
         "background: #fffaf0; color: #5f370e; line-height: 1.4;'>"
-        "<strong>CSV/ZIP image matching notice:</strong> "
-        + "; ".join(parts)
-        + f". {context}</div>"
+        "<strong>CSV/ZIP Matching Notice:</strong> "
+        "Mismatches were detected between the CSV and ZIP files. "
+        f"The final experiment utilized {matched_rows} fully matched {sample_label}."
+        "</div>"
     )
 
 # -----------------------------------------
