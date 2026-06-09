@@ -641,10 +641,8 @@ class BaseModelTrainer:
 
         plots = ["threshold", "learning"]
         is_binary = not getattr(self.exp, "is_multiclass", False)
-        if is_binary and "calibration_curve" in self.explainer_plots:
-            plots.append("calibration_curve")
-        else:
-            plots.append("calibration")
+        if is_binary and "validation_calibration_curve" in self.explainer_plots:
+            plots.append("validation_calibration_curve")
         plots.extend([
             "rfe",
             "vc",
@@ -2570,6 +2568,8 @@ class BaseModelTrainer:
             "pr_auc": "Precision-Recall Curve",
             "roc_auc": "Receiver Operating Characteristic AUC",
             "calibration_curve": "Calibration Curve",
+            "validation_calibration_curve": "Calibration Curve",
+            "test_calibration_curve": "Calibration Curve",
             "predicted_vs_actual": "Predicted vs Actual",
             "residuals": "Residuals Distribution",
             "error": "Prediction Error Distribution",
@@ -2757,7 +2757,7 @@ class BaseModelTrainer:
                 "class_report",
                 "roc_auc",
                 "pr_auc",
-                "calibration_curve",
+                "test_calibration_curve",
                 "lift_curve",
                 "cumulative_precision",
             ]

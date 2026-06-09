@@ -1308,41 +1308,29 @@ def load_binary_threshold_data(
         return None
 
     labels_from_dataset: Optional[pd.Series] = None
-
-    def _filter_by_split(df: pd.DataFrame, split_val: int) -> pd.DataFrame:
-        if SPLIT_COLUMN_NAME in df.columns:
-            return df[df[SPLIT_COLUMN_NAME] == split_val].reset_index(drop=True)
-        return df
-
-    candidate_splits = [split_value, 2, 0, 1] if split_value == 1 else [split_value, 1, 0, 2]
-    df_candidate = pd.DataFrame()
     used_split: Optional[int] = None
-    for sv in candidate_splits:
-        df_candidate = _filter_by_split(df_full, sv)
-        if not df_candidate.empty:
-            used_split = sv
-            break
-    if used_split is None:
-        df_candidate = df_full
-    df_pred = df_candidate.reset_index(drop=True)
 
-    if df_pred.empty:
+    if SPLIT_COLUMN_NAME in df_full.columns:
+        df_pred = df_full[df_full[SPLIT_COLUMN_NAME] == split_value].reset_index(drop=True)
+        if df_pred.empty:
+            return None
+        used_split = split_value
+    else:
         df_pred = df_full.reset_index(drop=True)
-        labels_from_dataset = None
 
     if label_data_path and Path(label_data_path).exists():
         try:
             df_labels_all = pd.read_csv(label_data_path)
 
             if LABEL_COLUMN_NAME in df_labels_all.columns:
-                if SPLIT_COLUMN_NAME in df_labels_all.columns and used_split is not None:
+                if SPLIT_COLUMN_NAME in df_labels_all.columns:
                     mask = (
                         pd.to_numeric(df_labels_all[SPLIT_COLUMN_NAME], errors="coerce")
-                        == used_split
+                        == split_value
                     )
                     labels_split = df_labels_all.loc[mask, LABEL_COLUMN_NAME].reset_index(drop=True)
 
-                    if len(df_labels_all) == len(df_full):
+                    if SPLIT_COLUMN_NAME in df_full.columns and len(df_labels_all) == len(df_full):
                         # predictions.csv contains all splits, so filter predictions and labels together
                         df_pred = df_full.loc[mask].reset_index(drop=True)
                         labels_from_dataset = labels_split
@@ -1363,6 +1351,9 @@ def load_binary_threshold_data(
 
         except Exception as exc:
             print(f"Warning: Unable to align labels for threshold optimization: {exc}")
+
+    if SPLIT_COLUMN_NAME not in df_full.columns and split_value != 2 and labels_from_dataset is None:
+        return None
 
     prob_cols = [
         c

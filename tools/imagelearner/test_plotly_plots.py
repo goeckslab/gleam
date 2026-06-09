@@ -82,6 +82,60 @@ def test_report_threshold_recomputes_from_validation_predictions(tmp_path):
     assert result["threshold_metric_value"] == 0.8
 
 
+def test_report_threshold_does_not_optimize_on_test_only_predictions(tmp_path):
+    predictions_path = tmp_path / "predictions.csv"
+    label_path = tmp_path / "prepared.csv"
+    pd.DataFrame(
+        {
+            "label": [1, 0, 1, 0],
+            "label_probabilities_0": [0.1, 0.8, 0.4, 0.7],
+            "label_probabilities_1": [0.9, 0.2, 0.6, 0.3],
+        }
+    ).to_csv(predictions_path, index=False)
+    pd.DataFrame(
+        {
+            "split": [1, 1, 2, 2, 2, 2],
+            "label": [1, 0, 1, 0, 1, 0],
+        }
+    ).to_csv(label_path, index=False)
+
+    result = resolve_binary_threshold_for_report(
+        threshold_mode="auto",
+        requested_metric="f1",
+        predictions_path=str(predictions_path),
+        label_data_path=str(label_path),
+    )
+
+    assert result["threshold"] == 0.5
+    assert result["threshold_source"] == (
+        "Default 0.5 (automatic optimization unavailable)"
+    )
+
+
+def test_threshold_data_accepts_validation_prediction_file_without_split_column(tmp_path):
+    predictions_path = tmp_path / "validation_predictions.csv"
+    label_path = tmp_path / "prepared.csv"
+    pd.DataFrame(
+        {
+            "label_probabilities_0": [0.6, 0.8],
+            "label_probabilities_1": [0.4, 0.2],
+        }
+    ).to_csv(predictions_path, index=False)
+    pd.DataFrame(
+        {
+            "split": [1, 1, 2, 2],
+            "label": [1, 0, 1, 0],
+        }
+    ).to_csv(label_path, index=False)
+
+    data = load_binary_threshold_data(
+        str(predictions_path), label_data_path=str(label_path), split_value=1
+    )
+
+    assert data["y_true_bin"].tolist() == [1, 0]
+    assert data["y_score"].tolist() == [0.4, 0.2]
+
+
 def test_report_threshold_uses_default_only_without_training_threshold_or_predictions(tmp_path):
     result = resolve_binary_threshold_for_report(
         threshold_mode="auto",

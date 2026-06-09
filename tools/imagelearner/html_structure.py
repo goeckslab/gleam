@@ -821,6 +821,49 @@ def format_dataset_overview_table(rows: List[Dict[str, Any]], regression_mode: b
         html += "</tbody></table></div><br>"
     return html
 
+
+def format_image_match_notice(match_summary: Optional[Dict[str, Any]]) -> str:
+    """Render a notice when CSV rows and extracted image files do not fully match."""
+    if not match_summary:
+        return ""
+
+    try:
+        csv_missing = int(match_summary.get("csv_rows_missing_images") or 0)
+        image_missing = int(match_summary.get("zip_images_missing_csv_rows") or 0)
+        matched_rows = int(match_summary.get("matched_rows") or 0)
+        csv_rows_total = int(match_summary.get("csv_rows_total") or 0)
+        zip_images_total = int(match_summary.get("zip_images_total") or 0)
+    except (TypeError, ValueError):
+        return ""
+
+    if csv_missing <= 0 and image_missing <= 0:
+        return ""
+
+    parts = []
+    if csv_missing > 0:
+        parts.append(
+            f"{csv_missing} metadata row(s) were excluded because no matching "
+            "image file was found in the provided ZIP/directory"
+        )
+    if image_missing > 0:
+        parts.append(
+            f"{image_missing} extracted image file(s) were not used because no "
+            "matching metadata row was found"
+        )
+
+    context = (
+        f"The experiment used {matched_rows} matched row(s)"
+        f" from {csv_rows_total} metadata row(s) and {zip_images_total} image file(s)."
+    )
+    return (
+        "<div style='max-width: 900px; margin: 0 auto 18px auto; "
+        "padding: 10px 14px; border-left: 4px solid #b7791f; "
+        "background: #fffaf0; color: #5f370e; line-height: 1.4;'>"
+        "<strong>CSV/ZIP image matching notice:</strong> "
+        + "; ".join(parts)
+        + f". {context}</div>"
+    )
+
 # -----------------------------------------
 # MODEL PERFORMANCE (Train/Val/Test) TABLE
 # -----------------------------------------

@@ -370,7 +370,75 @@ def test_binary_calibration_fig_skips_one_class_test_labels():
     assert fig is None
 
 
-def test_binary_calibration_curve_renders_in_validation_summary(monkeypatch, tmp_path):
+def test_generate_plots_explainer_builds_separate_calibration_curves(monkeypatch):
+    explainerdashboard = types.ModuleType("explainerdashboard")
+
+    class RaisingClassifierExplainer:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("skip explainer dashboard")
+
+    explainerdashboard.ClassifierExplainer = RaisingClassifierExplainer
+    monkeypatch.setitem(sys.modules, "explainerdashboard", explainerdashboard)
+
+    trainer = object.__new__(ClassificationModelTrainer)
+
+    class PatchableModel:
+        pass
+
+    trainer.best_model = PatchableModel()
+    trainer.exp = FakeExperiment(is_multiclass=False)
+    trainer.task_type = "classification"
+    trainer.target = "target"
+    trainer.random_seed = 42
+    trainer.plot_feature_names = []
+    trainer._limit_explainer_data = lambda X, y, **kwargs: (X, y)
+    trainer._get_test_predictions = lambda: (
+        pd.Series([0, 1]),
+        pd.Series([0, 1]),
+        [0, 1],
+        np.array([0.2, 0.8]),
+        [0, 1],
+    )
+    trainer._get_original_test_labels_for_display = lambda values: values
+    trainer._decode_labels_for_display = lambda values, assume_encoded=True: values
+    trainer._build_classification_report_fig = lambda *args, **kwargs: None
+    trainer._build_confusion_matrix_fig = lambda *args, **kwargs: None
+    trainer._build_dimension_reduction_fig = lambda: None
+    trainer._build_tsne_fig = lambda: None
+    trainer._build_precision_recall_fig = lambda *args, **kwargs: None
+    trainer._get_pycaret_config = lambda keys: pd.DataFrame({"x": [1, 2]}) if (
+        "X_train_transformed" in keys
+    ) else pd.Series([0, 1])
+    trainer._get_cross_validated_predictions = lambda X, y: {
+        "y_true": pd.Series([0, 1]),
+        "y_scores": np.array([0.3, 0.7]),
+        "pos_label": 1,
+    }
+
+    def fake_calibration_fig(y_true, y_scores, pos_label=None):
+        return {
+            "y_true": list(pd.Series(y_true)),
+            "y_scores": list(np.asarray(y_scores)),
+            "pos_label": pos_label,
+        }
+
+    trainer._build_calibration_fig = fake_calibration_fig
+
+    trainer.generate_plots_explainer()
+
+    assert trainer.explainer_plots["validation_calibration_curve"] == {
+        "y_true": [0, 1],
+        "y_scores": [0.3, 0.7],
+        "pos_label": 1,
+    }
+    assert trainer.explainer_plots["test_calibration_curve"] == {
+        "y_true": [0, 1],
+        "y_scores": [0.2, 0.8],
+        "pos_label": 1,
+    }
+
+
+def test_binary_calibration_curves_render_in_phase_tabs(monkeypatch, tmp_path):
     import base_model_trainer as trainer_module
 
     class BinaryExperiment:
@@ -406,7 +474,10 @@ def test_binary_calibration_curve_renders_in_validation_summary(monkeypatch, tmp
     trainer.task_type = "classification"
     trainer.tuning_results = None
     trainer.test_result_df = pd.DataFrame({"Accuracy": [0.8]})
-    trainer.explainer_plots = {"calibration_curve": "CALIBRATION_CURVE_HTML"}
+    trainer.explainer_plots = {
+        "validation_calibration_curve": "VALIDATION_CALIBRATION_HTML",
+        "test_calibration_curve": "TEST_CALIBRATION_HTML",
+    }
     trainer.plots = {}
     trainer.skipped_plot_notes = {}
     trainer._best_model_metric_used = None
@@ -438,10 +509,15 @@ def test_binary_calibration_curve_renders_in_validation_summary(monkeypatch, tmp
     )[0]
 
     assert (
-        "<h2>Calibration Curve</h2><div>CALIBRATION_CURVE_HTML</div>"
+        "<h2>Calibration Curve</h2><div>VALIDATION_CALIBRATION_HTML</div>"
         in summary_section
     )
-    assert "CALIBRATION_CURVE_HTML" not in test_section
+    assert "TEST_CALIBRATION_HTML" not in summary_section
+    assert (
+        "<h2>Calibration Curve</h2><div>TEST_CALIBRATION_HTML</div>"
+        in test_section
+    )
+    assert "VALIDATION_CALIBRATION_HTML" not in test_section
 
 
 def test_multiclass_explainer_failure_keeps_custom_plots(monkeypatch):

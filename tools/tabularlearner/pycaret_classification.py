@@ -339,6 +339,27 @@ class ClassificationModelTrainer(BaseModelTrainer):
 
         if not getattr(self.exp, "is_multiclass", False):
             try:
+                X_train = self._get_pycaret_config(
+                    ["X_train_transformed", "X_train"]
+                )
+                y_train = self._get_pycaret_config(
+                    ["y_train_transformed", "y_train"]
+                )
+                val_preds = self._get_cross_validated_predictions(X_train, y_train)
+                if val_preds is not None:
+                    fig_val_cal = self._build_calibration_fig(
+                        val_preds.get("y_true"),
+                        val_preds.get("y_scores"),
+                        val_preds.get("pos_label"),
+                    )
+                    if fig_val_cal is not None:
+                        self.explainer_plots["validation_calibration_curve"] = (
+                            fig_val_cal
+                        )
+            except Exception as e:
+                LOG.warning(f"Could not generate validation calibration curve: {e}")
+
+            try:
                 calibration_labels = score_labels or list(pd.unique(y_true))
                 fig_cal = self._build_calibration_fig(
                     y_true,
@@ -346,9 +367,9 @@ class ClassificationModelTrainer(BaseModelTrainer):
                     positive_class_label(calibration_labels),
                 )
                 if fig_cal is not None:
-                    self.explainer_plots["calibration_curve"] = fig_cal
+                    self.explainer_plots["test_calibration_curve"] = fig_cal
             except Exception as e:
-                LOG.warning(f"Could not generate calibration curve: {e}")
+                LOG.warning(f"Could not generate test calibration curve: {e}")
 
         if getattr(self.exp, "is_multiclass", False) and y_scores is not None:
             try:
