@@ -1526,6 +1526,83 @@ def optimize_binary_threshold_from_predictions(
     )
 
 
+def _threshold_metric_display_name(metric: str) -> str:
+    metric_key = str(metric or "f1").strip().lower().replace("-", "_").replace(" ", "_")
+    display_map = {
+        "f1": "F1",
+        "accuracy": "Accuracy",
+        "balanced_accuracy": "Balanced Accuracy",
+        "precision": "Precision",
+        "recall": "Recall",
+        "mcc": "MCC",
+    }
+    return display_map.get(metric_key, str(metric))
+
+
+def resolve_binary_threshold_for_report(
+    threshold_mode: str,
+    requested_metric: str,
+    predictions_path: str,
+    label_data_path: Optional[str] = None,
+    existing_threshold: Optional[float] = None,
+    split_value: int = 1,
+) -> Dict[str, object]:
+    """Resolve the threshold shown in the report for binary classification.
+
+    Prefer recomputing from validation probabilities. If report-time
+    predictions are unavailable but Ludwig already persisted an output
+    threshold in the experiment description, preserve that threshold instead
+    of replacing it with the default 0.5.
+    """
+    mode = str(threshold_mode or "auto").lower()
+    metric_display = _threshold_metric_display_name(requested_metric)
+
+    if mode == "manual":
+        threshold = 0.5 if existing_threshold is None else float(existing_threshold)
+        return {
+            "threshold": threshold,
+            "threshold_source": "Manual",
+            "threshold_metric": "Not used",
+        }
+
+    try:
+        optimized_threshold = None
+        if predictions_path and Path(predictions_path).exists():
+            optimized_threshold = optimize_binary_threshold_from_predictions(
+                predictions_path,
+                label_data_path=label_data_path,
+                split_value=split_value,
+                metric=str(requested_metric),
+            )
+        if optimized_threshold is None:
+            raise ValueError("validation probabilities unavailable")
+        return {
+            "threshold": optimized_threshold["threshold"],
+            "threshold_source": "Optimized on validation split",
+            "threshold_metric": optimized_threshold["metric_display"],
+            "threshold_metric_value": optimized_threshold["metric_value"],
+        }
+    except Exception as exc:
+        if existing_threshold is not None:
+            return {
+                "threshold": float(existing_threshold),
+                "threshold_source": (
+                    "Selected during training "
+                    "(report validation probabilities unavailable)"
+                ),
+                "threshold_metric": metric_display,
+                "threshold_reason": str(exc),
+            }
+        return {
+            "threshold": 0.5,
+            "threshold_source": (
+                "Default 0.5 (automatic optimization unavailable)"
+            ),
+            "threshold_metric": metric_display,
+            "threshold_reason": str(exc),
+        }
+
+
 def compute_binary_threshold_metrics_from_predictions(
     predictions_path: str,
     threshold: float,

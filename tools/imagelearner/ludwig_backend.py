@@ -45,7 +45,7 @@ from plotly_plots import (
     build_regression_train_val_plots,
     build_train_validation_plots,
     compute_binary_threshold_metrics_from_predictions,
-    optimize_binary_threshold_from_predictions,
+    resolve_binary_threshold_for_report,
 )
 from utils import detect_output_type, extract_metrics_from_json
 
@@ -1647,37 +1647,34 @@ class LudwigDirectBackend:
                 config_for_summary["threshold_source"] = "Manual"
                 config_for_summary["threshold_metric"] = "Not used"
             else:
-                try:
-                    optimized_threshold = None
-                    if predictions_csv_path.exists():
-                        optimized_threshold = optimize_binary_threshold_from_predictions(
-                            str(predictions_csv_path),
-                            label_data_path=str(config.get("label_column_data_path"))
-                            if config.get("label_column_data_path")
-                            else None,
-                            split_value=1,
-                            metric=str(requested_metric),
-                        )
-                    if optimized_threshold is None:
-                        raise ValueError("validation probabilities unavailable")
-                    config_for_summary["threshold"] = optimized_threshold["threshold"]
-                    config_for_summary["threshold_source"] = "Optimized on validation split"
-                    config_for_summary["threshold_metric"] = optimized_threshold[
-                        "metric_display"
-                    ]
-                    config_for_summary["threshold_metric_value"] = optimized_threshold[
-                        "metric_value"
-                    ]
-                except Exception as exc:
-                    config_for_summary["threshold"] = 0.5
-                    config_for_summary["threshold_source"] = (
-                        "Default 0.5 (automatic optimization unavailable)"
-                    )
-                    config_for_summary["threshold_metric"] = str(requested_metric)
-                    config_for_summary["threshold_reason"] = str(exc)
+                existing_threshold = config_for_summary.get("threshold")
+                threshold_summary = resolve_binary_threshold_for_report(
+                    threshold_mode,
+                    str(requested_metric),
+                    str(predictions_csv_path),
+                    label_data_path=str(config.get("label_column_data_path"))
+                    if config.get("label_column_data_path")
+                    else None,
+                    existing_threshold=float(existing_threshold)
+                    if existing_threshold is not None
+                    else None,
+                    split_value=1,
+                )
+                config_for_summary.update(threshold_summary)
+                if (
+                    config_for_summary.get("threshold_source")
+                    == "Default 0.5 (automatic optimization unavailable)"
+                ):
                     logger.warning(
                         "Could not optimize binary decision threshold; using 0.5: %s",
-                        exc,
+                        config_for_summary.get("threshold_reason"),
+                    )
+                elif config_for_summary.get("threshold_reason"):
+                    logger.warning(
+                        "Could not recompute binary decision threshold for report; "
+                        "using training-selected threshold %.3f: %s",
+                        float(config_for_summary["threshold"]),
+                        config_for_summary.get("threshold_reason"),
                     )
         else:
             config_for_summary["threshold"] = None
