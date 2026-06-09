@@ -6,7 +6,9 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
+from calibration_plot import expected_calibration_error
 from constants import LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME
+from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
     accuracy_score,
     auc,
@@ -967,16 +969,28 @@ def build_prediction_diagnostics(
     elif label_data_path and Path(label_data_path).exists():
         try:
             df_labels_all = pd.read_csv(label_data_path)
-            if SPLIT_COLUMN_NAME in df_labels_all.columns and len(df_labels_all) == len(df_pred):
-                split_mask = pd.to_numeric(df_labels_all[SPLIT_COLUMN_NAME], errors="coerce") == split_value
-                labels_from_dataset = df_labels_all.loc[split_mask, LABEL_COLUMN_NAME].reset_index(drop=True)
-                df_pred = df_pred.loc[split_mask].reset_index(drop=True)
-                if df_pred.empty:
-                    return []
-                filtered_by_split = True
+
+            if SPLIT_COLUMN_NAME in df_labels_all.columns:
+                split_mask = (
+                    pd.to_numeric(df_labels_all[SPLIT_COLUMN_NAME], errors="coerce")
+                    == split_value
+                )
+                labels_split = df_labels_all.loc[split_mask, LABEL_COLUMN_NAME].reset_index(drop=True)
+
+                if len(df_labels_all) == len(df_pred):
+                    df_pred = df_pred.loc[split_mask].reset_index(drop=True)
+                    labels_from_dataset = labels_split
+                    if df_pred.empty:
+                        return []
+                    filtered_by_split = True
+
+                elif len(labels_split) == len(df_pred):
+                    # predictions.csv is already filtered to this split
+                    labels_from_dataset = labels_split
+                    filtered_by_split = True
+
         except Exception as exc:
             print(f"Warning: Unable to filter predictions by split from label data: {exc}")
-
     # Fallback: no split info available. Assume the predictions file is already filtered
     # (common for test-only exports) and avoid heuristic slicing that could discard rows.
     if not filtered_by_split:
@@ -1027,7 +1041,11 @@ def build_prediction_diagnostics(
     if not prob_cols and "prediction_probability" in df_pred.columns:
         prob_cols = ["prediction_probability"]
     if not prob_cols and "probabilities" in df_pred.columns:
-        labels_guess = sorted([str(u) for u in pd.unique(df_pred[LABEL_COLUMN_NAME])])
+        labels_guess = (
+            sorted([str(u) for u in pd.unique(df_pred[LABEL_COLUMN_NAME])])
+            if LABEL_COLUMN_NAME in df_pred.columns
+            else []
+        )
         prob_cols = _maybe_expand_probabilities_column(df_pred, labels_guess)
     prob_cols_sorted = sorted(prob_cols)
 
@@ -1081,7 +1099,7 @@ def build_prediction_diagnostics(
 
     labels_series = _extract_labels()
 
-    # Plot 1: Confidence Histogram
+    confidence_plot = None
     if confidence_series is not None:
         fig_conf = go.Figure()
         fig_conf.add_trace(
@@ -1102,91 +1120,104 @@ def build_prediction_diagnostics(
             height=500,
         )
         _style_fig(fig_conf)
-        plots.append(_wrap_plot("Prediction Confidence Distribution", fig_conf))
+        confidence_plot = _wrap_plot("Prediction Confidence Distribution", fig_conf)
 
     # The remaining plots require true labels and a positive-class probability
     if labels_series is None or pos_prob_series is None:
+        if confidence_plot is not None:
+            plots.append(confidence_plot)
         return plots
 
     # Align lengths
     min_len = min(len(labels_series), len(pos_prob_series))
     if min_len == 0:
+        if confidence_plot is not None:
+            plots.append(confidence_plot)
         return plots
-    y_true_raw = labels_series.iloc[:min_len]
-    y_score = np.array(pos_prob_series.iloc[:min_len], dtype=float)
+    y_true_raw = labels_series.iloc[:min_len].reset_index(drop=True)
+    y_score_series = pd.to_numeric(
+        pos_prob_series.iloc[:min_len],
+        errors="coerce",
+    ).reset_index(drop=True)
+    y_score = y_score_series.to_numpy(dtype=float)
+
+    observed_labels = pd.unique(y_true_raw.dropna())
+    if len(observed_labels) != 2:
+        if confidence_plot is not None:
+            plots.append(confidence_plot)
+        return plots
 
     # Determine positive label from the selected probability column suffix.
-    unique_labels = pd.unique(y_true_raw)
-    unique_labels_list = list(unique_labels)
     positive_label = _resolve_positive_label_from_probability(
-        np.array(y_true_raw), pos_label_hint
+        np.array(y_true_raw.dropna()), pos_label_hint
     )
     if positive_label is None:
+        if confidence_plot is not None:
+            plots.append(confidence_plot)
         return plots
 
     y_true = (y_true_raw == positive_label).astype(int).values
 
-    # Utility: compute calibration points
-    def _calibration_points(y_true_bin: np.ndarray, scores: np.ndarray):
-        bins = np.linspace(0.0, 1.0, 11)
-        bin_ids = np.digitize(scores, bins, right=True)
-        bin_centers, frac_positives = [], []
-        for b in range(1, len(bins)):
-            mask = bin_ids == b
-            if not np.any(mask):
-                continue
-            bin_centers.append(scores[mask].mean())
-            frac_positives.append(y_true_bin[mask].mean())
-        return bin_centers, frac_positives
+    # Plot 1: Calibration Curve. Requires exactly two true labels plus valid
+    # positive-class probabilities; multiclass and malformed probability exports
+    # keep the confidence histogram fallback without adding a reliability curve.
+    finite_mask = np.isfinite(y_score) & y_true_raw.notna().to_numpy()
+    if finite_mask.any():
+        y_score_finite = y_score[finite_mask]
+        y_true_finite = y_true[finite_mask]
+        if (
+            len(np.unique(y_true_finite)) == 2
+            and np.all((y_score_finite >= 0.0) & (y_score_finite <= 1.0))
+        ):
+            try:
+                prob_true, prob_pred = calibration_curve(
+                    y_true_finite,
+                    y_score_finite,
+                    n_bins=10,
+                    strategy="uniform",
+                )
+                ece = expected_calibration_error(y_true_finite, y_score_finite, n_bins=10)
+                fig_cal = go.Figure()
+                fig_cal.add_trace(
+                    go.Scatter(
+                        x=prob_pred,
+                        y=prob_true,
+                        mode="lines+markers",
+                        name=f"Model - ECE: {ece:.3f}",
+                        line=dict(color="#2ca02c", width=4),
+                    )
+                )
+                fig_cal.add_trace(
+                    go.Scatter(
+                        x=[0, 1],
+                        y=[0, 1],
+                        mode="lines",
+                        name="Perfect calibration",
+                        line=dict(color="gray", width=2, dash="dash"),
+                    )
+                )
+                fig_cal.update_layout(
+                    title=dict(text="Calibration Curve", x=0.5),
+                    xaxis_title="Mean predicted probability",
+                    yaxis_title="Fraction of positives",
+                    xaxis=dict(range=[0, 1]),
+                    yaxis=dict(range=[0, 1]),
+                    width=700,
+                    height=500,
+                )
+                _style_fig(fig_cal)
+                plots.append(
+                    _wrap_plot(
+                        "Calibration Curve (Test)",
+                        fig_cal,
+                    )
+                )
+            except ValueError as exc:
+                print(f"Warning: Skipping calibration curve: {exc}")
 
-    # Plot 2: Calibration Curve (multi-class aware; one-vs-rest per label)
-    label_prob_map = {}
-    for col in prob_cols_sorted:
-        if col.startswith("label_probabilities_"):
-            cls = col.replace("label_probabilities_", "")
-            label_prob_map[cls] = col
-
-    unique_label_strs = [str(u) for u in unique_labels_list]
-    if len(label_prob_map) > 1 and len(unique_label_strs) > 2:
-        # Skip multi-class calibration curve for now (not informative in current report)
-        pass
-    else:
-        # Binary/unknown fallback (previous behavior)
-        bin_centers, frac_positives = _calibration_points(y_true, y_score)
-        if bin_centers and frac_positives:
-            fig_cal = go.Figure()
-            fig_cal.add_trace(
-                go.Scatter(
-                    x=bin_centers,
-                    y=frac_positives,
-                    mode="lines+markers",
-                    name="Calibration",
-                    line=dict(color="#2ca02c", width=4),
-                )
-            )
-            fig_cal.add_trace(
-                go.Scatter(
-                    x=[0, 1],
-                    y=[0, 1],
-                    mode="lines",
-                    name="Perfect Calibration",
-                    line=dict(color="gray", width=2, dash="dash"),
-                )
-            )
-            fig_cal.update_layout(
-                title=dict(text="Calibration Curve", x=0.5),
-                xaxis_title="Predicted probability",
-                yaxis_title="Observed frequency",
-                width=700,
-                height=500,
-            )
-            _style_fig(fig_cal)
-            plots.append(
-                _wrap_plot(
-                    "Calibration Curve (Predicted Probability vs Observed Frequency)",
-                    fig_cal,
-                )
-            )
+    # Plot 2: Confidence Histogram
+    if confidence_plot is not None:
+        plots.append(confidence_plot)
 
     return plots
 
@@ -1278,41 +1309,49 @@ def load_binary_threshold_data(
 
     labels_from_dataset: Optional[pd.Series] = None
 
-    def _filter_by_split(df: pd.DataFrame, split_val: int) -> pd.DataFrame:
-        if SPLIT_COLUMN_NAME in df.columns:
-            return df[df[SPLIT_COLUMN_NAME] == split_val].reset_index(drop=True)
-        return df
-
-    candidate_splits = [split_value, 2, 0, 1] if split_value == 1 else [split_value, 1, 0, 2]
-    df_candidate = pd.DataFrame()
-    used_split: Optional[int] = None
-    for sv in candidate_splits:
-        df_candidate = _filter_by_split(df_full, sv)
-        if not df_candidate.empty:
-            used_split = sv
-            break
-    if used_split is None:
-        df_candidate = df_full
-    df_pred = df_candidate.reset_index(drop=True)
-
-    if df_pred.empty:
+    if SPLIT_COLUMN_NAME in df_full.columns:
+        df_pred = df_full[df_full[SPLIT_COLUMN_NAME] == split_value].reset_index(drop=True)
+        if df_pred.empty:
+            return None
+    else:
         df_pred = df_full.reset_index(drop=True)
-        labels_from_dataset = None
 
     if label_data_path and Path(label_data_path).exists():
         try:
             df_labels_all = pd.read_csv(label_data_path)
-            if SPLIT_COLUMN_NAME in df_labels_all.columns and len(df_labels_all) == len(df_full):
-                mask = (
-                    pd.to_numeric(df_labels_all[SPLIT_COLUMN_NAME], errors="coerce") == used_split
-                    if used_split is not None and SPLIT_COLUMN_NAME in df_labels_all.columns
-                    else pd.Series([True] * len(df_full))
-                )
-                labels_from_dataset = df_labels_all.loc[mask, LABEL_COLUMN_NAME].reset_index(drop=True)
-                if len(labels_from_dataset) == len(df_pred):
-                    labels_from_dataset = labels_from_dataset.reset_index(drop=True)
+
+            if LABEL_COLUMN_NAME in df_labels_all.columns:
+                if SPLIT_COLUMN_NAME in df_labels_all.columns:
+                    mask = (
+                        pd.to_numeric(df_labels_all[SPLIT_COLUMN_NAME], errors="coerce")
+                        == split_value
+                    )
+                    labels_split = df_labels_all.loc[mask, LABEL_COLUMN_NAME].reset_index(drop=True)
+
+                    if SPLIT_COLUMN_NAME in df_full.columns and len(df_labels_all) == len(df_full):
+                        # predictions.csv contains all splits, so filter predictions and labels together
+                        df_pred = df_full.loc[mask].reset_index(drop=True)
+                        labels_from_dataset = labels_split
+
+                    elif len(labels_split) == len(df_pred):
+                        # predictions.csv is already filtered to this split
+                        labels_from_dataset = labels_split
+
+                    else:
+                        print(
+                            "Warning: Unable to align labels for threshold optimization: "
+                            f"split labels length={len(labels_split)}, predictions length={len(df_pred)}"
+                        )
+
+                elif len(df_labels_all) == len(df_pred):
+                    # No split column, but label table and predictions have same row count
+                    labels_from_dataset = df_labels_all[LABEL_COLUMN_NAME].reset_index(drop=True)
+
         except Exception as exc:
             print(f"Warning: Unable to align labels for threshold optimization: {exc}")
+
+    if SPLIT_COLUMN_NAME not in df_full.columns and split_value != 2 and labels_from_dataset is None:
+        return None
 
     prob_cols = [
         c
@@ -1357,8 +1396,6 @@ def load_binary_threshold_data(
             f"{LABEL_COLUMN_NAME}__target",
             "label",
             "label_true",
-            "label_predictions",
-            "prediction",
         ]:
             if col in df_pred.columns and col not in prob_cols_sorted:
                 return df_pred[col]
@@ -1476,6 +1513,83 @@ def optimize_binary_threshold_from_predictions(
     return optimize_binary_threshold_values(
         data["y_true_bin"], data["y_score"], metric=metric
     )
+
+
+def _threshold_metric_display_name(metric: str) -> str:
+    metric_key = str(metric or "f1").strip().lower().replace("-", "_").replace(" ", "_")
+    display_map = {
+        "f1": "F1",
+        "accuracy": "Accuracy",
+        "balanced_accuracy": "Balanced Accuracy",
+        "precision": "Precision",
+        "recall": "Recall",
+        "mcc": "MCC",
+    }
+    return display_map.get(metric_key, str(metric))
+
+
+def resolve_binary_threshold_for_report(
+    threshold_mode: str,
+    requested_metric: str,
+    predictions_path: str,
+    label_data_path: Optional[str] = None,
+    existing_threshold: Optional[float] = None,
+    split_value: int = 1,
+) -> Dict[str, object]:
+    """Resolve the threshold shown in the report for binary classification.
+
+    Prefer recomputing from validation probabilities. If report-time
+    predictions are unavailable but Ludwig already persisted an output
+    threshold in the experiment description, preserve that threshold instead
+    of replacing it with the default 0.5.
+    """
+    mode = str(threshold_mode or "auto").lower()
+    metric_display = _threshold_metric_display_name(requested_metric)
+
+    if mode == "manual":
+        threshold = 0.5 if existing_threshold is None else float(existing_threshold)
+        return {
+            "threshold": threshold,
+            "threshold_source": "Manual",
+            "threshold_metric": "Not used",
+        }
+
+    try:
+        optimized_threshold = None
+        if predictions_path and Path(predictions_path).exists():
+            optimized_threshold = optimize_binary_threshold_from_predictions(
+                predictions_path,
+                label_data_path=label_data_path,
+                split_value=split_value,
+                metric=str(requested_metric),
+            )
+        if optimized_threshold is None:
+            raise ValueError("validation probabilities unavailable")
+        return {
+            "threshold": optimized_threshold["threshold"],
+            "threshold_source": "Optimized on validation split",
+            "threshold_metric": optimized_threshold["metric_display"],
+            "threshold_metric_value": optimized_threshold["metric_value"],
+        }
+    except Exception as exc:
+        if existing_threshold is not None:
+            return {
+                "threshold": float(existing_threshold),
+                "threshold_source": (
+                    "Selected during training "
+                    "(report validation probabilities unavailable)"
+                ),
+                "threshold_metric": metric_display,
+                "threshold_reason": str(exc),
+            }
+        return {
+            "threshold": 0.5,
+            "threshold_source": (
+                "Default 0.5 (automatic optimization unavailable)"
+            ),
+            "threshold_metric": metric_display,
+            "threshold_reason": str(exc),
+        }
 
 
 def compute_binary_threshold_metrics_from_predictions(

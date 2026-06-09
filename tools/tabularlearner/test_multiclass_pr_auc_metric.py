@@ -272,6 +272,10 @@ def test_rfe_plot_is_skipped_for_large_datasets_with_report_note(tmp_path):
     note = trainer._skipped_plot_note_html(
         "rfe", "Recursive Feature Elimination"
     )
+    assert (
+        '<h2 class="validation-plot-title">Recursive Feature Elimination</h2>'
+        in note
+    )
     assert "Recursive Feature Elimination skipped" in note
     assert "5,000 rows" in note
     assert "100 transformed features" in note
@@ -341,6 +345,184 @@ def test_multiclass_plot_generation_does_not_add_binary_proba_patch():
     trainer.generate_plots()
 
     assert not hasattr(model, "predict_proba")
+
+
+def test_binary_calibration_fig_includes_ece_for_valid_test_probabilities():
+    trainer = object.__new__(ClassificationModelTrainer)
+    trainer.exp = FakeExperiment(is_multiclass=False)
+
+    fig = trainer._build_calibration_fig(
+        pd.Series([0, 1, 1, 0]),
+        np.array([0.1, 0.8, 0.7, 0.2]),
+        pos_label=1,
+    )
+
+    assert fig is not None
+    assert any("ECE:" in trace.name for trace in fig.data)
+
+
+def test_binary_calibration_fig_skips_one_class_test_labels():
+    trainer = object.__new__(ClassificationModelTrainer)
+    trainer.exp = FakeExperiment(is_multiclass=False)
+
+    fig = trainer._build_calibration_fig(
+        pd.Series([1, 1, 1]),
+        np.array([0.8, 0.7, 0.9]),
+        pos_label=1,
+    )
+
+    assert fig is None
+
+
+def test_generate_plots_explainer_builds_separate_calibration_curves(monkeypatch):
+    explainerdashboard = types.ModuleType("explainerdashboard")
+
+    class RaisingClassifierExplainer:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("skip explainer dashboard")
+
+    explainerdashboard.ClassifierExplainer = RaisingClassifierExplainer
+    monkeypatch.setitem(sys.modules, "explainerdashboard", explainerdashboard)
+
+    trainer = object.__new__(ClassificationModelTrainer)
+
+    class PatchableModel:
+        pass
+
+    trainer.best_model = PatchableModel()
+    trainer.exp = FakeExperiment(is_multiclass=False)
+    trainer.task_type = "classification"
+    trainer.target = "target"
+    trainer.random_seed = 42
+    trainer.plot_feature_names = []
+    trainer._limit_explainer_data = lambda X, y, **kwargs: (X, y)
+    trainer._get_test_predictions = lambda: (
+        pd.Series([0, 1]),
+        pd.Series([0, 1]),
+        [0, 1],
+        np.array([0.2, 0.8]),
+        [0, 1],
+    )
+    trainer._get_original_test_labels_for_display = lambda values: values
+    trainer._decode_labels_for_display = lambda values, assume_encoded=True: values
+    trainer._build_classification_report_fig = lambda *args, **kwargs: None
+    trainer._build_confusion_matrix_fig = lambda *args, **kwargs: None
+    trainer._build_dimension_reduction_fig = lambda: None
+    trainer._build_tsne_fig = lambda: None
+    trainer._build_precision_recall_fig = lambda *args, **kwargs: None
+    trainer._get_pycaret_config = lambda keys: pd.DataFrame({"x": [1, 2]}) if (
+        "X_train_transformed" in keys
+    ) else pd.Series([0, 1])
+    trainer._get_cross_validated_predictions = lambda X, y: {
+        "y_true": pd.Series([0, 1]),
+        "y_scores": np.array([0.3, 0.7]),
+        "pos_label": 1,
+    }
+
+    def fake_calibration_fig(y_true, y_scores, pos_label=None):
+        return {
+            "y_true": list(pd.Series(y_true)),
+            "y_scores": list(np.asarray(y_scores)),
+            "pos_label": pos_label,
+        }
+
+    trainer._build_calibration_fig = fake_calibration_fig
+
+    trainer.generate_plots_explainer()
+
+    assert trainer.explainer_plots["validation_calibration_curve"] == {
+        "y_true": [0, 1],
+        "y_scores": [0.3, 0.7],
+        "pos_label": 1,
+    }
+    assert trainer.explainer_plots["test_calibration_curve"] == {
+        "y_true": [0, 1],
+        "y_scores": [0.2, 0.8],
+        "pos_label": 1,
+    }
+
+
+def test_binary_calibration_curves_render_in_phase_tabs(monkeypatch, tmp_path):
+    import base_model_trainer as trainer_module
+
+    class BinaryExperiment:
+        is_multiclass = False
+        X_train = pd.DataFrame({"feature": [1, 2]})
+
+    class FakeFeatureImportanceAnalyzer:
+        def __init__(self, *args, **kwargs):
+            self.shap_scope = None
+            self.shap_total_features = None
+            self.shap_used_features = None
+
+        def run(self):
+            return ""
+
+    monkeypatch.setattr(
+        trainer_module,
+        "FeatureImportanceAnalyzer",
+        FakeFeatureImportanceAnalyzer,
+    )
+    monkeypatch.setattr(
+        trainer_module,
+        "add_plot_to_html",
+        lambda fig, include_plotlyjs=True: f"<div>{fig}</div>",
+    )
+
+    trainer = object.__new__(BaseModelTrainer)
+    trainer.output_dir = str(tmp_path)
+    trainer.results = pd.DataFrame({"Model": ["FakeModel"], "Accuracy": [0.9]})
+    trainer.best_model = types.SimpleNamespace(get_params=lambda: {})
+    trainer.exp = BinaryExperiment()
+    trainer.setup_params = {}
+    trainer.task_type = "classification"
+    trainer.tuning_results = None
+    trainer.test_result_df = pd.DataFrame({"Accuracy": [0.8]})
+    trainer.explainer_plots = {
+        "validation_calibration_curve": "VALIDATION_CALIBRATION_HTML",
+        "test_calibration_curve": "TEST_CALIBRATION_HTML",
+    }
+    trainer.plots = {}
+    trainer.skipped_plot_notes = {}
+    trainer._best_model_metric_used = None
+    trainer.data = pd.DataFrame({"feature": [1, 2], "target": [0, 1]})
+    trainer.target = "target"
+    trainer.target_col = "2"
+    trainer.imputed_training_data = None
+    trainer.plot_feature_limit = 30
+    trainer._shap_row_cap = 200
+    trainer.explainer_scope = None
+    trainer.explainer_dashboard_importance_skipped = False
+    trainer._prepare_model_comparison_display_df = lambda df: df
+    trainer._build_dataset_overview = lambda: ""
+    trainer._build_performance_summary_table = lambda: ""
+    trainer._build_cv_fold_allocation_table = lambda: ""
+    trainer._threshold_report_rows = lambda: []
+    trainer._threshold_plot_note_html = lambda: ""
+    trainer._format_parameter_label = lambda name: name
+    trainer._resolve_plot_callable = lambda name, plot, section: plot
+
+    trainer.save_html_report()
+
+    html = (tmp_path / "comparison_result.html").read_text(encoding="utf-8")
+    summary_section = html.split('<div id="summary"', 1)[1].split(
+        '<div id="test"', 1
+    )[0]
+    test_section = html.split('<div id="test"', 1)[1].split(
+        '<div id="feature"', 1
+    )[0]
+
+    assert (
+        '<h2 class="validation-plot-title">Calibration Curve</h2>'
+        "<div>VALIDATION_CALIBRATION_HTML</div>"
+        in summary_section
+    )
+    assert "TEST_CALIBRATION_HTML" not in summary_section
+    assert (
+        "<h2>Calibration Curve</h2><div>TEST_CALIBRATION_HTML</div>"
+        in test_section
+    )
+    assert "VALIDATION_CALIBRATION_HTML" not in test_section
 
 
 def test_multiclass_explainer_failure_keeps_custom_plots(monkeypatch):

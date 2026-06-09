@@ -117,6 +117,9 @@ def get_html_template() -> str:
               text-align: center;
               margin: 20px 0;
           }
+          .validation-plot-title {
+              text-align: left;
+          }
           .plot img {
               max-width: 100%;
               height: auto;

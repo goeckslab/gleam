@@ -20,6 +20,7 @@ from html_structure import (
     encode_image_to_base64,
     format_config_table_html,
     format_dataset_overview_table,
+    format_image_match_notice,
     format_stats_table_html,
     format_test_merged_stats_table_html,
     format_train_val_stats_table_html,
@@ -45,11 +46,13 @@ from plotly_plots import (
     build_regression_train_val_plots,
     build_train_validation_plots,
     compute_binary_threshold_metrics_from_predictions,
-    optimize_binary_threshold_from_predictions,
+    resolve_binary_threshold_for_report,
 )
 from utils import detect_output_type, extract_metrics_from_json
 
 logger = logging.getLogger("ImageLearner")
+
+VALIDATION_PREDICTIONS_CSV = "validation_predictions.csv"
 
 
 class Backend(Protocol):
@@ -72,6 +75,15 @@ class Backend(Protocol):
         ...
 
     def generate_plots(self, output_dir: Path) -> None:
+        ...
+
+    def generate_split_predictions(
+        self,
+        output_dir: Path,
+        dataset_path: Path,
+        split_value: int,
+        output_filename: str,
+    ) -> Optional[Path]:
         ...
 
     def generate_html_report(
@@ -724,6 +736,158 @@ class LudwigDirectBackend:
             logger.info(f"Converted Parquet to CSV: {csv_path}")
         except Exception as e:
             logger.error(f"Error converting Parquet to CSV: {e}")
+
+    def generate_split_predictions(
+        self,
+        output_dir: Path,
+        dataset_path: Path,
+        split_value: int,
+        output_filename: str,
+    ) -> Optional[Path]:
+        """Save model predictions for a specific prepared-data split."""
+        output_dir = Path(output_dir)
+        dataset_path = Path(dataset_path)
+        exp_dir = self._get_latest_experiment_dir(output_dir)
+        if not exp_dir:
+            logger.warning("No experiment run directory found; skipping split predictions.")
+            return None
+
+        model_dir = exp_dir / "model"
+        if not model_dir.exists():
+            logger.warning("Model directory not found at %s; skipping split predictions.", model_dir)
+            return None
+        if not dataset_path.exists():
+            logger.warning("Prepared dataset not found at %s; skipping split predictions.", dataset_path)
+            return None
+
+        try:
+            df_all = pd.read_csv(dataset_path)
+        except Exception as exc:
+            logger.warning("Unable to read prepared dataset for split predictions: %s", exc)
+            return None
+
+        if SPLIT_COLUMN_NAME in df_all.columns:
+            split_series = pd.to_numeric(df_all[SPLIT_COLUMN_NAME], errors="coerce")
+            df_split = df_all[split_series == int(split_value)].reset_index(drop=True)
+        else:
+            if int(split_value) != 2:
+                logger.warning(
+                    "Prepared dataset has no split column; cannot create split %s predictions.",
+                    split_value,
+                )
+                return None
+            df_split = df_all.reset_index(drop=True)
+
+        if df_split.empty:
+            logger.warning("No rows found for split %s; skipping split predictions.", split_value)
+            return None
+
+        try:
+            from ludwig.api import LudwigModel
+        except Exception as exc:
+            logger.warning("Unable to import LudwigModel for split predictions: %s", exc)
+            return None
+
+        try:
+            ludwig_model = LudwigModel.load(str(model_dir))
+        except Exception as exc:
+            logger.warning("Unable to load LudwigModel for split predictions: %s", exc)
+            return None
+
+        prediction_input_df = df_split.copy()
+        if IMAGE_PATH_COLUMN_NAME in prediction_input_df.columns:
+            dataset_dir = dataset_path.parent
+
+            def _absolute_image_path(value: Any) -> Any:
+                if not isinstance(value, str) or not value:
+                    return value
+                path_value = Path(value)
+                if path_value.is_absolute():
+                    return value
+                return str((dataset_dir / path_value).resolve())
+
+            prediction_input_df[IMAGE_PATH_COLUMN_NAME] = prediction_input_df[
+                IMAGE_PATH_COLUMN_NAME
+            ].map(_absolute_image_path)
+
+        feature_df = prediction_input_df.drop(
+            columns=[LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME],
+            errors="ignore",
+        )
+        candidate_datasets = [prediction_input_df]
+        if list(feature_df.columns) != list(prediction_input_df.columns):
+            candidate_datasets.append(feature_df)
+
+        last_exc: Optional[Exception] = None
+        prediction_result: Any = None
+        for candidate_df in candidate_datasets:
+            predict_calls = [
+                ((), {"dataset": candidate_df, "skip_save_predictions": True}),
+                ((candidate_df,), {"skip_save_predictions": True}),
+                ((), {"dataset": candidate_df}),
+                ((candidate_df,), {}),
+            ]
+            for args, kwargs in predict_calls:
+                try:
+                    prediction_result = ludwig_model.predict(*args, **kwargs)
+                    last_exc = None
+                    break
+                except TypeError as exc:
+                    last_exc = exc
+                    continue
+                except Exception as exc:
+                    last_exc = exc
+                    break
+            if prediction_result is not None:
+                break
+
+        if prediction_result is None:
+            logger.warning("Unable to create split predictions: %s", last_exc)
+            return None
+
+        predictions = prediction_result[0] if isinstance(prediction_result, tuple) else prediction_result
+        try:
+            if isinstance(predictions, pd.DataFrame):
+                df_pred = predictions.reset_index(drop=True)
+            elif isinstance(predictions, dict):
+                df_pred = pd.DataFrame(predictions).reset_index(drop=True)
+            else:
+                df_pred = pd.DataFrame(predictions).reset_index(drop=True)
+        except Exception as exc:
+            logger.warning("Unable to normalize split predictions: %s", exc)
+            return None
+
+        if df_pred.empty:
+            logger.warning("Split predictions were empty for split %s.", split_value)
+            return None
+
+        if len(df_pred) == len(df_split):
+            insert_at = 0
+            for col in [SPLIT_COLUMN_NAME, LABEL_COLUMN_NAME, IMAGE_PATH_COLUMN_NAME]:
+                if col in df_split.columns and col not in df_pred.columns:
+                    df_pred.insert(insert_at, col, df_split[col].reset_index(drop=True))
+                    insert_at += 1
+        else:
+            logger.warning(
+                "Split prediction row count (%d) does not match split dataset row count (%d).",
+                len(df_pred),
+                len(df_split),
+            )
+
+        output_path = exp_dir / output_filename
+        try:
+            df_pred.to_csv(output_path, index=False)
+        except Exception as exc:
+            logger.warning("Unable to save split predictions to %s: %s", output_path, exc)
+            return None
+
+        logger.info(
+            "Saved split %s predictions (%d rows) to %s",
+            split_value,
+            len(df_pred),
+            output_path,
+        )
+        return output_path
 
     def _get_latest_experiment_dir(self, output_dir: Path) -> Optional[Path]:
         """Return the most recent experiment_run* directory, if present."""
@@ -1625,6 +1789,12 @@ class LudwigDirectBackend:
             )
 
         predictions_csv_path = exp_dir / "predictions.csv"
+        validation_predictions_csv_path = exp_dir / VALIDATION_PREDICTIONS_CSV
+        validation_predictions_path = (
+            validation_predictions_csv_path
+            if validation_predictions_csv_path.exists()
+            else predictions_csv_path
+        )
         if output_type == "binary":
             threshold_mode = str(
                 config_for_summary.get("threshold_mode")
@@ -1647,37 +1817,34 @@ class LudwigDirectBackend:
                 config_for_summary["threshold_source"] = "Manual"
                 config_for_summary["threshold_metric"] = "Not used"
             else:
-                try:
-                    optimized_threshold = None
-                    if predictions_csv_path.exists():
-                        optimized_threshold = optimize_binary_threshold_from_predictions(
-                            str(predictions_csv_path),
-                            label_data_path=str(config.get("label_column_data_path"))
-                            if config.get("label_column_data_path")
-                            else None,
-                            split_value=1,
-                            metric=str(requested_metric),
-                        )
-                    if optimized_threshold is None:
-                        raise ValueError("validation probabilities unavailable")
-                    config_for_summary["threshold"] = optimized_threshold["threshold"]
-                    config_for_summary["threshold_source"] = "Optimized on validation split"
-                    config_for_summary["threshold_metric"] = optimized_threshold[
-                        "metric_display"
-                    ]
-                    config_for_summary["threshold_metric_value"] = optimized_threshold[
-                        "metric_value"
-                    ]
-                except Exception as exc:
-                    config_for_summary["threshold"] = 0.5
-                    config_for_summary["threshold_source"] = (
-                        "Default 0.5 (automatic optimization unavailable)"
-                    )
-                    config_for_summary["threshold_metric"] = str(requested_metric)
-                    config_for_summary["threshold_reason"] = str(exc)
+                existing_threshold = config_for_summary.get("threshold")
+                threshold_summary = resolve_binary_threshold_for_report(
+                    threshold_mode,
+                    str(requested_metric),
+                    str(validation_predictions_path),
+                    label_data_path=str(config.get("label_column_data_path"))
+                    if config.get("label_column_data_path")
+                    else None,
+                    existing_threshold=float(existing_threshold)
+                    if existing_threshold is not None
+                    else None,
+                    split_value=1,
+                )
+                config_for_summary.update(threshold_summary)
+                if (
+                    config_for_summary.get("threshold_source")
+                    == "Default 0.5 (automatic optimization unavailable)"
+                ):
                     logger.warning(
                         "Could not optimize binary decision threshold; using 0.5: %s",
-                        exc,
+                        config_for_summary.get("threshold_reason"),
+                    )
+                elif config_for_summary.get("threshold_reason"):
+                    logger.warning(
+                        "Could not recompute binary decision threshold for report; "
+                        "using training-selected threshold %.3f: %s",
+                        float(config_for_summary["threshold"]),
+                        config_for_summary.get("threshold_reason"),
                     )
         else:
             config_for_summary["threshold"] = None
@@ -1709,6 +1876,9 @@ class LudwigDirectBackend:
             config.get("label_split_counts"),
             config.get("split_counts"),
             dataset_path_from_desc,
+        )
+        dataset_overview_html += format_image_match_notice(
+            config.get("image_match_summary")
         )
 
         config_html = ""
@@ -1819,10 +1989,10 @@ class LudwigDirectBackend:
         )
         if threshold_value is None and output_type == "binary":
             threshold_value = 0.5
-        if output_type == "binary" and predictions_csv_path.exists():
+        if output_type == "binary" and validation_predictions_path.exists():
             try:
                 threshold_plot = build_binary_threshold_plot(
-                    str(predictions_csv_path),
+                    str(validation_predictions_path),
                     label_data_path=str(config.get("label_column_data_path"))
                     if config.get("label_column_data_path")
                     else None,
@@ -1874,10 +2044,10 @@ class LudwigDirectBackend:
             )
 
         # Validation diagnostics (calibration/threshold) from predictions.csv, using split=1
-        if output_type in ("binary", "category") and predictions_csv_path.exists():
+        if output_type in ("binary", "category") and validation_predictions_path.exists():
             try:
                 val_diag_plots = build_prediction_diagnostics(
-                    str(predictions_csv_path),
+                    str(validation_predictions_path),
                     label_data_path=str(config.get("label_column_data_path"))
                     if config.get("label_column_data_path")
                     else None,
@@ -2002,7 +2172,7 @@ class LudwigDirectBackend:
                 except Exception as e:
                     logger.warning(f"Could not generate multi-class metric plots: {e}")
 
-            # Test diagnostics (confidence histogram) from predictions.csv, using split=2
+            # Test diagnostics (binary calibration first, then confidence histogram) from predictions.csv, using split=2
             if predictions_csv_path.exists():
                 try:
                     test_diag_plots = build_prediction_diagnostics(
@@ -2012,12 +2182,9 @@ class LudwigDirectBackend:
                         else None,
                         split_value=2,
                     )
-                    test_conf_plots = [
-                        p for p in test_diag_plots if "Prediction Confidence Distribution" in p.get("title", "")
-                    ]
-                    if test_conf_plots:
-                        tab3_content = append_plot_blocks(tab3_content, test_conf_plots)
-                        logger.info("Added test prediction confidence plot")
+                    if test_diag_plots:
+                        tab3_content = append_plot_blocks(tab3_content, test_diag_plots)
+                        logger.info("Added test prediction diagnostic plots")
                 except Exception as e:
                     logger.warning(f"Could not generate test diagnostics: {e}")
 

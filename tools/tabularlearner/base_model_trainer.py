@@ -629,11 +629,31 @@ class BaseModelTrainer:
             return ""
         return (
             "<hr>"
-            f"<h2>{title}</h2>"
+            f"{self._summary_plot_title_html(title)}"
             "<div class='report-notice'>"
             f"<strong>{title} skipped:</strong> {note}"
             "</div>"
         )
+
+    def _summary_plot_title_html(self, title):
+        return f'<h2 class="validation-plot-title">{title}</h2>'
+
+    def _summary_plot_order(self):
+        if self.task_type != "classification":
+            return ["learning", "vc", "rfe", "parameter"]
+
+        plots = ["threshold", "learning"]
+        is_binary = not getattr(self.exp, "is_multiclass", False)
+        if is_binary and "validation_calibration_curve" in self.explainer_plots:
+            plots.append("validation_calibration_curve")
+        plots.extend([
+            "rfe",
+            "vc",
+            "dimension",
+            "manifold",
+            "percentage_above_below",
+        ])
+        return plots
 
     def setup_pycaret(self):
         LOG.info("Initializing PyCaret")
@@ -1309,11 +1329,38 @@ class BaseModelTrainer:
                     self.best_model, plot=name, save=False
                 )
                 out_path = Path(self.output_dir) / f"plot_{name}.png"
-                fig = ax.get_figure()
+                if name == "calibration":
+                    self._apply_calibration_axis_labels(ax)
+                fig = self._get_pycaret_figure(ax)
                 fig.savefig(out_path, bbox_inches="tight")
                 self.plots[name] = str(out_path)
             except Exception as e:
                 LOG.warning(f"Could not generate {name} plot: {e}")
+
+    @staticmethod
+    def _apply_calibration_axis_labels(ax):
+        """
+        Patch PyCaret's calibration matplotlib axis when it omits labels.
+
+        PyCaret builds the reliability curve correctly, but some versions leave
+        the x-axis label blank. Mutating the returned axis preserves the plot.
+        """
+        axes = list(ax.ravel()) if hasattr(ax, "ravel") else [ax]
+        for axis in axes:
+            if not hasattr(axis, "set_xlabel"):
+                continue
+            if not axis.get_xlabel():
+                axis.set_xlabel("Mean predicted probability")
+            if not axis.get_ylabel():
+                axis.set_ylabel("Fraction of positives")
+
+    @staticmethod
+    def _get_pycaret_figure(ax):
+        axes = list(ax.ravel()) if hasattr(ax, "ravel") else [ax]
+        for axis in axes:
+            if hasattr(axis, "get_figure"):
+                return axis.get_figure()
+        return ax.get_figure()
 
     def encode_image_to_base64(self, img_path: str) -> str:
         with open(img_path, "rb") as img_file:
@@ -2523,6 +2570,9 @@ class BaseModelTrainer:
             "class_report": "Per-Class Metrics",
             "pr_auc": "Precision-Recall Curve",
             "roc_auc": "Receiver Operating Characteristic AUC",
+            "calibration_curve": "Calibration Curve",
+            "validation_calibration_curve": "Calibration Curve",
+            "test_calibration_curve": "Calibration Curve",
             "predicted_vs_actual": "Predicted vs Actual",
             "residuals": "Residuals Distribution",
             "error": "Prediction Error Distribution",
@@ -2615,20 +2665,7 @@ class BaseModelTrainer:
             + "</div>"
         )
 
-        # choose summary plots based on task type
-        if self.task_type == "classification":
-            summary_plots = [
-                "threshold",
-                "learning",
-                "calibration",
-                "rfe",
-                "vc",
-                "dimension",
-                "manifold",
-                "percentage_above_below",
-            ]
-        else:
-            summary_plots = ["learning", "vc", "rfe", "parameter"]
+        summary_plots = self._summary_plot_order()
 
         for name in summary_plots:
             fig_or_fn = self.explainer_plots.pop(name, None)
@@ -2643,7 +2680,7 @@ class BaseModelTrainer:
                 )
                 summary_html += (
                     "<hr>"
-                    f"<h2>{title}</h2>"
+                    + self._summary_plot_title_html(title)
                     + add_plot_to_html(fig)
                     + (
                         self._threshold_plot_note_html()
@@ -2659,7 +2696,7 @@ class BaseModelTrainer:
                 )
                 summary_html += (
                     '<div class="plot">'
-                    f"<h2>{title}</h2>"
+                    f"{self._summary_plot_title_html(title)}"
                     f'<img src="data:image/png;base64,{b64}" '
                     'style="max-width:90%;max-height:600px;'
                     'border:1px solid #ddd;"/>'
@@ -2723,6 +2760,7 @@ class BaseModelTrainer:
                 "class_report",
                 "roc_auc",
                 "pr_auc",
+                "test_calibration_curve",
                 "lift_curve",
                 "cumulative_precision",
             ]

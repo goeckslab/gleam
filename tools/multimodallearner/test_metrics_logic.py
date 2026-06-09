@@ -1,5 +1,15 @@
+import sys
+import types
+
 import pandas as pd
 from metrics_logic import evaluate_all_transparency, optimize_binary_threshold, resolve_threshold_metric
+
+
+def _generate_calibration_plot(*args, **kwargs):
+    sys.modules.setdefault("shap", types.ModuleType("shap"))
+    from plot_logic import generate_calibration_plot
+
+    return generate_calibration_plot(*args, **kwargs)
 
 
 class FakeBinaryPredictor:
@@ -71,3 +81,22 @@ def test_evaluate_all_transparency_applies_binary_threshold_to_all_splits():
         assert raw_metrics[split]["Precision"] == 1.0
         assert raw_metrics[split]["Recall_(Sensitivity/TPR)"] == 1.0
         assert raw_metrics[split]["F1-Score"] == 1.0
+
+
+def test_generate_calibration_plot_includes_ece_for_binary_probabilities():
+    fig = _generate_calibration_plot([0, 1, 1, 0], [0.1, 0.8, 0.7, 0.2])
+
+    assert fig is not None
+    assert any("ECE:" in trace.name for trace in fig.data)
+
+
+def test_generate_calibration_plot_skips_invalid_probabilities():
+    fig = _generate_calibration_plot([0, 1, 1, 0], [0.1, 1.2, 0.7, 0.2])
+
+    assert fig is None
+
+
+def test_generate_calibration_plot_skips_one_class_labels():
+    fig = _generate_calibration_plot([1, 1, 1], [0.8, 0.7, 0.9])
+
+    assert fig is None

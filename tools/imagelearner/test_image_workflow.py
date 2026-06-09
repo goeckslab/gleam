@@ -1,0 +1,114 @@
+import importlib
+import sys
+import types
+from pathlib import Path
+
+import pandas as pd
+
+
+TOOL_DIR = Path(__file__).resolve().parent
+if str(TOOL_DIR) not in sys.path:
+    sys.path.insert(0, str(TOOL_DIR))
+
+if "ludwig" not in sys.modules:
+    ludwig = types.ModuleType("ludwig")
+    ludwig_globals = types.ModuleType("ludwig.globals")
+    ludwig_globals.PREDICTIONS_PARQUET_FILE_NAME = "predictions.parquet"
+    ludwig.globals = ludwig_globals
+    sys.modules["ludwig"] = ludwig
+    sys.modules["ludwig.globals"] = ludwig_globals
+
+if "ludwig_backend" not in sys.modules:
+    ludwig_backend = types.ModuleType("ludwig_backend")
+
+    class Backend:
+        pass
+
+    ludwig_backend.Backend = Backend
+    sys.modules["ludwig_backend"] = ludwig_backend
+
+
+def _load_test_objects():
+    constants = importlib.import_module("constants")
+    html_structure = importlib.import_module("html_structure")
+    image_workflow = importlib.import_module("image_workflow")
+    return (
+        constants.IMAGE_PATH_COLUMN_NAME,
+        constants.LABEL_COLUMN_NAME,
+        html_structure.format_image_match_notice,
+        image_workflow.ImageLearnerCLI,
+    )
+
+
+def test_map_image_paths_filters_to_matching_images_and_records_summary(tmp_path):
+    test_objects = _load_test_objects()
+    image_path_col = test_objects[0]
+    label_col = test_objects[1]
+    ImageLearnerCLI = test_objects[3]
+    image_dir = tmp_path / "images"
+    nested_dir = image_dir / "nested"
+    nested_dir.mkdir(parents=True)
+    (image_dir / "case_a.jpg").write_bytes(b"image-a")
+    (nested_dir / "case_b.png").write_bytes(b"image-b")
+    (image_dir / "unused.webp").write_bytes(b"unused")
+    (image_dir / "notes.txt").write_text("not an image")
+
+    df = pd.DataFrame(
+        {
+            image_path_col: ["case_a.jpg", "case_b", "missing.png"],
+            label_col: ["akiec", "bcc", "akiec"],
+        }
+    )
+    cli = object.__new__(ImageLearnerCLI)
+    cli.image_extract_dir = image_dir
+    cli.image_match_summary = {}
+
+    filtered = ImageLearnerCLI._map_image_paths_with_search(cli, df)
+
+    assert filtered[image_path_col].tolist() == [
+        "images/case_a.jpg",
+        "images/nested/case_b.png",
+    ]
+    assert filtered[label_col].tolist() == ["akiec", "bcc"]
+    assert cli.image_match_summary == {
+        "csv_rows_total": 3,
+        "matched_rows": 2,
+        "csv_rows_missing_images": 1,
+        "zip_images_total": 3,
+        "zip_images_missing_csv_rows": 1,
+    }
+
+
+def test_format_image_match_notice_summarizes_matching_sample_count():
+    format_image_match_notice = _load_test_objects()[2]
+    html = format_image_match_notice(
+        {
+            "csv_rows_total": 10,
+            "matched_rows": 8,
+            "csv_rows_missing_images": 2,
+            "zip_images_total": 9,
+            "zip_images_missing_csv_rows": 1,
+        }
+    )
+
+    assert "CSV/ZIP Matching Notice" in html
+    assert "Mismatches were detected between the CSV and ZIP files." in html
+    assert "The final experiment utilized 8 fully matched samples." in html
+    assert "metadata row(s) were excluded" not in html
+    assert "extracted image file(s) were not used" not in html
+
+
+def test_format_image_match_notice_omits_clean_matches():
+    format_image_match_notice = _load_test_objects()[2]
+    assert (
+        format_image_match_notice(
+            {
+                "csv_rows_total": 2,
+                "matched_rows": 2,
+                "csv_rows_missing_images": 0,
+                "zip_images_total": 2,
+                "zip_images_missing_csv_rows": 0,
+            }
+        )
+        == ""
+    )

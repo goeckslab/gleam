@@ -3,8 +3,10 @@ import pandas as pd
 from plotly_plots import (
     _resolve_display_labels,
     build_binary_threshold_classification_plots_from_predictions,
+    build_prediction_diagnostics,
     load_binary_threshold_data,
     optimize_binary_threshold_values,
+    resolve_binary_threshold_for_report,
 )
 
 
@@ -35,6 +37,117 @@ def test_optimize_binary_threshold_tie_breaks_toward_half():
     )
 
     assert result["threshold"] == 0.5
+
+
+def test_report_threshold_preserves_training_selected_threshold_when_recompute_unavailable(tmp_path):
+    result = resolve_binary_threshold_for_report(
+        threshold_mode="auto",
+        requested_metric="f1",
+        predictions_path=str(tmp_path / "missing_predictions.csv"),
+        existing_threshold=0.27,
+    )
+
+    assert result["threshold"] == 0.27
+    assert result["threshold_source"] == (
+        "Selected during training "
+        "(report validation probabilities unavailable)"
+    )
+    assert result["threshold_metric"] == "F1"
+    assert result["threshold_source"] != (
+        "Default 0.5 (automatic optimization unavailable)"
+    )
+
+
+def test_report_threshold_recomputes_from_validation_predictions(tmp_path):
+    predictions_path = tmp_path / "predictions.csv"
+    pd.DataFrame(
+        {
+            "split": [1, 1, 1, 1],
+            "label": [1, 0, 1, 0],
+            "label_probabilities_0": [0.6, 0.8, 0.2, 0.3],
+            "label_probabilities_1": [0.4, 0.2, 0.8, 0.7],
+        }
+    ).to_csv(predictions_path, index=False)
+
+    result = resolve_binary_threshold_for_report(
+        threshold_mode="auto",
+        requested_metric="f1",
+        predictions_path=str(predictions_path),
+        existing_threshold=0.27,
+    )
+
+    assert result["threshold"] == 0.4
+    assert result["threshold_source"] == "Optimized on validation split"
+    assert result["threshold_metric"] == "F1"
+    assert result["threshold_metric_value"] == 0.8
+
+
+def test_report_threshold_does_not_optimize_on_test_only_predictions(tmp_path):
+    predictions_path = tmp_path / "predictions.csv"
+    label_path = tmp_path / "prepared.csv"
+    pd.DataFrame(
+        {
+            "label": [1, 0, 1, 0],
+            "label_probabilities_0": [0.1, 0.8, 0.4, 0.7],
+            "label_probabilities_1": [0.9, 0.2, 0.6, 0.3],
+        }
+    ).to_csv(predictions_path, index=False)
+    pd.DataFrame(
+        {
+            "split": [1, 1, 2, 2, 2, 2],
+            "label": [1, 0, 1, 0, 1, 0],
+        }
+    ).to_csv(label_path, index=False)
+
+    result = resolve_binary_threshold_for_report(
+        threshold_mode="auto",
+        requested_metric="f1",
+        predictions_path=str(predictions_path),
+        label_data_path=str(label_path),
+    )
+
+    assert result["threshold"] == 0.5
+    assert result["threshold_source"] == (
+        "Default 0.5 (automatic optimization unavailable)"
+    )
+
+
+def test_threshold_data_accepts_validation_prediction_file_without_split_column(tmp_path):
+    predictions_path = tmp_path / "validation_predictions.csv"
+    label_path = tmp_path / "prepared.csv"
+    pd.DataFrame(
+        {
+            "label_probabilities_0": [0.6, 0.8],
+            "label_probabilities_1": [0.4, 0.2],
+        }
+    ).to_csv(predictions_path, index=False)
+    pd.DataFrame(
+        {
+            "split": [1, 1, 2, 2],
+            "label": [1, 0, 1, 0],
+        }
+    ).to_csv(label_path, index=False)
+
+    data = load_binary_threshold_data(
+        str(predictions_path), label_data_path=str(label_path), split_value=1
+    )
+
+    assert data["y_true_bin"].tolist() == [1, 0]
+    assert data["y_score"].tolist() == [0.4, 0.2]
+
+
+def test_report_threshold_uses_default_only_without_training_threshold_or_predictions(tmp_path):
+    result = resolve_binary_threshold_for_report(
+        threshold_mode="auto",
+        requested_metric="f1",
+        predictions_path=str(tmp_path / "missing_predictions.csv"),
+    )
+
+    assert result["threshold"] == 0.5
+    assert result["threshold_source"] == (
+        "Default 0.5 (automatic optimization unavailable)"
+    )
+    assert result["threshold_metric"] == "F1"
 
 
 def test_threshold_data_derives_positive_label_from_probability_suffix(tmp_path):
@@ -78,3 +191,55 @@ def test_binary_threshold_plots_are_recomputed_from_predictions(tmp_path):
         "Per-Class metrics",
     ]
     assert "Selected Threshold: 0.500" in plots[0]["html"]
+
+
+def test_binary_prediction_diagnostics_put_calibration_before_confidence(tmp_path):
+    predictions_path = tmp_path / "predictions.csv"
+    pd.DataFrame(
+        {
+            "split": [2, 2, 2, 2],
+            "label": [1, 0, 1, 0],
+            "label_probabilities_0": [0.1, 0.8, 0.4, 0.7],
+            "label_probabilities_1": [0.9, 0.2, 0.6, 0.3],
+        }
+    ).to_csv(predictions_path, index=False)
+
+    plots = build_prediction_diagnostics(str(predictions_path), split_value=2)
+
+    assert [plot["title"] for plot in plots] == [
+        "Calibration Curve (Test)",
+        "Prediction Confidence Distribution",
+    ]
+
+
+def test_prediction_diagnostics_skip_calibration_for_multiclass_labels(tmp_path):
+    predictions_path = tmp_path / "predictions.csv"
+    pd.DataFrame(
+        {
+            "split": [2, 2, 2, 2],
+            "label": ["a", "b", "c", "a"],
+            "label_probability": [0.7, 0.8, 0.6, 0.9],
+        }
+    ).to_csv(predictions_path, index=False)
+
+    plots = build_prediction_diagnostics(str(predictions_path), split_value=2)
+
+    assert [plot["title"] for plot in plots] == [
+        "Prediction Confidence Distribution",
+    ]
+
+
+def test_prediction_diagnostics_handles_probability_export_without_labels(tmp_path):
+    predictions_path = tmp_path / "predictions.csv"
+    pd.DataFrame(
+        {
+            "split": [2, 2],
+            "probabilities": ["[0.2, 0.8]", "[0.7, 0.3]"],
+        }
+    ).to_csv(predictions_path, index=False)
+
+    plots = build_prediction_diagnostics(str(predictions_path), split_value=2)
+
+    assert [plot["title"] for plot in plots] == [
+        "Prediction Confidence Distribution",
+    ]

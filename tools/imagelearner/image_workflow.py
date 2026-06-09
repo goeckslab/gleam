@@ -24,6 +24,17 @@ from utils import load_metadata_table
 
 logger = logging.getLogger("ImageLearner")
 
+IMAGE_FILE_SUFFIXES = {
+    ".bmp",
+    ".gif",
+    ".jpeg",
+    ".jpg",
+    ".png",
+    ".tif",
+    ".tiff",
+    ".webp",
+}
+
 
 class ImageLearnerCLI:
     """Manages the image-classification workflow."""
@@ -37,6 +48,7 @@ class ImageLearnerCLI:
         self.output_type_hint: Optional[str] = None
         self.label_split_counts: List[Dict[str, int]] = []
         self.split_counts: Dict[int, int] = {}
+        self.image_match_summary: Dict[str, int] = {}
         logger.info(f"Orchestrator initialized with backend: {type(backend).__name__}")
 
     def _create_temp_dirs(self) -> None:
@@ -297,34 +309,40 @@ class ImageLearnerCLI:
         if not self.image_extract_dir:
             raise RuntimeError("Image directory is not initialized.")
 
-        # Build lookup maps for fast resolution by stem or full name
+        # Build lookup maps for fast resolution by stem or full name.
+        # Ignore non-image files in archives (e.g. metadata or macOS resource files).
+        image_files = [
+            fpath
+            for fpath in self.image_extract_dir.rglob("*")
+            if fpath.is_file() and fpath.suffix.lower() in IMAGE_FILE_SUFFIXES
+        ]
         lookup_by_stem = {}
         lookup_by_name = {}
-        for fpath in self.image_extract_dir.rglob("*"):
-            if fpath.is_file():
-                stem_key = fpath.stem.lower()
-                name_key = fpath.name.lower()
-                # Prefer first encounter; warn on collisions
-                if stem_key in lookup_by_stem and lookup_by_stem[stem_key] != fpath:
-                    logger.warning(
-                        "Multiple files share the same stem '%s'. Using '%s'.",
-                        stem_key,
-                        lookup_by_stem[stem_key],
-                    )
-                else:
-                    lookup_by_stem[stem_key] = fpath
-                if name_key in lookup_by_name and lookup_by_name[name_key] != fpath:
-                    logger.warning(
-                        "Multiple files share the same name '%s'. Using '%s'.",
-                        name_key,
-                        lookup_by_name[name_key],
-                    )
-                else:
-                    lookup_by_name[name_key] = fpath
+        for fpath in image_files:
+            stem_key = fpath.stem.lower()
+            name_key = fpath.name.lower()
+            # Prefer first encounter; warn on collisions
+            if stem_key in lookup_by_stem and lookup_by_stem[stem_key] != fpath:
+                logger.warning(
+                    "Multiple files share the same stem '%s'. Using '%s'.",
+                    stem_key,
+                    lookup_by_stem[stem_key],
+                )
+            else:
+                lookup_by_stem[stem_key] = fpath
+            if name_key in lookup_by_name and lookup_by_name[name_key] != fpath:
+                logger.warning(
+                    "Multiple files share the same name '%s'. Using '%s'.",
+                    name_key,
+                    lookup_by_name[name_key],
+                )
+            else:
+                lookup_by_name[name_key] = fpath
 
         resolved_paths = []
         missing_count = 0
         missing_samples = []
+        matched_files = set()
 
         for raw in df[IMAGE_PATH_COLUMN_NAME]:
             raw_str = str(raw)
@@ -338,11 +356,22 @@ class ImageLearnerCLI:
                 resolved_paths.append(pd.NA)
                 continue
 
+            matched_files.add(resolved)
             try:
                 rel_path = resolved.relative_to(self.image_extract_dir)
             except ValueError:
                 rel_path = resolved
             resolved_paths.append(str(Path("images") / rel_path))
+
+        unused_image_count = len(set(image_files) - matched_files)
+        matched_rows = len(df) - missing_count
+        self.image_match_summary = {
+            "csv_rows_total": int(len(df)),
+            "matched_rows": int(matched_rows),
+            "csv_rows_missing_images": int(missing_count),
+            "zip_images_total": int(len(image_files)),
+            "zip_images_missing_csv_rows": int(unused_image_count),
+        }
 
         if missing_count:
             logger.warning(
@@ -351,6 +380,16 @@ class ImageLearnerCLI:
             )
             preview = ", ".join(missing_samples[:5])
             logger.warning("Missing samples (showing up to 5): %s", preview)
+        if unused_image_count:
+            logger.warning(
+                "%d extracted image file(s) did not match any metadata row.",
+                unused_image_count,
+            )
+        if matched_rows == 0:
+            raise ValueError(
+                "No metadata rows matched image files in the provided ZIP/directory. "
+                "Check the image path column and archive contents."
+            )
 
         df = df.copy()
         df[IMAGE_PATH_COLUMN_NAME] = resolved_paths
@@ -434,6 +473,7 @@ class ImageLearnerCLI:
                 "label_column_data_path": csv_path,
                 "label_split_counts": self.label_split_counts,
                 "split_counts": self.split_counts,
+                "image_match_summary": self.image_match_summary,
                 "augmentation": self.args.augmentation,
                 "image_resize": self.args.image_resize,
                 "image_zip": self.args.image_zip,
@@ -470,6 +510,12 @@ class ImageLearnerCLI:
                 # Convert predictions parquet → csv
                 self.backend.convert_parquet_to_csv(self.args.output_dir)
                 logger.info("Converted Parquet to CSV.")
+                self.backend.generate_split_predictions(
+                    self.args.output_dir,
+                    csv_path,
+                    split_value=1,
+                    output_filename="validation_predictions.csv",
+                )
                 # Generate a very small set of plots to conserve disk space
                 self.backend.generate_plots(self.args.output_dir)
                 # Build HTML report (robust to missing metrics)
