@@ -2,7 +2,7 @@ import base64
 import json
 from typing import Any, Dict, List, Optional
 
-from constants import METRIC_DISPLAY_NAMES
+from constants import DEFAULT_HITS_AT_K, METRIC_DISPLAY_NAMES
 from utils import detect_output_type, extract_metrics_from_json
 
 
@@ -13,6 +13,13 @@ def generate_table_row(cells, styles):
         + "".join(f"<td style='{styles}'>{cell}</td>" for cell in cells)
         + "</tr>"
     )
+
+
+def format_metric_display_name(metric_key: str, top_k: int = DEFAULT_HITS_AT_K) -> str:
+    """Return a user-facing metric label with resolved parameters."""
+    if metric_key == "hits_at_k":
+        return f"Hits@{int(top_k)}"
+    return METRIC_DISPLAY_NAMES.get(metric_key, metric_key.replace("_", " ").title())
 
 
 def format_config_table_html(
@@ -29,6 +36,7 @@ def format_config_table_html(
         "target_column",
         "task_type",
         "validation_metric",
+        "top_k",
         "loss_function",
         "threshold",
         "threshold_source",
@@ -56,7 +64,17 @@ def format_config_table_html(
     for key in display_keys:
         val_str = "N/A"
         val = config.get(key, None)
-        if key == "threshold":
+        display_label = label_map.get(key, key.replace("_", " ").title())
+        if key == "top_k":
+            if output_type != "category" or val is None:
+                continue
+            top_k = int(val)
+            display_label = f"Hits@{top_k} Top Classes"
+            val_str = (
+                f"{top_k} "
+                f"(the correct class must appear in the top {top_k} predictions)"
+            )
+        elif key == "threshold":
             if output_type != "binary":
                 continue
             val = val if val is not None else 0.5
@@ -136,7 +154,9 @@ def format_config_table_html(
                         )
             elif key == "validation_metric":
                 if val is not None:
-                    val_str = METRIC_DISPLAY_NAMES.get(str(val), str(val))
+                    val_str = format_metric_display_name(
+                        str(val), int(config.get("top_k") or DEFAULT_HITS_AT_K)
+                    )
                 else:
                     val_str = "N/A"
             elif key == "epochs":
@@ -177,7 +197,7 @@ def format_config_table_html(
             f"<tr>"
             f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: left; "
             f"white-space: normal; word-break: break-word; overflow-wrap: anywhere;'>"
-            f"{label_map.get(key, key.replace('_', ' ').title())}</td>"
+            f"{display_label}</td>"
             f"<td style='padding: 6px 12px; border: 1px solid #ccc; text-align: center; "
             f"white-space: normal; word-break: break-word; overflow-wrap: anywhere;'>"
             f"{val_str}</td>"
@@ -699,8 +719,10 @@ def get_metrics_help_modal() -> str:
         '      <p><strong>False Positives / Negatives (FP / FN):</strong> Incorrect predictions '
         '— false alarms and missed detections.</p>'
         '      <h3>8) Classification: Ranking Metrics</h3>'
-        '      <p><strong>Hits at K:</strong> Measures whether the true label is among the '
-        'top-K predictions. Common in recommendation systems and retrieval tasks.</p>'
+        f'      <p><strong>Hits@{DEFAULT_HITS_AT_K}:</strong> Measures whether the true label '
+        f'is among the model\'s top {DEFAULT_HITS_AT_K} predictions. For example, '
+        f'80% means the correct class appeared somewhere in the top {DEFAULT_HITS_AT_K} '
+        'guesses for 80% of samples.</p>'
         '      <h3>9) Other Metrics (Classification)</h3>'
         '      <p><strong>Cohen\'s Kappa:</strong> Measures agreement between predicted and '
         'actual labels, adjusted for chance. Useful for multiclass classification with '
@@ -724,7 +746,8 @@ def get_metrics_help_modal() -> str:
         'or <strong>Macro ROC-AUC</strong>.</li>'
         '        <li><strong>Class Frequency Matters:</strong> Use <strong>Weighted Precision/Recall/F1</strong> '
         'to account for class imbalance.</li>'
-        '        <li><strong>Recommendation/Ranking:</strong> Use <strong>Hits at K</strong> for retrieval tasks.</li>'
+        f'        <li><strong>Recommendation/Ranking:</strong> Use <strong>Hits@{DEFAULT_HITS_AT_K}</strong> '
+        'when it matters whether the correct class is near the top, not only ranked first.</li>'
         '        <li><strong>Detailed Analysis:</strong> Use <strong>Confusion Matrix stats</strong> '
         'for class-wise performance in classification.</li>'
         '      </ul>'
@@ -853,7 +876,12 @@ def format_image_match_notice(match_summary: Optional[Dict[str, Any]]) -> str:
 # -----------------------------------------
 
 
-def format_stats_table_html(train_stats: dict, test_stats: dict, output_type: str) -> str:
+def format_stats_table_html(
+    train_stats: dict,
+    test_stats: dict,
+    output_type: str,
+    top_k: int = DEFAULT_HITS_AT_K,
+) -> str:
     """Formats a combined HTML table for training, validation, and test metrics."""
     all_metrics = extract_metrics_from_json(train_stats, test_stats, output_type)
     rows = []
@@ -862,15 +890,19 @@ def format_stats_table_html(train_stats: dict, test_stats: dict, output_type: st
             metric_key in all_metrics["validation"]
             and metric_key in all_metrics["test"]
         ):
-            display_name = METRIC_DISPLAY_NAMES.get(
-                metric_key,
-                metric_key.replace("_", " ").title(),
-            )
+            display_name = format_metric_display_name(metric_key, top_k)
             t = all_metrics["training"].get(metric_key)
             v = all_metrics["validation"].get(metric_key)
             te = all_metrics["test"].get(metric_key)
             if all(x is not None for x in [t, v, te]):
-                rows.append([display_name, f"{t:.4f}", f"{v:.4f}", f"{te:.4f}"])
+                rows.append(
+                    [
+                        display_name,
+                        f"{t:.4f}",
+                        f"{v:.4f}",
+                        f"{te:.4f}",
+                    ]
+                )
 
     if not rows:
         return "<table><tr><td>No metric values found.</td></tr></table>"
@@ -899,20 +931,27 @@ def format_stats_table_html(train_stats: dict, test_stats: dict, output_type: st
 # -------------------------------------------
 
 
-def format_train_val_stats_table_html(train_stats: dict, test_stats: dict) -> str:
+def format_train_val_stats_table_html(
+    train_stats: dict,
+    test_stats: dict,
+    top_k: int = DEFAULT_HITS_AT_K,
+) -> str:
     """Format train/validation metrics into an HTML table."""
     all_metrics = extract_metrics_from_json(train_stats, test_stats, detect_output_type(test_stats))
     rows = []
     for metric_key in sorted(all_metrics["training"].keys()):
         if metric_key in all_metrics["validation"]:
-            display_name = METRIC_DISPLAY_NAMES.get(
-                metric_key,
-                metric_key.replace("_", " ").title(),
-            )
+            display_name = format_metric_display_name(metric_key, top_k)
             t = all_metrics["training"].get(metric_key)
             v = all_metrics["validation"].get(metric_key)
             if t is not None and v is not None:
-                rows.append([display_name, f"{t:.4f}", f"{v:.4f}"])
+                rows.append(
+                    [
+                        display_name,
+                        f"{t:.4f}",
+                        f"{v:.4f}",
+                    ]
+                )
 
     if not rows:
         return "<table><tr><td>No metric values found for Train/Validation.</td></tr></table>"
@@ -941,12 +980,14 @@ def format_train_val_stats_table_html(train_stats: dict, test_stats: dict) -> st
 
 
 def format_test_merged_stats_table_html(
-    test_metrics: Dict[str, Any], output_type: str
+    test_metrics: Dict[str, Any],
+    output_type: str,
+    top_k: int = DEFAULT_HITS_AT_K,
 ) -> str:
     """Format test metrics into an HTML table."""
     rows = []
     for key in sorted(test_metrics.keys()):
-        display_name = METRIC_DISPLAY_NAMES.get(key, key.replace("_", " ").title())
+        display_name = format_metric_display_name(key, top_k)
         value = test_metrics[key]
         if value is not None:
             rows.append([display_name, f"{value:.4f}"])

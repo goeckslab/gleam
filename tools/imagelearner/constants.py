@@ -172,6 +172,7 @@ MODEL_ENCODER_TEMPLATES: Dict[str, Any] = {
     "mobilenet_v3_large": {"type": "mobilenetv3", "model_variant": "large"},
     "mobilenet_v3_small": {"type": "mobilenetv3", "model_variant": "small"},
 }
+DEFAULT_HITS_AT_K = 3
 METRIC_DISPLAY_NAMES = {
     "accuracy": "Accuracy",
     "balanced_accuracy": "Balanced Accuracy",
@@ -180,7 +181,7 @@ METRIC_DISPLAY_NAMES = {
     "roc_auc": "ROC-AUC",
     "roc_auc_macro": "Macro ROC-AUC",
     "roc_auc_micro": "Micro ROC-AUC",
-    "hits_at_k": "Hits at K",
+    "hits_at_k": f"Hits@{DEFAULT_HITS_AT_K}",
     "precision": "Precision",
     "recall": "Recall",
     "specificity": "Specificity",
