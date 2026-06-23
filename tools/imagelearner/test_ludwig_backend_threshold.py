@@ -4,6 +4,7 @@ import types
 from pathlib import Path
 
 import pandas as pd
+import yaml
 
 
 TOOL_DIR = Path(__file__).resolve().parent
@@ -98,3 +99,26 @@ def test_generate_validation_predictions_writes_split_specific_file(tmp_path):
     assert df[split_col].tolist() == [1, 1]
     assert df[label_col].tolist() == [1, 0]
     assert df["label_probabilities_1"].tolist() == [0.8, 0.3]
+
+
+def test_prepare_config_records_category_top_k():
+    (
+        _image_path_col,
+        _label_col,
+        _split_col,
+        LudwigDirectBackend,
+    ) = _load_backend_test_objects()
+
+    yaml_str = LudwigDirectBackend().prepare_config(
+        {
+            "model_name": "resnet18",
+            "use_pretrained": False,
+            "epochs": 1,
+            "label_metadata": {"num_unique": 5},
+        },
+        {"type": "random", "probabilities": [0.7, 0.1, 0.2]},
+    )
+    config = yaml.safe_load(yaml_str)
+
+    assert config["output_features"][0]["type"] == "category"
+    assert config["output_features"][0]["top_k"] == 3

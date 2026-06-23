@@ -112,3 +112,44 @@ def test_format_image_match_notice_omits_clean_matches():
         )
         == ""
     )
+
+
+def test_metric_summary_formats_hits_at_3_without_changing_metric_values():
+    html_structure = importlib.import_module("html_structure")
+    train_stats = {
+        "training": {
+            "label": {
+                "accuracy": [0.2],
+                "hits_at_k": [0.8],
+                "loss": [1.25],
+                "roc_auc": [0.7],
+            }
+        },
+        "validation": {
+            "label": {
+                "accuracy": [0.3],
+                "hits_at_k": [0.6],
+                "loss": [1.5],
+                "roc_auc": [0.75],
+            }
+        },
+    }
+    test_stats = {
+        "label": {
+            "accuracy": 0.4,
+            "hits_at_k": 0.9,
+            "loss": 1.1,
+            "roc_auc": 0.8,
+            "per_class_stats": {"a": {}, "b": {}, "c": {}},
+        }
+    }
+
+    html = html_structure.format_stats_table_html(
+        train_stats, test_stats, "category", top_k=3
+    )
+
+    assert "Hits@3" in html
+    assert "0.9000" in html
+    assert "90.0%" not in html
+    assert "Loss and regression errors remain raw scores" not in html
+    assert "1.1000" in html

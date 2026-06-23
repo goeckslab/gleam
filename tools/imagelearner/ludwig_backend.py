@@ -10,6 +10,7 @@ import pandas as pd
 import pandas.api.types as ptypes
 import yaml
 from constants import (
+    DEFAULT_HITS_AT_K,
     IMAGE_PATH_COLUMN_NAME,
     LABEL_COLUMN_NAME,
     MODEL_ENCODER_TEMPLATES,
@@ -551,10 +552,12 @@ class LudwigDirectBackend:
                 ):
                     output_feat["threshold"] = float(config_params["threshold"])
             else:
+                category_top_k = min(DEFAULT_HITS_AT_K, max(1, int(num_unique_labels)))
                 output_feat = {
                     "name": LABEL_COLUMN_NAME,
                     "type": "category",
                     "loss": {"type": "softmax_cross_entropy"},
+                    "top_k": category_top_k,
                 }
             val_metric = _resolve_validation_metric(
                 "binary" if num_unique_labels == 2 else "category",
@@ -1386,7 +1389,7 @@ class LudwigDirectBackend:
             "output_feature_name": output_feature,
             "ground_truth_split": 2,
             "top_n_classes": [20],
-            "top_k": 3,
+            "top_k": DEFAULT_HITS_AT_K,
             "metrics": ["f1", "precision", "recall", "accuracy"],
             "positive_label": 0,
             "ground_truth_metadata": gt_metadata,
@@ -1501,6 +1504,7 @@ class LudwigDirectBackend:
                     "target_column": output_cfg.get("column"),
                     "task_type": output_cfg.get("type"),
                     "validation_metric": trainer_cfg.get("validation_metric"),
+                    "top_k": output_cfg.get("top_k"),
                     "loss_function": loss_cfg.get("type"),
                     "threshold": output_cfg.get("threshold"),
                     "total_epochs": trainer_cfg.get("epochs"),
@@ -1757,6 +1761,7 @@ class LudwigDirectBackend:
         train_val_metrics_html = ""
         test_metrics_html = ""
         output_type = None
+        hits_top_k = int(config_for_summary.get("top_k") or DEFAULT_HITS_AT_K)
         train_stats_path = exp_dir / "training_statistics.json"
         test_stats_path = exp_dir / TEST_STATISTICS_FILE_NAME
         try:
@@ -1766,14 +1771,18 @@ class LudwigDirectBackend:
                 with open(test_stats_path) as f:
                     test_stats = json.load(f)
                 output_type = detect_output_type(test_stats)
-                metrics_html = format_stats_table_html(train_stats, test_stats, output_type)
+                metrics_html = format_stats_table_html(
+                    train_stats, test_stats, output_type, top_k=hits_top_k
+                )
                 train_val_metrics_html = format_train_val_stats_table_html(
-                    train_stats, test_stats
+                    train_stats, test_stats, top_k=hits_top_k
                 )
                 test_metrics_html = format_test_merged_stats_table_html(
                     extract_metrics_from_json(train_stats, test_stats, output_type)[
                         "test"
-                    ], output_type
+                    ],
+                    output_type,
+                    top_k=hits_top_k,
                 )
         except Exception as e:
             logger.warning(
@@ -1861,7 +1870,7 @@ class LudwigDirectBackend:
                 )
                 if threshold_metrics:
                     test_metrics_html = format_test_merged_stats_table_html(
-                        threshold_metrics, output_type
+                        threshold_metrics, output_type, top_k=hits_top_k
                     )
             except Exception as exc:
                 logger.warning(
@@ -2015,7 +2024,9 @@ class LudwigDirectBackend:
                     tv_plots = build_regression_train_val_plots(str(train_stats_path))
                     tab2_content = append_plot_blocks(tab2_content, tv_plots)
                 else:
-                    tv_plots = build_train_validation_plots(str(train_stats_path))
+                    tv_plots = build_train_validation_plots(
+                        str(train_stats_path), top_k=hits_top_k
+                    )
                     # Add threshold plot first, then other train/val plots
                     if threshold_plot:
                         tab2_content = append_plot_blocks(tab2_content, [threshold_plot])

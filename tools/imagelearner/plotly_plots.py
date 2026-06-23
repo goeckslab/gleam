@@ -7,7 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 from calibration_plot import expected_calibration_error
-from constants import LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME
+from constants import DEFAULT_HITS_AT_K, LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
     accuracy_score,
@@ -435,7 +435,9 @@ def build_classification_plots(
     return plots
 
 
-def build_train_validation_plots(train_stats_path: str) -> List[Dict[str, str]]:
+def build_train_validation_plots(
+    train_stats_path: str, top_k: int = DEFAULT_HITS_AT_K
+) -> List[Dict[str, str]]:
     """Generate Train/Validation learning curve plots from training_statistics.json."""
     if not train_stats_path or not Path(train_stats_path).exists():
         return []
@@ -465,6 +467,11 @@ def build_train_validation_plots(train_stats_path: str) -> List[Dict[str, str]]:
     metric_specs = [
         ("loss", "Loss across epochs", "Loss"),
         ("accuracy", "Accuracy across epochs", "Accuracy"),
+        (
+            "hits_at_k",
+            f"Hits@{int(top_k)} across epochs (correct class in top {int(top_k)})",
+            f"Hits@{int(top_k)}",
+        ),
         ("roc_auc", "ROC-AUC across epochs", "ROC-AUC"),
         ("precision", "Precision across epochs", "Precision"),
         ("recall", "Recall/Sensitivity across epochs", "Recall"),
@@ -542,6 +549,7 @@ def build_train_validation_plots(train_stats_path: str) -> List[Dict[str, str]]:
         for metric_key, label in [
             ("accuracy", "Accuracy"),
             ("balanced_accuracy", "Balanced Accuracy"),
+            ("hits_at_k", f"Hits@{int(top_k)}"),
             ("precision", "Precision"),
             ("recall", "Recall"),
             ("specificity", "Specificity"),

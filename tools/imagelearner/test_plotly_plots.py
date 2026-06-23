@@ -4,6 +4,7 @@ from plotly_plots import (
     _resolve_display_labels,
     build_binary_threshold_classification_plots_from_predictions,
     build_prediction_diagnostics,
+    build_train_validation_plots,
     load_binary_threshold_data,
     optimize_binary_threshold_values,
     resolve_binary_threshold_for_report,
@@ -16,6 +17,23 @@ def test_resolve_display_labels_decodes_ludwig_indices_before_friendly_lookup():
 
 def test_resolve_display_labels_preserves_original_numeric_labels():
     assert _resolve_display_labels(["1", "2"], ["1", "2"]) == ["1", "2"]
+
+
+def test_train_validation_plots_include_hits_at_3_when_available(tmp_path):
+    stats_path = tmp_path / "training_statistics.json"
+    stats_path.write_text(
+        """
+{
+  "training": {"label": {"hits_at_k": [0.2, 0.4], "loss": [1.2, 1.0]}},
+  "validation": {"label": {"hits_at_k": [0.1, 0.3], "loss": [1.4, 1.1]}}
+}
+"""
+    )
+
+    plots = build_train_validation_plots(str(stats_path), top_k=3)
+    titles = [plot["title"] for plot in plots]
+
+    assert "Hits@3 across epochs (correct class in top 3)" in titles
 
 
 def test_optimize_binary_threshold_uses_requested_metric():
