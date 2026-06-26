@@ -121,11 +121,7 @@ def format_config_table_html(
                         val_str = (
                             "Auto-selected learning rate by Ludwig:<br>"
                             f"<span style='font-size: 0.85em;'>"
-                            f"{resolved_val if resolved_val else 'auto'}</span><br>"
-                            "<span style='font-size: 0.85em;'>"
-                            "Based on model architecture and training setup "
-                            "(e.g., fine-tuning).<br>"
-                            "</span>"
+                            f"{resolved_val if resolved_val else 'auto'}</span>"
                         )
                     else:
                         val_str = (
