@@ -1,5 +1,6 @@
 import base64
 import json
+from html import escape
 from typing import Any, Dict, List, Optional
 
 from constants import DEFAULT_HITS_AT_K, METRIC_DISPLAY_NAMES
@@ -20,6 +21,74 @@ def format_metric_display_name(metric_key: str, top_k: int = DEFAULT_HITS_AT_K) 
     if metric_key == "hits_at_k":
         return f"Hits@{int(top_k)}"
     return METRIC_DISPLAY_NAMES.get(metric_key, metric_key.replace("_", " ").title())
+
+
+def format_image_size_value(val: Any) -> str:
+    if val is None:
+        return "N/A"
+    if isinstance(val, (list, tuple)) and len(val) == 2:
+        return f"{val[0]}x{val[1]}"
+    if isinstance(val, str) and val.lower() == "original":
+        return "Original (no resize)"
+    return str(val)
+
+
+def format_image_size_report(config: dict, val: Any) -> str:
+    """Render original, preprocessing, and model-adaptation image sizes."""
+    details = config.get("image_size_adaptation")
+    if not isinstance(details, dict):
+        return format_image_size_value(val)
+
+    lines = []
+    original_sizes = details.get("original_sizes")
+    is_mixed = bool(details.get("is_mixed"))
+    if is_mixed and isinstance(original_sizes, list) and original_sizes:
+        size_parts = []
+        for item in original_sizes[:4]:
+            if isinstance(item, dict) and item.get("size"):
+                size = escape(str(item.get("size")))
+                count = item.get("count")
+                size_parts.append(f"{size} ({count})" if count is not None else size)
+        remaining = len(original_sizes) - len(size_parts)
+        if remaining > 0:
+            size_parts.append(f"+{remaining} more")
+        lines.append(
+            "Original image sizes: mixed"
+            + (f" ({', '.join(size_parts)})" if size_parts else "")
+        )
+    else:
+        original_size = details.get("original_size") or details.get("first_image_size")
+        if original_size:
+            lines.append(f"Original image size: {escape(str(original_size))}")
+
+    requested_resize = details.get("requested_resize")
+    if requested_resize and str(requested_resize).lower() != "original":
+        lines.append(f"User-selected resize: {escape(str(requested_resize))}")
+
+    training_size = details.get("training_size")
+    if training_size:
+        lines.append(f"Training preprocessing size: {escape(str(training_size))}")
+
+    model_configured_size = details.get("model_configured_size")
+    if model_configured_size:
+        lines.append(
+            f"Model configured input size: {escape(str(model_configured_size))}"
+        )
+
+    model_adaptation_size = details.get("model_adaptation_size")
+    if model_adaptation_size:
+        lines.append(
+            f"Auto-adaptation for the model: {escape(str(model_adaptation_size))}"
+        )
+
+    if not lines:
+        return format_image_size_value(val)
+
+    return (
+        "<div style='text-align: left; line-height: 1.45;'>"
+        + "<br>".join(lines)
+        + "</div>"
+    )
 
 
 def format_config_table_html(
@@ -87,14 +156,7 @@ def format_config_table_html(
             if key == "task_type":
                 val_str = val.title() if isinstance(val, str) else "N/A"
             elif key == "image_size":
-                if val is None:
-                    val_str = "N/A"
-                elif isinstance(val, (list, tuple)) and len(val) == 2:
-                    val_str = f"{val[0]}x{val[1]}"
-                elif isinstance(val, str) and val.lower() == "original":
-                    val_str = "Original (no resize)"
-                else:
-                    val_str = str(val)
+                val_str = format_image_size_report(config, val)
             elif key == "batch_size":
                 if isinstance(val, (int, float)):
                     val_str = int(val)
@@ -102,7 +164,9 @@ def format_config_table_html(
                     val = "auto"
                     val_str = "auto"
             resolved_val = None
-            if val is None or val == "auto":
+            if key == "image_size":
+                pass
+            elif val is None or val == "auto":
                 if training_progress:
                     resolved_val = training_progress.get("batch_size")
                     val = (

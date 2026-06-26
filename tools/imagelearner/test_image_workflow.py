@@ -153,3 +153,49 @@ def test_metric_summary_formats_hits_at_3_without_changing_metric_values():
     assert "90.0%" not in html
     assert "Loss and regression errors remain raw scores" not in html
     assert "1.1000" in html
+
+
+def test_config_table_shows_image_size_adaptation_details():
+    html_structure = importlib.import_module("html_structure")
+
+    html = html_structure.format_config_table_html(
+        {
+            "image_size": "96x96",
+            "image_size_adaptation": {
+                "original_size": "96x96",
+                "requested_resize": "original",
+                "training_size": "96x96",
+                "model_configured_size": "384x384",
+                "model_adaptation_size": "224x224",
+            },
+        }
+    )
+
+    assert "Original image size: 96x96" in html
+    assert "Training preprocessing size: 96x96" in html
+    assert "Model configured input size: 384x384" in html
+    assert "Auto-adaptation for the model: 224x224" in html
+
+
+def test_config_table_shows_mixed_original_image_sizes():
+    html_structure = importlib.import_module("html_structure")
+
+    html = html_structure.format_config_table_html(
+        {
+            "image_size": "384x384",
+            "image_size_adaptation": {
+                "original_size": "mixed",
+                "original_sizes": [
+                    {"size": "96x96", "count": 2},
+                    {"size": "128x128", "count": 1},
+                ],
+                "is_mixed": True,
+                "requested_resize": "384x384",
+                "training_size": "384x384",
+            },
+        }
+    )
+
+    assert "Original image sizes: mixed (96x96 (2), 128x128 (1))" in html
+    assert "User-selected resize: 384x384" in html
+    assert "Training preprocessing size: 384x384" in html

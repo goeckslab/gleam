@@ -1,10 +1,13 @@
 import importlib
+import io
 import sys
 import types
+import zipfile
 from pathlib import Path
 
 import pandas as pd
 import yaml
+from PIL import Image
 
 
 TOOL_DIR = Path(__file__).resolve().parent
@@ -40,6 +43,17 @@ def _load_backend_test_objects():
         constants.SPLIT_COLUMN_NAME,
         ludwig_backend.LudwigDirectBackend,
     )
+
+
+def _write_image_zip(tmp_path, sizes):
+    zip_path = tmp_path / "images.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for index, size in enumerate(sizes):
+            image = Image.new("RGB", size, color="white")
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            zf.writestr(f"image_{index}.png", buffer.getvalue())
+    return zip_path
 
 
 def test_generate_validation_predictions_writes_split_specific_file(tmp_path):
@@ -122,3 +136,70 @@ def test_prepare_config_records_category_top_k():
 
     assert config["output_features"][0]["type"] == "category"
     assert config["output_features"][0]["top_k"] == 3
+
+
+def test_prepare_config_records_explicit_resize_image_size_summary(tmp_path):
+    (
+        _image_path_col,
+        _label_col,
+        _split_col,
+        LudwigDirectBackend,
+    ) = _load_backend_test_objects()
+    image_zip = _write_image_zip(tmp_path, [(96, 96), (96, 96)])
+    params = {
+        "model_name": "resnet18",
+        "use_pretrained": False,
+        "epochs": 1,
+        "image_resize": "384x384",
+        "image_zip": str(image_zip),
+        "label_metadata": {"num_unique": 2},
+    }
+
+    yaml_str = LudwigDirectBackend().prepare_config(
+        params,
+        {"type": "random", "probabilities": [0.7, 0.1, 0.2]},
+    )
+    config = yaml.safe_load(yaml_str)
+    preprocessing = config["input_features"][0]["preprocessing"]
+
+    assert preprocessing["height"] == 384
+    assert preprocessing["width"] == 384
+    assert params["image_size"] == "384x384"
+    assert params["image_size_adaptation"]["original_size"] == "96x96"
+    assert params["image_size_adaptation"]["requested_resize"] == "384x384"
+    assert params["image_size_adaptation"]["training_size"] == "384x384"
+    assert "model_adaptation_size" not in params["image_size_adaptation"]
+
+
+def test_prepare_config_records_metaformer_model_size_adaptation(tmp_path):
+    (
+        _image_path_col,
+        _label_col,
+        _split_col,
+        LudwigDirectBackend,
+    ) = _load_backend_test_objects()
+    image_zip = _write_image_zip(tmp_path, [(96, 96)])
+    params = {
+        "model_name": "caformer_s18_384",
+        "use_pretrained": True,
+        "epochs": 1,
+        "image_resize": "original",
+        "image_zip": str(image_zip),
+        "label_metadata": {"num_unique": 3},
+    }
+
+    yaml_str = LudwigDirectBackend().prepare_config(
+        params,
+        {"type": "random", "probabilities": [0.7, 0.1, 0.2]},
+    )
+    config = yaml.safe_load(yaml_str)
+    input_feature = config["input_features"][0]
+
+    assert input_feature["preprocessing"]["height"] == 96
+    assert input_feature["preprocessing"]["width"] == 96
+    assert input_feature["encoder"]["height"] == 96
+    assert input_feature["encoder"]["width"] == 96
+    assert params["image_size_adaptation"]["original_size"] == "96x96"
+    assert params["image_size_adaptation"]["training_size"] == "96x96"
+    assert params["image_size_adaptation"]["model_configured_size"] == "384x384"
+    assert params["image_size_adaptation"]["model_adaptation_size"] == "224x224"

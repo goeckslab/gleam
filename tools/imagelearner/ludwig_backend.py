@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import zipfile
+from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
@@ -104,6 +105,20 @@ class LudwigDirectBackend:
 
     def _detect_image_dimensions(self, image_zip_path: str) -> Tuple[int, int]:
         """Detect image dimensions from the first image in the dataset."""
+        summary = self._detect_image_dimension_summary(image_zip_path)
+        height = summary.get("first_image_height")
+        width = summary.get("first_image_width")
+        if height and width:
+            return int(height), int(width)
+        return 224, 224
+
+    @staticmethod
+    def _format_image_size(height: Any, width: Any) -> str:
+        """Format image dimensions in the same height x width order used by Ludwig."""
+        return f"{int(height)}x{int(width)}"
+
+    def _detect_image_dimension_summary(self, image_zip_path: str) -> Dict[str, Any]:
+        """Summarize source image dimensions from the uploaded image ZIP."""
         try:
             import zipfile
             from PIL import Image
@@ -112,25 +127,90 @@ class LudwigDirectBackend:
             # Check if image_zip is provided
             if not image_zip_path:
                 logger.warning("No image zip provided, using default 224x224")
-                return 224, 224
+                return {
+                    "fallback_size": "224x224",
+                    "first_image_height": 224,
+                    "first_image_width": 224,
+                    "is_fallback": True,
+                    "reason": "No image ZIP provided.",
+                }
 
-            # Extract first image to detect dimensions
             with zipfile.ZipFile(image_zip_path, 'r') as z:
                 image_files = [f for f in z.namelist() if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
                 if not image_files:
                     logger.warning("No image files found in zip, using default 224x224")
-                    return 224, 224
+                    return {
+                        "fallback_size": "224x224",
+                        "first_image_height": 224,
+                        "first_image_width": 224,
+                        "image_count": 0,
+                        "is_fallback": True,
+                        "reason": "No readable image files found in the ZIP.",
+                    }
 
-                # Check first image
-                with z.open(image_files[0]) as f:
-                    img = Image.open(io.BytesIO(f.read()))
-                    width, height = img.size
-                    logger.info(f"Detected image dimensions: {width}x{height}")
-                    return height, width  # Return as (height, width) to match encoder config
+                dimensions: List[Tuple[int, int]] = []
+                unreadable_count = 0
+                for image_file in image_files:
+                    try:
+                        with z.open(image_file) as f:
+                            img = Image.open(io.BytesIO(f.read()))
+                            width, height = img.size
+                            dimensions.append((height, width))
+                    except Exception as exc:
+                        unreadable_count += 1
+                        logger.debug("Could not read image dimensions for %s: %s", image_file, exc)
+
+                if not dimensions:
+                    logger.warning("No readable image dimensions found in zip, using default 224x224")
+                    return {
+                        "fallback_size": "224x224",
+                        "first_image_height": 224,
+                        "first_image_width": 224,
+                        "image_count": len(image_files),
+                        "readable_image_count": 0,
+                        "unreadable_image_count": unreadable_count,
+                        "is_fallback": True,
+                        "reason": "Image dimensions could not be read from the ZIP.",
+                    }
+
+                first_height, first_width = dimensions[0]
+                counts = Counter(dimensions)
+                size_counts = [
+                    {
+                        "size": self._format_image_size(height, width),
+                        "count": count,
+                    }
+                    for (height, width), count in counts.most_common()
+                ]
+                original_size = (
+                    size_counts[0]["size"] if len(size_counts) == 1 else "mixed"
+                )
+                logger.info(
+                    "Detected image dimensions: %s",
+                    original_size if original_size != "mixed" else size_counts,
+                )
+                return {
+                    "original_size": original_size,
+                    "original_sizes": size_counts,
+                    "first_image_size": self._format_image_size(first_height, first_width),
+                    "first_image_height": first_height,
+                    "first_image_width": first_width,
+                    "image_count": len(image_files),
+                    "readable_image_count": len(dimensions),
+                    "unreadable_image_count": unreadable_count,
+                    "is_mixed": len(size_counts) > 1,
+                    "is_fallback": False,
+                }
 
         except Exception as e:
             logger.warning(f"Error detecting image dimensions: {e}, using default 224x224")
-            return 224, 224
+            return {
+                "fallback_size": "224x224",
+                "first_image_height": 224,
+                "first_image_width": 224,
+                "is_fallback": True,
+                "reason": str(e),
+            }
 
     def prepare_config(
         self,
@@ -153,6 +233,15 @@ class LudwigDirectBackend:
         learning_rate = config_params.get("learning_rate")
         learning_rate = "auto" if learning_rate is None else float(learning_rate)
         raw_encoder = MODEL_ENCODER_TEMPLATES.get(model_name, model_name)
+        resize_value = config_params.get("image_resize") or "original"
+        image_dimension_summary: Dict[str, Any] = {}
+        if config_params.get("image_zip"):
+            image_dimension_summary = self._detect_image_dimension_summary(
+                config_params.get("image_zip", "")
+            )
+        training_image_size: Optional[str] = None
+        model_configured_size: Optional[str] = None
+        model_adaptation_size: Optional[str] = None
 
         # --- MetaFormer detection and config logic ---
         def _is_metaformer(name: str) -> bool:
@@ -174,6 +263,7 @@ class LudwigDirectBackend:
 
         metaformer_resize: Optional[Tuple[int, int]] = None
         metaformer_channels = 3
+        metaformer_backbone_size: Optional[Tuple[int, int]] = None
 
         if is_metaformer:
             # Handle MetaFormer models
@@ -204,6 +294,12 @@ class LudwigDirectBackend:
                         int(input_size[1]),
                         int(input_size[2]),
                     )
+            model_configured_size = self._format_image_size(cfg_height, cfg_width)
+            backbone_height, backbone_width = cfg_height, cfg_width
+            if backbone_height != 224 or backbone_width != 224:
+                # Mirrors MetaFormerStackedCNN compatibility behavior before the backbone call.
+                backbone_height = backbone_width = 224
+            metaformer_backbone_size = (backbone_height, backbone_width)
 
             weights_url = None
             if isinstance(model_cfg, dict):
@@ -221,7 +317,6 @@ class LudwigDirectBackend:
                     custom_model,
                 )
 
-            resize_value = config_params.get("image_resize")
             if resize_value and resize_value != "original":
                 try:
                     dimensions = resize_value.split("x")
@@ -243,8 +338,12 @@ class LudwigDirectBackend:
                     )
                     target_height, target_width = cfg_height, cfg_width
             else:
-                image_zip_path = config_params.get("image_zip", "")
-                detected_height, detected_width = self._detect_image_dimensions(image_zip_path)
+                if image_dimension_summary:
+                    detected_height = int(image_dimension_summary.get("first_image_height", 224))
+                    detected_width = int(image_dimension_summary.get("first_image_width", 224))
+                else:
+                    image_zip_path = config_params.get("image_zip", "")
+                    detected_height, detected_width = self._detect_image_dimensions(image_zip_path)
                 target_height, target_width = detected_height, detected_width
                 if use_pretrained and (detected_height, detected_width) != (cfg_height, cfg_width):
                     logger.info(
@@ -261,6 +360,11 @@ class LudwigDirectBackend:
 
             metaformer_channels = cfg_channels
             metaformer_resize = (target_height, target_width)
+            training_image_size = self._format_image_size(target_height, target_width)
+            if metaformer_backbone_size:
+                backbone_size = self._format_image_size(*metaformer_backbone_size)
+                if backbone_size != training_image_size:
+                    model_adaptation_size = backbone_size
 
             encoder_config = {
                 "type": "stacked_cnn",
@@ -382,6 +486,7 @@ class LudwigDirectBackend:
             image_feat["preprocessing"]["requires_equal_dimensions"] = False
             logger.info(f"Set preprocessing dimensions for MetaFormer: {height}x{width} (infer_dimensions=True with max dimensions to allow validation)")
             config_params["image_size"] = f"{height}x{width}"
+            training_image_size = self._format_image_size(height, width)
         # Now set the encoder configuration
         image_feat["encoder"] = encoder_config
 
@@ -414,11 +519,38 @@ class LudwigDirectBackend:
                     image_feat["preprocessing"]["infer_image_max_width"] = width
                     logger.info(f"Added resize preprocessing: {height}x{width} for standard encoder with infer_image_dimensions=True and max dimensions")
                     config_params["image_size"] = f"{height}x{width}"
+                    training_image_size = self._format_image_size(height, width)
             except (ValueError, IndexError):
                 logger.warning(f"Invalid image resize format: {config_params['image_resize']}, skipping resize preprocessing")
         elif not is_metaformer:
             # No explicit resize provided; keep for reporting purposes
             config_params.setdefault("image_size", "original")
+
+        image_size_adaptation: Dict[str, Any] = {
+            "requested_resize": str(resize_value),
+        }
+        if image_dimension_summary and not image_dimension_summary.get("is_fallback"):
+            for key in (
+                "original_size",
+                "original_sizes",
+                "first_image_size",
+                "image_count",
+                "readable_image_count",
+                "unreadable_image_count",
+                "is_mixed",
+            ):
+                if key in image_dimension_summary:
+                    image_size_adaptation[key] = image_dimension_summary[key]
+        if training_image_size:
+            image_size_adaptation["training_size"] = training_image_size
+        elif str(resize_value).lower() == "original":
+            image_size_adaptation["training_size"] = "Original (no resize)"
+        if model_configured_size:
+            image_size_adaptation["model_configured_size"] = model_configured_size
+        if model_adaptation_size:
+            image_size_adaptation["model_adaptation_size"] = model_adaptation_size
+        if len(image_size_adaptation) > 1:
+            config_params["image_size_adaptation"] = image_size_adaptation
 
         def _resolve_validation_metric(
             task: str, requested: Optional[str], output_feature: Dict[str, Any]
