@@ -165,4 +165,6 @@ def test_config_table_displays_resolved_auto_batch_size():
 
     assert "Auto-selected batch size by Ludwig" in html
     assert "<span style='font-size: 0.85em;'>16</span>" in html
+    assert "Based on model architecture and training setup" not in html
+    assert "Ludwig Trainer Parameters" not in html
     assert ">auto</td>" not in html

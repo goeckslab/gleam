@@ -108,25 +108,10 @@ def format_config_table_html(
                         val_str = (
                             "Auto-selected batch size by Ludwig:<br>"
                             f"<span style='font-size: 0.85em;'>"
-                            f"{resolved_val}</span><br>"
-                            "<span style='font-size: 0.85em;'>"
-                            "Based on model architecture and training setup "
-                            "(e.g., fine-tuning).<br>"
-                            "See <a href='https://ludwig.ai/latest/configuration/trainer/"
-                            "#trainer-parameters' target='_blank'>"
-                            "Ludwig Trainer Parameters</a> for details."
-                            "</span>"
+                            f"{resolved_val}</span>"
                         )
                     else:
-                        val_str = (
-                            "Auto-selected by Ludwig<br>"
-                            "<span style='font-size: 0.85em;'>"
-                            "Automatically tuned based on architecture and dataset.<br>"
-                            "See <a href='https://ludwig.ai/latest/configuration/trainer/"
-                            "#trainer-parameters' target='_blank'>"
-                            "Ludwig Trainer Parameters</a> for details."
-                            "</span>"
-                        )
+                        val_str = "Auto-selected by Ludwig"
             elif key == "learning_rate":
                 if val is not None and val != "auto":
                     val_str = f"{val:.6f}"
