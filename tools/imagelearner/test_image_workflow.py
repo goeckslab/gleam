@@ -163,8 +163,12 @@ def test_config_table_displays_resolved_auto_batch_size():
         training_progress={"batch_size": 16},
     )
 
-    assert "Auto-selected batch size by Ludwig" in html
-    assert "<span style='font-size: 0.85em;'>16</span>" in html
+    assert (
+        "<span style='font-size: 0.85em;'>"
+        "Auto-selected batch size by Ludwig:</span>"
+    ) in html
+    assert ">16</td>" in html
+    assert "<span style='font-size: 0.85em;'>16</span>" not in html
     assert "Based on model architecture and training setup" not in html
     assert "Ludwig Trainer Parameters" not in html
     assert ">auto</td>" not in html
@@ -178,6 +182,10 @@ def test_config_table_displays_resolved_auto_learning_rate_without_extra_context
         training_progress={"learning_rate": 1e-5},
     )
 
-    assert "Auto-selected learning rate by Ludwig" in html
-    assert "<span style='font-size: 0.85em;'>1e-05</span>" in html
+    assert (
+        "<span style='font-size: 0.85em;'>"
+        "Auto-selected learning rate by Ludwig:</span>"
+    ) in html
+    assert ">1e-05</td>" in html
+    assert "<span style='font-size: 0.85em;'>1e-05</span>" not in html
     assert "Based on model architecture and training setup" not in html

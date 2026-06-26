@@ -106,9 +106,9 @@ def format_config_table_html(
                     )
                     if resolved_val is not None:
                         val_str = (
-                            "Auto-selected batch size by Ludwig:<br>"
-                            f"<span style='font-size: 0.85em;'>"
-                            f"{resolved_val}</span>"
+                            "<span style='font-size: 0.85em;'>"
+                            "Auto-selected batch size by Ludwig:</span><br>"
+                            f"{resolved_val}"
                         )
                     else:
                         val_str = "Auto-selected by Ludwig"
@@ -119,9 +119,9 @@ def format_config_table_html(
                     if training_progress:
                         resolved_val = training_progress.get("learning_rate")
                         val_str = (
-                            "Auto-selected learning rate by Ludwig:<br>"
-                            f"<span style='font-size: 0.85em;'>"
-                            f"{resolved_val if resolved_val else 'auto'}</span>"
+                            "<span style='font-size: 0.85em;'>"
+                            "Auto-selected learning rate by Ludwig:</span><br>"
+                            f"{resolved_val if resolved_val else 'auto'}"
                         )
                     else:
                         val_str = (
