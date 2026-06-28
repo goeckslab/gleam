@@ -1,4 +1,5 @@
 import importlib
+import json
 import sys
 import types
 from pathlib import Path
@@ -155,7 +156,7 @@ def test_metric_summary_formats_hits_at_3_without_changing_metric_values():
     assert "1.1000" in html
 
 
-def test_config_table_shows_image_size_adaptation_details():
+def test_config_table_shows_model_compatible_image_size_when_adapted():
     html_structure = importlib.import_module("html_structure")
 
     html = html_structure.format_config_table_html(
@@ -165,19 +166,27 @@ def test_config_table_shows_image_size_adaptation_details():
                 "original_size": "96x96",
                 "requested_resize": "original",
                 "training_size": "96x96",
+                "final_training_size": "96x96",
                 "model_configured_size": "384x384",
                 "model_adaptation_size": "224x224",
+                "model_adaptation_from_size": "96x96",
+                "model_adaptation_to_size": "224x224",
             },
         }
     )
 
-    assert "Original image size: 96x96" in html
-    assert "Training preprocessing size: 96x96" in html
-    assert "Model configured input size: 384x384" in html
-    assert "Auto-adaptation for the model: 224x224" in html
+    assert "224x224" in html
+    assert "Image was resized to be compatible with the model selected" in html
+    assert "Original image size" not in html
+    assert "Final resize before training" not in html
+    assert "Model original input size" not in html
+    assert "Model adaptation" not in html
+    assert "Training preprocessing size" not in html
+    assert "Model configured input size" not in html
+    assert "Auto-adaptation for the model" not in html
 
 
-def test_config_table_shows_mixed_original_image_sizes():
+def test_config_table_shows_user_selected_image_size_without_adaptation():
     html_structure = importlib.import_module("html_structure")
 
     html = html_structure.format_config_table_html(
@@ -192,10 +201,35 @@ def test_config_table_shows_mixed_original_image_sizes():
                 "is_mixed": True,
                 "requested_resize": "384x384",
                 "training_size": "384x384",
+                "final_training_size": "384x384",
             },
         }
     )
 
-    assert "Original image sizes: mixed (96x96 (2), 128x128 (1))" in html
-    assert "User-selected resize: 384x384" in html
-    assert "Training preprocessing size: 384x384" in html
+    assert "384x384" in html
+    assert "Image was resized to be compatible with the model selected" not in html
+    assert "Original image sizes" not in html
+    assert "Final resize before training" not in html
+    assert "Training preprocessing size" not in html
+
+
+def test_image_size_details_are_written_to_artifacts(tmp_path):
+    (_image_path_col, _label_col, _notice, ImageLearnerCLI) = _load_test_objects()
+    cli = ImageLearnerCLI.__new__(ImageLearnerCLI)
+    exp_dir = tmp_path / "experiment_run"
+    exp_dir.mkdir()
+    details = {
+        "original_size": "96x96",
+        "final_training_size": "96x96",
+        "model_configured_size": "384x384",
+        "model_adaptation_to_size": "224x224",
+    }
+
+    cli._write_image_size_details_artifact(
+        tmp_path,
+        {"image_size_adaptation": details},
+    )
+
+    artifact_path = exp_dir / "image_size_details.json"
+    assert artifact_path.exists()
+    assert json.loads(artifact_path.read_text()) == details

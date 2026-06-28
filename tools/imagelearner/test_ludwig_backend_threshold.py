@@ -168,6 +168,7 @@ def test_prepare_config_records_explicit_resize_image_size_summary(tmp_path):
     assert params["image_size_adaptation"]["original_size"] == "96x96"
     assert params["image_size_adaptation"]["requested_resize"] == "384x384"
     assert params["image_size_adaptation"]["training_size"] == "384x384"
+    assert params["image_size_adaptation"]["final_training_size"] == "384x384"
     assert "model_adaptation_size" not in params["image_size_adaptation"]
 
 
@@ -201,5 +202,8 @@ def test_prepare_config_records_metaformer_model_size_adaptation(tmp_path):
     assert input_feature["encoder"]["width"] == 96
     assert params["image_size_adaptation"]["original_size"] == "96x96"
     assert params["image_size_adaptation"]["training_size"] == "96x96"
+    assert params["image_size_adaptation"]["final_training_size"] == "96x96"
     assert params["image_size_adaptation"]["model_configured_size"] == "384x384"
     assert params["image_size_adaptation"]["model_adaptation_size"] == "224x224"
+    assert params["image_size_adaptation"]["model_adaptation_from_size"] == "96x96"
+    assert params["image_size_adaptation"]["model_adaptation_to_size"] == "224x224"

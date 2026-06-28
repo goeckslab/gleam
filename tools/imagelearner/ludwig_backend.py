@@ -541,14 +541,29 @@ class LudwigDirectBackend:
             ):
                 if key in image_dimension_summary:
                     image_size_adaptation[key] = image_dimension_summary[key]
-        if training_image_size:
-            image_size_adaptation["training_size"] = training_image_size
-        elif str(resize_value).lower() == "original":
-            image_size_adaptation["training_size"] = "Original (no resize)"
+        final_training_size = training_image_size
+        if not final_training_size and str(resize_value).lower() == "original":
+            if image_dimension_summary and not image_dimension_summary.get("is_fallback"):
+                if image_dimension_summary.get("is_mixed"):
+                    final_training_size = "Original dimensions (no resize)"
+                else:
+                    final_training_size = (
+                        image_dimension_summary.get("original_size")
+                        or image_dimension_summary.get("first_image_size")
+                    )
+            final_training_size = final_training_size or "Original (no resize)"
+        if final_training_size:
+            image_size_adaptation["training_size"] = final_training_size
+            image_size_adaptation["final_training_size"] = final_training_size
         if model_configured_size:
             image_size_adaptation["model_configured_size"] = model_configured_size
         if model_adaptation_size:
+            if final_training_size:
+                image_size_adaptation["model_adaptation_from_size"] = (
+                    final_training_size
+                )
             image_size_adaptation["model_adaptation_size"] = model_adaptation_size
+            image_size_adaptation["model_adaptation_to_size"] = model_adaptation_size
         if len(image_size_adaptation) > 1:
             config_params["image_size_adaptation"] = image_size_adaptation
 

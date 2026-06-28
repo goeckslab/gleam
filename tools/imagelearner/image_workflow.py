@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 import shutil
@@ -518,6 +519,10 @@ class ImageLearnerCLI:
                 )
                 # Generate a very small set of plots to conserve disk space
                 self.backend.generate_plots(self.args.output_dir)
+                self._write_image_size_details_artifact(
+                    self.args.output_dir,
+                    backend_args,
+                )
                 # Build HTML report (robust to missing metrics)
                 report_file = self.backend.generate_html_report(
                     "Image Learner Experiment Report",
@@ -544,6 +549,10 @@ class ImageLearnerCLI:
 
                 try:
                     self._create_minimal_outputs(self.args.output_dir, csv_path)
+                    self._write_image_size_details_artifact(
+                        self.args.output_dir,
+                        backend_args,
+                    )
                     # Even in fallback, produce an HTML shell so tests find required text
                     report_file = self.backend.generate_html_report(
                         "Image Learner Experiment Report",
@@ -561,6 +570,36 @@ class ImageLearnerCLI:
             raise
         finally:
             self._cleanup_temp_dirs()
+
+    def _write_image_size_details_artifact(
+        self,
+        output_dir: Path,
+        config_params: Dict[str, Any],
+    ) -> None:
+        """Persist detailed image-size metadata in the artifact ZIP contents."""
+        details = config_params.get("image_size_adaptation")
+        if not isinstance(details, dict):
+            return
+
+        output_dir = Path(output_dir)
+        exp_dirs = sorted(
+            output_dir.glob("experiment_run*"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        if not exp_dirs:
+            return
+
+        artifact_path = exp_dirs[-1] / "image_size_details.json"
+        try:
+            artifact_path.write_text(
+                json.dumps(details, indent=2, sort_keys=True) + "\n"
+            )
+            logger.info("Wrote image size details artifact: %s", artifact_path)
+        except Exception:
+            logger.warning(
+                "Unable to write image size details artifact.",
+                exc_info=True,
+            )
 
     def _postprocess_cleanup(self, output_dir: Path) -> None:
         """Remove large intermediates and caches to conserve disk space across tests."""

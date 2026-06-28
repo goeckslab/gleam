@@ -596,7 +596,7 @@ The MetaFormer family represents a unified perspective on transformer-like archi
 
 **Outputs**
 The tool will output a trained model in the form of a ludwig_model file,
-a report in the form of an HTML file, and a hidden ZIP archive containing the predictions, experiment stats, and visualizations.
+a report in the form of an HTML file, and a hidden ZIP archive containing the predictions, image-size details, experiment stats, and visualizations.
 The html report will contain metrics&experiment setup parameters, train&val plots and test plots.
 
         ]]>

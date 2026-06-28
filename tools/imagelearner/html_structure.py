@@ -34,55 +34,25 @@ def format_image_size_value(val: Any) -> str:
 
 
 def format_image_size_report(config: dict, val: Any) -> str:
-    """Render original, preprocessing, and model-adaptation image sizes."""
+    """Render a concise image size summary for the report."""
     details = config.get("image_size_adaptation")
     if not isinstance(details, dict):
         return format_image_size_value(val)
 
-    lines = []
-    original_sizes = details.get("original_sizes")
-    is_mixed = bool(details.get("is_mixed"))
-    if is_mixed and isinstance(original_sizes, list) and original_sizes:
-        size_parts = []
-        for item in original_sizes[:4]:
-            if isinstance(item, dict) and item.get("size"):
-                size = escape(str(item.get("size")))
-                count = item.get("count")
-                size_parts.append(f"{size} ({count})" if count is not None else size)
-        remaining = len(original_sizes) - len(size_parts)
-        if remaining > 0:
-            size_parts.append(f"+{remaining} more")
-        lines.append(
-            "Original image sizes: mixed"
-            + (f" ({', '.join(size_parts)})" if size_parts else "")
-        )
-    else:
-        original_size = details.get("original_size") or details.get("first_image_size")
-        if original_size:
-            lines.append(f"Original image size: {escape(str(original_size))}")
+    final_training_size = (
+        details.get("final_training_size") or details.get("training_size")
+    )
+    model_adaptation_to_size = (
+        details.get("model_adaptation_to_size") or details.get("model_adaptation_size")
+    )
+    image_size = model_adaptation_to_size or final_training_size or val
 
-    requested_resize = details.get("requested_resize")
-    if requested_resize and str(requested_resize).lower() != "original":
-        lines.append(f"User-selected resize: {escape(str(requested_resize))}")
-
-    training_size = details.get("training_size")
-    if training_size:
-        lines.append(f"Training preprocessing size: {escape(str(training_size))}")
-
-    model_configured_size = details.get("model_configured_size")
-    if model_configured_size:
-        lines.append(
-            f"Model configured input size: {escape(str(model_configured_size))}"
-        )
-
-    model_adaptation_size = details.get("model_adaptation_size")
-    if model_adaptation_size:
-        lines.append(
-            f"Auto-adaptation for the model: {escape(str(model_adaptation_size))}"
-        )
-
-    if not lines:
+    if not image_size:
         return format_image_size_value(val)
+
+    lines = [escape(format_image_size_value(image_size))]
+    if model_adaptation_to_size:
+        lines.append("Image was resized to be compatible with the model selected")
 
     return (
         "<div style='text-align: left; line-height: 1.45;'>"
