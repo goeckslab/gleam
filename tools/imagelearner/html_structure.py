@@ -135,36 +135,19 @@ def format_config_table_html(
                 if isinstance(val, (int, float)):
                     val_str = int(val)
                 else:
-                    val = "auto"
-                    val_str = "auto"
-            resolved_val = None
-            if key == "image_size":
-                pass
-            elif val is None or val == "auto":
-                if training_progress:
-                    resolved_val = training_progress.get("batch_size")
-                    val = (
-                        "Auto-selected batch size by Ludwig:<br>"
-                        f"<span style='font-size: 0.85em;'>"
-                        f"{resolved_val if resolved_val else val}</span><br>"
-                        "<span style='font-size: 0.85em;'>"
-                        "Based on model architecture and training setup "
-                        "(e.g., fine-tuning).<br>"
-                        "See <a href='https://ludwig.ai/latest/configuration/trainer/"
-                        "#trainer-parameters' target='_blank'>"
-                        "Ludwig Trainer Parameters</a> for details."
-                        "</span>"
+                    resolved_val = (
+                        training_progress.get("batch_size")
+                        if training_progress
+                        else None
                     )
-                else:
-                    val = (
-                        "Auto-selected by Ludwig<br>"
-                        "<span style='font-size: 0.85em;'>"
-                        "Automatically tuned based on architecture and dataset.<br>"
-                        "See <a href='https://ludwig.ai/latest/configuration/trainer/"
-                        "#trainer-parameters' target='_blank'>"
-                        "Ludwig Trainer Parameters</a> for details."
-                        "</span>"
-                    )
+                    if resolved_val is not None:
+                        val_str = (
+                            "<span style='font-size: 0.85em;'>"
+                            "Auto-selected batch size by Ludwig:</span><br>"
+                            f"{resolved_val}"
+                        )
+                    else:
+                        val_str = "Auto-selected by Ludwig"
             elif key == "learning_rate":
                 if val is not None and val != "auto":
                     val_str = f"{val:.6f}"
@@ -172,13 +155,9 @@ def format_config_table_html(
                     if training_progress:
                         resolved_val = training_progress.get("learning_rate")
                         val_str = (
-                            "Auto-selected learning rate by Ludwig:<br>"
-                            f"<span style='font-size: 0.85em;'>"
-                            f"{resolved_val if resolved_val else 'auto'}</span><br>"
                             "<span style='font-size: 0.85em;'>"
-                            "Based on model architecture and training setup "
-                            "(e.g., fine-tuning).<br>"
-                            "</span>"
+                            "Auto-selected learning rate by Ludwig:</span><br>"
+                            f"{resolved_val if resolved_val else 'auto'}"
                         )
                     else:
                         val_str = (
