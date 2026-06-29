@@ -292,3 +292,37 @@ def test_config_table_displays_resolved_auto_learning_rate_without_extra_context
     )
     assert "<span style='font-size: 0.85em;'>1e-05</span>" not in learning_rate_html
     assert "Based on model architecture and training setup" not in learning_rate_html
+
+
+def test_config_table_displays_batch_learning_rate_and_image_size_together():
+    html_structure = importlib.import_module("html_structure")
+
+    html = html_structure.format_config_table_html(
+        {
+            "batch_size": "auto",
+            "learning_rate": "auto",
+            "image_size": "96x96",
+            "image_size_adaptation": {
+                "final_training_size": "96x96",
+                "model_adaptation_to_size": "224x224",
+            },
+        },
+        training_progress={"batch_size": 16, "learning_rate": 1e-5},
+    )
+
+    batch_size_html = _config_table_value_html(html, "Batch Size")
+    learning_rate_html = _config_table_value_html(html, "Learning Rate")
+    image_size_html = _config_table_value_html(html, "Image Size")
+
+    assert batch_size_html == (
+        "<span style='font-size: 0.85em;'>"
+        "Auto-selected batch size by Ludwig:</span><br>"
+        "16"
+    )
+    assert learning_rate_html == (
+        "<span style='font-size: 0.85em;'>"
+        "Auto-selected learning rate by Ludwig:</span><br>"
+        "1e-05"
+    )
+    assert "224x224" in image_size_html
+    assert "Image was resized to be compatible with the model selected" in image_size_html
