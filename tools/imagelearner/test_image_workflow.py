@@ -159,7 +159,7 @@ def test_config_table_displays_resolved_auto_batch_size():
     html_structure = importlib.import_module("html_structure")
 
     html = html_structure.format_config_table_html(
-        {"batch_size": "auto"},
+        {"batch_size": "auto", "learning_rate": 0.001},
         training_progress={"batch_size": 16},
     )
 
