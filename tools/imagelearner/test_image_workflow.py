@@ -176,7 +176,10 @@ def test_config_table_shows_model_compatible_image_size_when_adapted():
     )
 
     assert "224x224" in html
+    assert "text-align: center" in html
+    assert "font-size: 0.85em" in html
     assert "Image was resized to be compatible with the model selected" in html
+    assert "Resized for model compatibility" not in html
     assert "Original image size" not in html
     assert "Final resize before training" not in html
     assert "Model original input size" not in html
@@ -207,7 +210,10 @@ def test_config_table_shows_user_selected_image_size_without_adaptation():
     )
 
     assert "384x384" in html
+    assert "Resized for model compatibility" not in html
     assert "Image was resized to be compatible with the model selected" not in html
+    assert "font-size: 0.85em" not in html
+    assert "text-align: center" in html
     assert "Original image sizes" not in html
     assert "Final resize before training" not in html
     assert "Training preprocessing size" not in html
