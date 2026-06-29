@@ -153,3 +153,39 @@ def test_metric_summary_formats_hits_at_3_without_changing_metric_values():
     assert "90.0%" not in html
     assert "Loss and regression errors remain raw scores" not in html
     assert "1.1000" in html
+
+
+def test_config_table_displays_resolved_auto_batch_size():
+    html_structure = importlib.import_module("html_structure")
+
+    html = html_structure.format_config_table_html(
+        {"batch_size": "auto", "learning_rate": 0.001},
+        training_progress={"batch_size": 16},
+    )
+
+    assert (
+        "<span style='font-size: 0.85em;'>"
+        "Auto-selected batch size by Ludwig:</span>"
+    ) in html
+    assert ">16</td>" in html
+    assert "<span style='font-size: 0.85em;'>16</span>" not in html
+    assert "Based on model architecture and training setup" not in html
+    assert "Ludwig Trainer Parameters" not in html
+    assert ">auto</td>" not in html
+
+
+def test_config_table_displays_resolved_auto_learning_rate_without_extra_context():
+    html_structure = importlib.import_module("html_structure")
+
+    html = html_structure.format_config_table_html(
+        {"learning_rate": "auto"},
+        training_progress={"learning_rate": 1e-5},
+    )
+
+    assert (
+        "<span style='font-size: 0.85em;'>"
+        "Auto-selected learning rate by Ludwig:</span>"
+    ) in html
+    assert ">1e-05</td>" in html
+    assert "<span style='font-size: 0.85em;'>1e-05</span>" not in html
+    assert "Based on model architecture and training setup" not in html
