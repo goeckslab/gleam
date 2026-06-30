@@ -179,20 +179,31 @@ def test_prepare_config_records_metaformer_model_size_adaptation(tmp_path):
         _split_col,
         LudwigDirectBackend,
     ) = _load_backend_test_objects()
-    image_zip = _write_image_zip(tmp_path, [(96, 96)])
-    params = {
-        "model_name": "caformer_s18_384",
-        "use_pretrained": True,
-        "epochs": 1,
-        "image_resize": "original",
-        "image_zip": str(image_zip),
-        "label_metadata": {"num_unique": 3},
+    ludwig_backend = importlib.import_module("ludwig_backend")
+    original_meta_default_cfgs = ludwig_backend.META_DEFAULT_CFGS
+    ludwig_backend.META_DEFAULT_CFGS = {
+        **original_meta_default_cfgs,
+        "caformer_s18_384": {
+            "input_size": (3, 384, 384),
+            "url": "https://example.invalid/caformer_s18_384.pth",
+        },
     }
-
-    yaml_str = LudwigDirectBackend().prepare_config(
-        params,
-        {"type": "random", "probabilities": [0.7, 0.1, 0.2]},
-    )
+    try:
+        image_zip = _write_image_zip(tmp_path, [(96, 96)])
+        params = {
+            "model_name": "caformer_s18_384",
+            "use_pretrained": True,
+            "epochs": 1,
+            "image_resize": "original",
+            "image_zip": str(image_zip),
+            "label_metadata": {"num_unique": 3},
+        }
+        yaml_str = LudwigDirectBackend().prepare_config(
+            params,
+            {"type": "random", "probabilities": [0.7, 0.1, 0.2]},
+        )
+    finally:
+        ludwig_backend.META_DEFAULT_CFGS = original_meta_default_cfgs
     config = yaml.safe_load(yaml_str)
     input_feature = config["input_features"][0]
 
