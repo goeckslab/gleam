@@ -193,6 +193,9 @@ def test_config_table_shows_model_compatible_image_size_when_adapted():
     assert "text-align: center" in image_size_html
     assert "font-size: 0.85em" in image_size_html
     assert "Image was resized to be compatible with the model selected" in image_size_html
+    assert image_size_html.index(
+        "Image was resized to be compatible with the model selected"
+    ) < image_size_html.index("224x224")
     assert "Resized for model compatibility" not in image_size_html
     assert "Original image size" not in image_size_html
     assert "Final resize before training" not in image_size_html
@@ -326,3 +329,6 @@ def test_config_table_displays_batch_learning_rate_and_image_size_together():
     )
     assert "224x224" in image_size_html
     assert "Image was resized to be compatible with the model selected" in image_size_html
+    assert image_size_html.index(
+        "Image was resized to be compatible with the model selected"
+    ) < image_size_html.index("224x224")

@@ -50,13 +50,14 @@ def format_image_size_report(config: dict, val: Any) -> str:
     if not image_size:
         return format_image_size_value(val)
 
-    lines = [escape(format_image_size_value(image_size))]
+    lines = []
     if model_adaptation_to_size:
         lines.append(
             "<span style='font-size: 0.85em;'>"
             "Image was resized to be compatible with the model selected"
             "</span>"
         )
+    lines.append(escape(format_image_size_value(image_size)))
 
     return (
         "<div style='text-align: center; line-height: 1.45;'>"
