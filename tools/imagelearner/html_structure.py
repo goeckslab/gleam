@@ -54,7 +54,7 @@ def format_image_size_report(config: dict, val: Any) -> str:
     if model_adaptation_to_size:
         lines.append(
             "<span style='font-size: 0.85em;'>"
-            "Image was resized to be compatible with the model selected"
+            "Auto-resize for model compatibility"
             "</span>"
         )
     lines.append(escape(format_image_size_value(image_size)))
@@ -144,7 +144,7 @@ def format_config_table_html(
                     if resolved_val is not None:
                         val_str = (
                             "<span style='font-size: 0.85em;'>"
-                            "Auto-selected batch size by Ludwig:</span><br>"
+                            "Auto-selection</span><br>"
                             f"{resolved_val}"
                         )
                     else:
@@ -157,7 +157,7 @@ def format_config_table_html(
                         resolved_val = training_progress.get("learning_rate")
                         val_str = (
                             "<span style='font-size: 0.85em;'>"
-                            "Auto-selected learning rate by Ludwig:</span><br>"
+                            "Auto-selection</span><br>"
                             f"{resolved_val if resolved_val else 'auto'}"
                         )
                     else:

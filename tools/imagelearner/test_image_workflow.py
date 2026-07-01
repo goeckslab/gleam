@@ -192,10 +192,11 @@ def test_config_table_shows_model_compatible_image_size_when_adapted():
     assert "224x224" in image_size_html
     assert "text-align: center" in image_size_html
     assert "font-size: 0.85em" in image_size_html
-    assert "Image was resized to be compatible with the model selected" in image_size_html
+    assert "Auto-resize for model compatibility" in image_size_html
     assert image_size_html.index(
-        "Image was resized to be compatible with the model selected"
+        "Auto-resize for model compatibility"
     ) < image_size_html.index("224x224")
+    assert "Image was resized to be compatible with the model selected" not in image_size_html
     assert "Resized for model compatibility" not in image_size_html
     assert "Original image size" not in image_size_html
     assert "Final resize before training" not in image_size_html
@@ -229,6 +230,7 @@ def test_config_table_shows_user_selected_image_size_without_adaptation():
 
     assert "384x384" in image_size_html
     assert "Resized for model compatibility" not in image_size_html
+    assert "Auto-resize for model compatibility" not in image_size_html
     assert "Image was resized to be compatible with the model selected" not in image_size_html
     assert "font-size: 0.85em" not in image_size_html
     assert "text-align: center" in image_size_html
@@ -270,12 +272,14 @@ def test_config_table_displays_resolved_auto_batch_size():
 
     assert batch_size_html == (
         "<span style='font-size: 0.85em;'>"
-        "Auto-selected batch size by Ludwig:</span><br>"
+        "Auto-selection</span><br>"
         "16"
     )
     assert "<span style='font-size: 0.85em;'>16</span>" not in batch_size_html
     assert "Based on model architecture and training setup" not in batch_size_html
     assert "Ludwig Trainer Parameters" not in batch_size_html
+    assert "Auto-selected batch size by Ludwig:" not in batch_size_html
+    assert "Ludwig Auto-selection" not in batch_size_html
     assert "auto" not in batch_size_html
 
 
@@ -290,11 +294,13 @@ def test_config_table_displays_resolved_auto_learning_rate_without_extra_context
 
     assert learning_rate_html == (
         "<span style='font-size: 0.85em;'>"
-        "Auto-selected learning rate by Ludwig:</span><br>"
+        "Auto-selection</span><br>"
         "1e-05"
     )
     assert "<span style='font-size: 0.85em;'>1e-05</span>" not in learning_rate_html
     assert "Based on model architecture and training setup" not in learning_rate_html
+    assert "Auto-selected learning rate by Ludwig:" not in learning_rate_html
+    assert "Ludwig Auto-selection" not in learning_rate_html
 
 
 def test_config_table_displays_batch_learning_rate_and_image_size_together():
@@ -319,16 +325,21 @@ def test_config_table_displays_batch_learning_rate_and_image_size_together():
 
     assert batch_size_html == (
         "<span style='font-size: 0.85em;'>"
-        "Auto-selected batch size by Ludwig:</span><br>"
+        "Auto-selection</span><br>"
         "16"
     )
     assert learning_rate_html == (
         "<span style='font-size: 0.85em;'>"
-        "Auto-selected learning rate by Ludwig:</span><br>"
+        "Auto-selection</span><br>"
         "1e-05"
     )
     assert "224x224" in image_size_html
-    assert "Image was resized to be compatible with the model selected" in image_size_html
+    assert "Auto-resize for model compatibility" in image_size_html
     assert image_size_html.index(
-        "Image was resized to be compatible with the model selected"
+        "Auto-resize for model compatibility"
     ) < image_size_html.index("224x224")
+    assert "Auto-selected batch size by Ludwig:" not in batch_size_html
+    assert "Auto-selected learning rate by Ludwig:" not in learning_rate_html
+    assert "Ludwig Auto-selection" not in batch_size_html
+    assert "Ludwig Auto-selection" not in learning_rate_html
+    assert "Image was resized to be compatible with the model selected" not in image_size_html
