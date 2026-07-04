@@ -45,14 +45,16 @@ def _load_backend_test_objects():
     )
 
 
-def _write_image_zip(tmp_path, sizes):
+def _write_image_zip(tmp_path, sizes, suffixes=None):
     zip_path = tmp_path / "images.zip"
+    suffixes = suffixes or [".png"] * len(sizes)
+    assert len(suffixes) == len(sizes)
     with zipfile.ZipFile(zip_path, "w") as zf:
-        for index, size in enumerate(sizes):
+        for index, (size, suffix) in enumerate(zip(sizes, suffixes)):
             image = Image.new("RGB", size, color="white")
             buffer = io.BytesIO()
             image.save(buffer, format="PNG")
-            zf.writestr(f"image_{index}.png", buffer.getvalue())
+            zf.writestr(f"image_{index}{suffix}", buffer.getvalue())
     return zip_path
 
 
@@ -170,6 +172,54 @@ def test_prepare_config_records_explicit_resize_image_size_summary(tmp_path):
     assert params["image_size_adaptation"]["training_size"] == "384x384"
     assert params["image_size_adaptation"]["final_training_size"] == "384x384"
     assert "model_adaptation_size" not in params["image_size_adaptation"]
+
+
+def test_detect_image_dimension_summary_uses_supported_suffixes(tmp_path):
+    (
+        _image_path_col,
+        _label_col,
+        _split_col,
+        LudwigDirectBackend,
+    ) = _load_backend_test_objects()
+    constants = importlib.import_module("constants")
+    suffixes = sorted(constants.IMAGE_FILE_SUFFIXES)
+    image_zip = _write_image_zip(
+        tmp_path,
+        [(17, 23)] * len(suffixes),
+        suffixes=suffixes,
+    )
+
+    summary = LudwigDirectBackend()._detect_image_dimension_summary(str(image_zip))
+
+    assert summary["is_fallback"] is False
+    assert summary["original_size"] == "23x17"
+    assert summary["first_image_size"] == "23x17"
+    assert summary["image_count"] == len(suffixes)
+    assert summary["readable_image_count"] == len(suffixes)
+
+
+def test_detect_image_dimension_summary_limits_inspection_count(tmp_path, monkeypatch):
+    (
+        _image_path_col,
+        _label_col,
+        _split_col,
+        LudwigDirectBackend,
+    ) = _load_backend_test_objects()
+    ludwig_backend = importlib.import_module("ludwig_backend")
+    monkeypatch.setattr(ludwig_backend, "MAX_IMAGE_DIMENSION_INSPECTION_COUNT", 2)
+    image_zip = _write_image_zip(
+        tmp_path,
+        [(16, 16), (16, 16), (32, 32)],
+    )
+
+    summary = LudwigDirectBackend()._detect_image_dimension_summary(str(image_zip))
+
+    assert summary["is_fallback"] is False
+    assert summary["image_count"] == 3
+    assert summary["inspected_image_count"] == 2
+    assert summary["uninspected_image_count"] == 1
+    assert summary["readable_image_count"] == 2
+    assert summary["is_sampled"] is True
 
 
 def test_prepare_config_records_metaformer_model_size_adaptation(tmp_path):

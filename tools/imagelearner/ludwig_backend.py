@@ -5,13 +5,14 @@ import os
 import zipfile
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Protocol, Tuple
+from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
 import pandas as pd
 import pandas.api.types as ptypes
 import yaml
 from constants import (
     DEFAULT_HITS_AT_K,
+    IMAGE_FILE_SUFFIXES,
     IMAGE_PATH_COLUMN_NAME,
     LABEL_COLUMN_NAME,
     MODEL_ENCODER_TEMPLATES,
@@ -55,6 +56,7 @@ from utils import detect_output_type, extract_metrics_from_json
 logger = logging.getLogger("ImageLearner")
 
 VALIDATION_PREDICTIONS_CSV = "validation_predictions.csv"
+MAX_IMAGE_DIMENSION_INSPECTION_COUNT = 1000
 
 
 class Backend(Protocol):
@@ -117,15 +119,100 @@ class LudwigDirectBackend:
         """Format image dimensions in the same height x width order used by Ludwig."""
         return f"{int(height)}x{int(width)}"
 
-    def _detect_image_dimension_summary(self, image_zip_path: str) -> Dict[str, Any]:
-        """Summarize source image dimensions from the uploaded image ZIP."""
+    def _summarize_image_dimension_sources(
+        self,
+        image_files: List[Any],
+        read_dimensions: Callable[[Any], Tuple[int, int]],
+    ) -> Dict[str, Any]:
+        if not image_files:
+            logger.warning("No image files found, using default 224x224")
+            return {
+                "fallback_size": "224x224",
+                "first_image_height": 224,
+                "first_image_width": 224,
+                "image_count": 0,
+                "inspected_image_count": 0,
+                "uninspected_image_count": 0,
+                "readable_image_count": 0,
+                "unreadable_image_count": 0,
+                "is_fallback": True,
+                "reason": "No readable image files found.",
+            }
+
+        inspection_limit = min(
+            len(image_files),
+            max(1, int(MAX_IMAGE_DIMENSION_INSPECTION_COUNT)),
+        )
+        inspected_files = image_files[:inspection_limit]
+        dimensions: List[Tuple[int, int]] = []
+        unreadable_count = 0
+        for image_file in inspected_files:
+            try:
+                dimensions.append(read_dimensions(image_file))
+            except Exception as exc:
+                unreadable_count += 1
+                logger.debug("Could not read image dimensions for %s: %s", image_file, exc)
+
+        uninspected_count = len(image_files) - len(inspected_files)
+        if not dimensions:
+            logger.warning("No readable image dimensions found, using default 224x224")
+            return {
+                "fallback_size": "224x224",
+                "first_image_height": 224,
+                "first_image_width": 224,
+                "image_count": len(image_files),
+                "inspected_image_count": len(inspected_files),
+                "uninspected_image_count": uninspected_count,
+                "readable_image_count": 0,
+                "unreadable_image_count": unreadable_count,
+                "is_sampled": bool(uninspected_count),
+                "is_fallback": True,
+                "reason": "Image dimensions could not be read.",
+            }
+
+        first_height, first_width = dimensions[0]
+        counts = Counter(dimensions)
+        size_counts = [
+            {
+                "size": self._format_image_size(height, width),
+                "count": count,
+            }
+            for (height, width), count in counts.most_common()
+        ]
+        original_size = (
+            size_counts[0]["size"] if len(size_counts) == 1 else "mixed"
+        )
+        logger.info(
+            "Detected image dimensions: %s",
+            original_size if original_size != "mixed" else size_counts,
+        )
+        return {
+            "original_size": original_size,
+            "original_sizes": size_counts,
+            "first_image_size": self._format_image_size(first_height, first_width),
+            "first_image_height": first_height,
+            "first_image_width": first_width,
+            "image_count": len(image_files),
+            "inspected_image_count": len(inspected_files),
+            "uninspected_image_count": uninspected_count,
+            "readable_image_count": len(dimensions),
+            "unreadable_image_count": unreadable_count,
+            "is_mixed": len(size_counts) > 1,
+            "is_sampled": bool(uninspected_count),
+            "is_fallback": False,
+        }
+
+    def _detect_image_dimension_summary(
+        self,
+        image_zip_path: str,
+        image_dir_path: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Summarize source image dimensions from extracted files or the uploaded ZIP."""
         try:
-            import zipfile
             from PIL import Image
-            import io
 
             # Check if image_zip is provided
-            if not image_zip_path:
+            if not image_zip_path and not image_dir_path:
                 logger.warning("No image zip provided, using default 224x224")
                 return {
                     "fallback_size": "224x224",
@@ -135,72 +222,61 @@ class LudwigDirectBackend:
                     "reason": "No image ZIP provided.",
                 }
 
+            if image_dir_path:
+                image_dir = Path(image_dir_path)
+                if image_dir.exists():
+                    image_files = sorted(
+                        (
+                            fpath
+                            for fpath in image_dir.rglob("*")
+                            if fpath.is_file()
+                            and fpath.suffix.lower() in IMAGE_FILE_SUFFIXES
+                        ),
+                        key=lambda fpath: str(fpath),
+                    )
+                    if not image_files and image_zip_path:
+                        logger.debug(
+                            "No images found in extraction directory for dimension summary; falling back to ZIP: %s",
+                            image_dir_path,
+                        )
+                    else:
+                        def read_file_dimensions(image_file: Path) -> Tuple[int, int]:
+                            with Image.open(image_file) as img:
+                                width, height = img.size
+                            return height, width
+
+                        summary = self._summarize_image_dimension_sources(
+                            image_files,
+                            read_file_dimensions,
+                        )
+                        summary["dimension_source"] = "extracted_directory"
+                        return summary
+                else:
+                    logger.debug(
+                        "Image extraction directory not found for dimension summary: %s",
+                        image_dir_path,
+                    )
+
             with zipfile.ZipFile(image_zip_path, 'r') as z:
-                image_files = [f for f in z.namelist() if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-                if not image_files:
-                    logger.warning("No image files found in zip, using default 224x224")
-                    return {
-                        "fallback_size": "224x224",
-                        "first_image_height": 224,
-                        "first_image_width": 224,
-                        "image_count": 0,
-                        "is_fallback": True,
-                        "reason": "No readable image files found in the ZIP.",
-                    }
-
-                dimensions: List[Tuple[int, int]] = []
-                unreadable_count = 0
-                for image_file in image_files:
-                    try:
-                        with z.open(image_file) as f:
-                            img = Image.open(io.BytesIO(f.read()))
-                            width, height = img.size
-                            dimensions.append((height, width))
-                    except Exception as exc:
-                        unreadable_count += 1
-                        logger.debug("Could not read image dimensions for %s: %s", image_file, exc)
-
-                if not dimensions:
-                    logger.warning("No readable image dimensions found in zip, using default 224x224")
-                    return {
-                        "fallback_size": "224x224",
-                        "first_image_height": 224,
-                        "first_image_width": 224,
-                        "image_count": len(image_files),
-                        "readable_image_count": 0,
-                        "unreadable_image_count": unreadable_count,
-                        "is_fallback": True,
-                        "reason": "Image dimensions could not be read from the ZIP.",
-                    }
-
-                first_height, first_width = dimensions[0]
-                counts = Counter(dimensions)
-                size_counts = [
-                    {
-                        "size": self._format_image_size(height, width),
-                        "count": count,
-                    }
-                    for (height, width), count in counts.most_common()
+                image_files = [
+                    f
+                    for f in z.namelist()
+                    if not f.endswith("/")
+                    and Path(f).suffix.lower() in IMAGE_FILE_SUFFIXES
                 ]
-                original_size = (
-                    size_counts[0]["size"] if len(size_counts) == 1 else "mixed"
+
+                def read_zip_dimensions(image_file: str) -> Tuple[int, int]:
+                    with z.open(image_file) as f:
+                        with Image.open(f) as img:
+                            width, height = img.size
+                    return height, width
+
+                summary = self._summarize_image_dimension_sources(
+                    image_files,
+                    read_zip_dimensions,
                 )
-                logger.info(
-                    "Detected image dimensions: %s",
-                    original_size if original_size != "mixed" else size_counts,
-                )
-                return {
-                    "original_size": original_size,
-                    "original_sizes": size_counts,
-                    "first_image_size": self._format_image_size(first_height, first_width),
-                    "first_image_height": first_height,
-                    "first_image_width": first_width,
-                    "image_count": len(image_files),
-                    "readable_image_count": len(dimensions),
-                    "unreadable_image_count": unreadable_count,
-                    "is_mixed": len(size_counts) > 1,
-                    "is_fallback": False,
-                }
+                summary["dimension_source"] = "zip_archive"
+                return summary
 
         except Exception as e:
             logger.warning(f"Error detecting image dimensions: {e}, using default 224x224")
@@ -237,7 +313,8 @@ class LudwigDirectBackend:
         image_dimension_summary: Dict[str, Any] = {}
         if config_params.get("image_zip"):
             image_dimension_summary = self._detect_image_dimension_summary(
-                config_params.get("image_zip", "")
+                config_params.get("image_zip", ""),
+                config_params.get("image_extract_dir"),
             )
         training_image_size: Optional[str] = None
         model_configured_size: Optional[str] = None
@@ -535,9 +612,13 @@ class LudwigDirectBackend:
                 "original_sizes",
                 "first_image_size",
                 "image_count",
+                "inspected_image_count",
+                "uninspected_image_count",
                 "readable_image_count",
                 "unreadable_image_count",
                 "is_mixed",
+                "is_sampled",
+                "dimension_source",
             ):
                 if key in image_dimension_summary:
                     image_size_adaptation[key] = image_dimension_summary[key]

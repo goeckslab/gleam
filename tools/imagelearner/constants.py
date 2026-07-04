@@ -8,6 +8,16 @@ DEFAULT_SPLIT_PROBABILITIES = [0.7, 0.1, 0.2]
 TEMP_CSV_FILENAME = "processed_data_for_ludwig.csv"
 TEMP_CONFIG_FILENAME = "ludwig_config.yaml"
 TEMP_DIR_PREFIX = "gleam_image_work_"
+IMAGE_FILE_SUFFIXES = {
+    ".bmp",
+    ".gif",
+    ".jpeg",
+    ".jpg",
+    ".png",
+    ".tif",
+    ".tiff",
+    ".webp",
+}
 PREDICTIONS_PARQUET_FILE_NAME = "predictions.parquet"
 TEST_STATISTICS_FILE_NAME = "test_statistics.json"
 TRAIN_SET_METADATA_FILE_NAME = "train_set_metadata.json"
