@@ -435,7 +435,8 @@
             <output name="output_artifacts_zip" ftype="zip">
                 <assert_contents>
                     <has_archive_member path="experiment_run/predictions.csv" />
-                    <has_archive_member path="experiment_run/model/.*" negate="true" />
+                    <has_archive_member path="experiment_run/image_size_details.json" />
+                    <has_archive_member path="experiment_run/model/.*" max="0" />
                 </assert_contents>
             </output>
 
@@ -454,7 +455,8 @@
             <output name="output_artifacts_zip" ftype="zip">
                 <assert_contents>
                     <has_archive_member path="experiment_run/predictions.csv" />
-                    <has_archive_member path="experiment_run/model/.*" negate="true" />
+                    <has_archive_member path="experiment_run/image_size_details.json" />
+                    <has_archive_member path="experiment_run/model/.*" max="0" />
                 </assert_contents>
             </output>
         </test>
@@ -472,7 +474,8 @@
             <output name="output_artifacts_zip" ftype="zip">
                 <assert_contents>
                     <has_archive_member path="experiment_run/predictions.csv" />
-                    <has_archive_member path="experiment_run/model/.*" negate="true" />
+                    <has_archive_member path="experiment_run/image_size_details.json" />
+                    <has_archive_member path="experiment_run/model/.*" max="0" />
                 </assert_contents>
             </output>
 
@@ -492,7 +495,8 @@
             <output name="output_artifacts_zip" ftype="zip">
                 <assert_contents>
                     <has_archive_member path="experiment_run/predictions.csv" />
-                    <has_archive_member path="experiment_run/model/.*" negate="true" />
+                    <has_archive_member path="experiment_run/image_size_details.json" />
+                    <has_archive_member path="experiment_run/model/.*" max="0" />
                 </assert_contents>
             </output>
 
@@ -567,7 +571,8 @@
             <output name="output_artifacts_zip" ftype="zip">
                 <assert_contents>
                     <has_archive_member path="experiment_run/predictions.csv" />
-                    <has_archive_member path="experiment_run/model/.*" negate="true" />
+                    <has_archive_member path="experiment_run/image_size_details.json" />
+                    <has_archive_member path="experiment_run/model/.*" max="0" />
                 </assert_contents>
             </output>
         </test>
@@ -596,7 +601,7 @@ The MetaFormer family represents a unified perspective on transformer-like archi
 
 **Outputs**
 The tool will output a trained model in the form of a ludwig_model file,
-a report in the form of an HTML file, and a hidden ZIP archive containing the predictions, experiment stats, and visualizations.
+a report in the form of an HTML file, and a hidden ZIP archive containing the predictions, image-size details, experiment stats, and visualizations.
 The html report will contain metrics&experiment setup parameters, train&val plots and test plots.
 
         ]]>

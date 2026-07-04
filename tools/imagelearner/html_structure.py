@@ -1,5 +1,6 @@
 import base64
 import json
+from html import escape
 from typing import Any, Dict, List, Optional
 
 from constants import DEFAULT_HITS_AT_K, METRIC_DISPLAY_NAMES
@@ -20,6 +21,49 @@ def format_metric_display_name(metric_key: str, top_k: int = DEFAULT_HITS_AT_K) 
     if metric_key == "hits_at_k":
         return f"Hits@{int(top_k)}"
     return METRIC_DISPLAY_NAMES.get(metric_key, metric_key.replace("_", " ").title())
+
+
+def format_image_size_value(val: Any) -> str:
+    if val is None:
+        return "N/A"
+    if isinstance(val, (list, tuple)) and len(val) == 2:
+        return f"{val[0]}x{val[1]}"
+    if isinstance(val, str) and val.lower() == "original":
+        return "Original (no resize)"
+    return str(val)
+
+
+def format_image_size_report(config: dict, val: Any) -> str:
+    """Render a concise image size summary for the report."""
+    details = config.get("image_size_adaptation")
+    if not isinstance(details, dict):
+        return format_image_size_value(val)
+
+    final_training_size = (
+        details.get("final_training_size") or details.get("training_size")
+    )
+    model_adaptation_to_size = (
+        details.get("model_adaptation_to_size") or details.get("model_adaptation_size")
+    )
+    image_size = model_adaptation_to_size or final_training_size or val
+
+    if not image_size:
+        return format_image_size_value(val)
+
+    lines = []
+    if model_adaptation_to_size:
+        lines.append(
+            "<span style='font-size: 0.85em;'>"
+            "Auto-resize for model compatibility"
+            "</span>"
+        )
+    lines.append(escape(format_image_size_value(image_size)))
+
+    return (
+        "<div style='text-align: center; line-height: 1.45;'>"
+        + "<br>".join(lines)
+        + "</div>"
+    )
 
 
 def format_config_table_html(
@@ -87,14 +131,7 @@ def format_config_table_html(
             if key == "task_type":
                 val_str = val.title() if isinstance(val, str) else "N/A"
             elif key == "image_size":
-                if val is None:
-                    val_str = "N/A"
-                elif isinstance(val, (list, tuple)) and len(val) == 2:
-                    val_str = f"{val[0]}x{val[1]}"
-                elif isinstance(val, str) and val.lower() == "original":
-                    val_str = "Original (no resize)"
-                else:
-                    val_str = str(val)
+                val_str = format_image_size_report(config, val)
             elif key == "batch_size":
                 if isinstance(val, (int, float)):
                     val_str = int(val)
@@ -107,7 +144,7 @@ def format_config_table_html(
                     if resolved_val is not None:
                         val_str = (
                             "<span style='font-size: 0.85em;'>"
-                            "Auto-selected batch size by Ludwig:</span><br>"
+                            "Auto-selection</span><br>"
                             f"{resolved_val}"
                         )
                     else:
@@ -120,7 +157,7 @@ def format_config_table_html(
                         resolved_val = training_progress.get("learning_rate")
                         val_str = (
                             "<span style='font-size: 0.85em;'>"
-                            "Auto-selected learning rate by Ludwig:</span><br>"
+                            "Auto-selection</span><br>"
                             f"{resolved_val if resolved_val else 'auto'}"
                         )
                     else:

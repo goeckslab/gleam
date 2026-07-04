@@ -1,4 +1,5 @@
 import argparse
+import json
 import logging
 import os
 import shutil
@@ -10,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import pandas.api.types as ptypes
 from constants import (
+    IMAGE_FILE_SUFFIXES,
     IMAGE_PATH_COLUMN_NAME,
     LABEL_COLUMN_NAME,
     SPLIT_COLUMN_NAME,
@@ -23,17 +25,6 @@ from split_data import create_stratified_random_split, split_data_0_2
 from utils import load_metadata_table
 
 logger = logging.getLogger("ImageLearner")
-
-IMAGE_FILE_SUFFIXES = {
-    ".bmp",
-    ".gif",
-    ".jpeg",
-    ".jpg",
-    ".png",
-    ".tif",
-    ".tiff",
-    ".webp",
-}
 
 
 class ImageLearnerCLI:
@@ -401,9 +392,7 @@ class ImageLearnerCLI:
     def _detect_image_dimensions(self) -> Tuple[int, int]:
         """Detect image dimensions from the first image in the dataset."""
         try:
-            import zipfile
             from PIL import Image
-            import io
 
             # Check if image_zip is provided
             if not self.args.image_zip:
@@ -412,15 +401,20 @@ class ImageLearnerCLI:
 
             # Extract first image to detect dimensions
             with zipfile.ZipFile(self.args.image_zip, 'r') as z:
-                image_files = [f for f in z.namelist() if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+                image_files = [
+                    f
+                    for f in z.namelist()
+                    if not f.endswith("/")
+                    and Path(f).suffix.lower() in IMAGE_FILE_SUFFIXES
+                ]
                 if not image_files:
                     logger.warning("No image files found in zip, using default 224x224")
                     return 224, 224
 
                 # Check first image
                 with z.open(image_files[0]) as f:
-                    img = Image.open(io.BytesIO(f.read()))
-                    width, height = img.size
+                    with Image.open(f) as img:
+                        width, height = img.size
                     logger.info(f"Detected image dimensions: {width}x{height}")
                     return height, width  # Return as (height, width) to match encoder config
 
@@ -477,6 +471,7 @@ class ImageLearnerCLI:
                 "augmentation": self.args.augmentation,
                 "image_resize": self.args.image_resize,
                 "image_zip": self.args.image_zip,
+                "image_extract_dir": str(self.image_extract_dir),
                 "threshold": self.args.threshold,
                 "threshold_mode": self.args.threshold_mode,
                 "threshold_metric": self.args.threshold_metric,
@@ -518,6 +513,10 @@ class ImageLearnerCLI:
                 )
                 # Generate a very small set of plots to conserve disk space
                 self.backend.generate_plots(self.args.output_dir)
+                self._write_image_size_details_artifact(
+                    self.args.output_dir,
+                    backend_args,
+                )
                 # Build HTML report (robust to missing metrics)
                 report_file = self.backend.generate_html_report(
                     "Image Learner Experiment Report",
@@ -544,6 +543,10 @@ class ImageLearnerCLI:
 
                 try:
                     self._create_minimal_outputs(self.args.output_dir, csv_path)
+                    self._write_image_size_details_artifact(
+                        self.args.output_dir,
+                        backend_args,
+                    )
                     # Even in fallback, produce an HTML shell so tests find required text
                     report_file = self.backend.generate_html_report(
                         "Image Learner Experiment Report",
@@ -561,6 +564,36 @@ class ImageLearnerCLI:
             raise
         finally:
             self._cleanup_temp_dirs()
+
+    def _write_image_size_details_artifact(
+        self,
+        output_dir: Path,
+        config_params: Dict[str, Any],
+    ) -> None:
+        """Persist detailed image-size metadata in the artifact ZIP contents."""
+        details = config_params.get("image_size_adaptation")
+        if not isinstance(details, dict):
+            return
+
+        output_dir = Path(output_dir)
+        exp_dirs = sorted(
+            output_dir.glob("experiment_run*"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        if not exp_dirs:
+            return
+
+        artifact_path = exp_dirs[-1] / "image_size_details.json"
+        try:
+            artifact_path.write_text(
+                json.dumps(details, indent=2, sort_keys=True) + "\n"
+            )
+            logger.info("Wrote image size details artifact: %s", artifact_path)
+        except Exception:
+            logger.warning(
+                "Unable to write image size details artifact.",
+                exc_info=True,
+            )
 
     def _postprocess_cleanup(self, output_dir: Path) -> None:
         """Remove large intermediates and caches to conserve disk space across tests."""

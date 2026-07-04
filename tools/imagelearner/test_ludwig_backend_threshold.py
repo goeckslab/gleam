@@ -1,10 +1,13 @@
 import importlib
+import io
 import sys
 import types
+import zipfile
 from pathlib import Path
 
 import pandas as pd
 import yaml
+from PIL import Image
 
 
 TOOL_DIR = Path(__file__).resolve().parent
@@ -40,6 +43,19 @@ def _load_backend_test_objects():
         constants.SPLIT_COLUMN_NAME,
         ludwig_backend.LudwigDirectBackend,
     )
+
+
+def _write_image_zip(tmp_path, sizes, suffixes=None):
+    zip_path = tmp_path / "images.zip"
+    suffixes = suffixes or [".png"] * len(sizes)
+    assert len(suffixes) == len(sizes)
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for index, (size, suffix) in enumerate(zip(sizes, suffixes)):
+            image = Image.new("RGB", size, color="white")
+            buffer = io.BytesIO()
+            image.save(buffer, format="PNG")
+            zf.writestr(f"image_{index}{suffix}", buffer.getvalue())
+    return zip_path
 
 
 def test_generate_validation_predictions_writes_split_specific_file(tmp_path):
@@ -122,3 +138,133 @@ def test_prepare_config_records_category_top_k():
 
     assert config["output_features"][0]["type"] == "category"
     assert config["output_features"][0]["top_k"] == 3
+
+
+def test_prepare_config_records_explicit_resize_image_size_summary(tmp_path):
+    (
+        _image_path_col,
+        _label_col,
+        _split_col,
+        LudwigDirectBackend,
+    ) = _load_backend_test_objects()
+    image_zip = _write_image_zip(tmp_path, [(96, 96), (96, 96)])
+    params = {
+        "model_name": "resnet18",
+        "use_pretrained": False,
+        "epochs": 1,
+        "image_resize": "384x384",
+        "image_zip": str(image_zip),
+        "label_metadata": {"num_unique": 2},
+    }
+
+    yaml_str = LudwigDirectBackend().prepare_config(
+        params,
+        {"type": "random", "probabilities": [0.7, 0.1, 0.2]},
+    )
+    config = yaml.safe_load(yaml_str)
+    preprocessing = config["input_features"][0]["preprocessing"]
+
+    assert preprocessing["height"] == 384
+    assert preprocessing["width"] == 384
+    assert params["image_size"] == "384x384"
+    assert params["image_size_adaptation"]["original_size"] == "96x96"
+    assert params["image_size_adaptation"]["requested_resize"] == "384x384"
+    assert params["image_size_adaptation"]["training_size"] == "384x384"
+    assert params["image_size_adaptation"]["final_training_size"] == "384x384"
+    assert "model_adaptation_size" not in params["image_size_adaptation"]
+
+
+def test_detect_image_dimension_summary_uses_supported_suffixes(tmp_path):
+    (
+        _image_path_col,
+        _label_col,
+        _split_col,
+        LudwigDirectBackend,
+    ) = _load_backend_test_objects()
+    constants = importlib.import_module("constants")
+    suffixes = sorted(constants.IMAGE_FILE_SUFFIXES)
+    image_zip = _write_image_zip(
+        tmp_path,
+        [(17, 23)] * len(suffixes),
+        suffixes=suffixes,
+    )
+
+    summary = LudwigDirectBackend()._detect_image_dimension_summary(str(image_zip))
+
+    assert summary["is_fallback"] is False
+    assert summary["original_size"] == "23x17"
+    assert summary["first_image_size"] == "23x17"
+    assert summary["image_count"] == len(suffixes)
+    assert summary["readable_image_count"] == len(suffixes)
+
+
+def test_detect_image_dimension_summary_limits_inspection_count(tmp_path, monkeypatch):
+    (
+        _image_path_col,
+        _label_col,
+        _split_col,
+        LudwigDirectBackend,
+    ) = _load_backend_test_objects()
+    ludwig_backend = importlib.import_module("ludwig_backend")
+    monkeypatch.setattr(ludwig_backend, "MAX_IMAGE_DIMENSION_INSPECTION_COUNT", 2)
+    image_zip = _write_image_zip(
+        tmp_path,
+        [(16, 16), (16, 16), (32, 32)],
+    )
+
+    summary = LudwigDirectBackend()._detect_image_dimension_summary(str(image_zip))
+
+    assert summary["is_fallback"] is False
+    assert summary["image_count"] == 3
+    assert summary["inspected_image_count"] == 2
+    assert summary["uninspected_image_count"] == 1
+    assert summary["readable_image_count"] == 2
+    assert summary["is_sampled"] is True
+
+
+def test_prepare_config_records_metaformer_model_size_adaptation(tmp_path):
+    (
+        _image_path_col,
+        _label_col,
+        _split_col,
+        LudwigDirectBackend,
+    ) = _load_backend_test_objects()
+    ludwig_backend = importlib.import_module("ludwig_backend")
+    original_meta_default_cfgs = ludwig_backend.META_DEFAULT_CFGS
+    ludwig_backend.META_DEFAULT_CFGS = {
+        **original_meta_default_cfgs,
+        "caformer_s18_384": {
+            "input_size": (3, 384, 384),
+            "url": "https://example.invalid/caformer_s18_384.pth",
+        },
+    }
+    try:
+        image_zip = _write_image_zip(tmp_path, [(96, 96)])
+        params = {
+            "model_name": "caformer_s18_384",
+            "use_pretrained": True,
+            "epochs": 1,
+            "image_resize": "original",
+            "image_zip": str(image_zip),
+            "label_metadata": {"num_unique": 3},
+        }
+        yaml_str = LudwigDirectBackend().prepare_config(
+            params,
+            {"type": "random", "probabilities": [0.7, 0.1, 0.2]},
+        )
+    finally:
+        ludwig_backend.META_DEFAULT_CFGS = original_meta_default_cfgs
+    config = yaml.safe_load(yaml_str)
+    input_feature = config["input_features"][0]
+
+    assert input_feature["preprocessing"]["height"] == 96
+    assert input_feature["preprocessing"]["width"] == 96
+    assert input_feature["encoder"]["height"] == 96
+    assert input_feature["encoder"]["width"] == 96
+    assert params["image_size_adaptation"]["original_size"] == "96x96"
+    assert params["image_size_adaptation"]["training_size"] == "96x96"
+    assert params["image_size_adaptation"]["final_training_size"] == "96x96"
+    assert params["image_size_adaptation"]["model_configured_size"] == "384x384"
+    assert params["image_size_adaptation"]["model_adaptation_size"] == "224x224"
+    assert params["image_size_adaptation"]["model_adaptation_from_size"] == "96x96"
+    assert params["image_size_adaptation"]["model_adaptation_to_size"] == "224x224"

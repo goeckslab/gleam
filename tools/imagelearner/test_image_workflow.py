@@ -1,4 +1,6 @@
 import importlib
+import json
+import re
 import sys
 import types
 from pathlib import Path
@@ -38,6 +40,18 @@ def _load_test_objects():
         html_structure.format_image_match_notice,
         image_workflow.ImageLearnerCLI,
     )
+
+
+def _config_table_value_html(html: str, label: str) -> str:
+    match = re.search(
+        r"<tr>\s*<td\b[^>]*>\s*"
+        + re.escape(label)
+        + r"\s*</td>\s*<td\b[^>]*>(?P<value>.*?)</td>\s*</tr>",
+        html,
+        flags=re.DOTALL,
+    )
+    assert match, f"{label} row not found in config table"
+    return match.group("value")
 
 
 def test_map_image_paths_filters_to_matching_images_and_records_summary(tmp_path):
@@ -155,23 +169,118 @@ def test_metric_summary_formats_hits_at_3_without_changing_metric_values():
     assert "1.1000" in html
 
 
+def test_config_table_shows_model_compatible_image_size_when_adapted():
+    html_structure = importlib.import_module("html_structure")
+
+    html = html_structure.format_config_table_html(
+        {
+            "image_size": "96x96",
+            "image_size_adaptation": {
+                "original_size": "96x96",
+                "requested_resize": "original",
+                "training_size": "96x96",
+                "final_training_size": "96x96",
+                "model_configured_size": "384x384",
+                "model_adaptation_size": "224x224",
+                "model_adaptation_from_size": "96x96",
+                "model_adaptation_to_size": "224x224",
+            },
+        }
+    )
+    image_size_html = _config_table_value_html(html, "Image Size")
+
+    assert "224x224" in image_size_html
+    assert "text-align: center" in image_size_html
+    assert "font-size: 0.85em" in image_size_html
+    assert "Auto-resize for model compatibility" in image_size_html
+    assert image_size_html.index(
+        "Auto-resize for model compatibility"
+    ) < image_size_html.index("224x224")
+    assert "Image was resized to be compatible with the model selected" not in image_size_html
+    assert "Resized for model compatibility" not in image_size_html
+    assert "Original image size" not in image_size_html
+    assert "Final resize before training" not in image_size_html
+    assert "Model original input size" not in image_size_html
+    assert "Model adaptation" not in image_size_html
+    assert "Training preprocessing size" not in image_size_html
+    assert "Model configured input size" not in image_size_html
+    assert "Auto-adaptation for the model" not in image_size_html
+
+
+def test_config_table_shows_user_selected_image_size_without_adaptation():
+    html_structure = importlib.import_module("html_structure")
+
+    html = html_structure.format_config_table_html(
+        {
+            "image_size": "384x384",
+            "image_size_adaptation": {
+                "original_size": "mixed",
+                "original_sizes": [
+                    {"size": "96x96", "count": 2},
+                    {"size": "128x128", "count": 1},
+                ],
+                "is_mixed": True,
+                "requested_resize": "384x384",
+                "training_size": "384x384",
+                "final_training_size": "384x384",
+            },
+        }
+    )
+    image_size_html = _config_table_value_html(html, "Image Size")
+
+    assert "384x384" in image_size_html
+    assert "Resized for model compatibility" not in image_size_html
+    assert "Auto-resize for model compatibility" not in image_size_html
+    assert "Image was resized to be compatible with the model selected" not in image_size_html
+    assert "font-size: 0.85em" not in image_size_html
+    assert "text-align: center" in image_size_html
+    assert "Original image sizes" not in image_size_html
+    assert "Final resize before training" not in image_size_html
+    assert "Training preprocessing size" not in image_size_html
+
+
+def test_image_size_details_are_written_to_artifacts(tmp_path):
+    (_image_path_col, _label_col, _notice, ImageLearnerCLI) = _load_test_objects()
+    cli = ImageLearnerCLI.__new__(ImageLearnerCLI)
+    exp_dir = tmp_path / "experiment_run"
+    exp_dir.mkdir()
+    details = {
+        "original_size": "96x96",
+        "final_training_size": "96x96",
+        "model_configured_size": "384x384",
+        "model_adaptation_to_size": "224x224",
+    }
+
+    cli._write_image_size_details_artifact(
+        tmp_path,
+        {"image_size_adaptation": details},
+    )
+
+    artifact_path = exp_dir / "image_size_details.json"
+    assert artifact_path.exists()
+    assert json.loads(artifact_path.read_text()) == details
+
+
 def test_config_table_displays_resolved_auto_batch_size():
     html_structure = importlib.import_module("html_structure")
 
     html = html_structure.format_config_table_html(
-        {"batch_size": "auto", "learning_rate": 0.001},
+        {"batch_size": "auto"},
         training_progress={"batch_size": 16},
     )
+    batch_size_html = _config_table_value_html(html, "Batch Size")
 
-    assert (
+    assert batch_size_html == (
         "<span style='font-size: 0.85em;'>"
-        "Auto-selected batch size by Ludwig:</span>"
-    ) in html
-    assert ">16</td>" in html
-    assert "<span style='font-size: 0.85em;'>16</span>" not in html
-    assert "Based on model architecture and training setup" not in html
-    assert "Ludwig Trainer Parameters" not in html
-    assert ">auto</td>" not in html
+        "Auto-selection</span><br>"
+        "16"
+    )
+    assert "<span style='font-size: 0.85em;'>16</span>" not in batch_size_html
+    assert "Based on model architecture and training setup" not in batch_size_html
+    assert "Ludwig Trainer Parameters" not in batch_size_html
+    assert "Auto-selected batch size by Ludwig:" not in batch_size_html
+    assert "Ludwig Auto-selection" not in batch_size_html
+    assert "auto" not in batch_size_html
 
 
 def test_config_table_displays_resolved_auto_learning_rate_without_extra_context():
@@ -181,11 +290,56 @@ def test_config_table_displays_resolved_auto_learning_rate_without_extra_context
         {"learning_rate": "auto"},
         training_progress={"learning_rate": 1e-5},
     )
+    learning_rate_html = _config_table_value_html(html, "Learning Rate")
 
-    assert (
+    assert learning_rate_html == (
         "<span style='font-size: 0.85em;'>"
-        "Auto-selected learning rate by Ludwig:</span>"
-    ) in html
-    assert ">1e-05</td>" in html
-    assert "<span style='font-size: 0.85em;'>1e-05</span>" not in html
-    assert "Based on model architecture and training setup" not in html
+        "Auto-selection</span><br>"
+        "1e-05"
+    )
+    assert "<span style='font-size: 0.85em;'>1e-05</span>" not in learning_rate_html
+    assert "Based on model architecture and training setup" not in learning_rate_html
+    assert "Auto-selected learning rate by Ludwig:" not in learning_rate_html
+    assert "Ludwig Auto-selection" not in learning_rate_html
+
+
+def test_config_table_displays_batch_learning_rate_and_image_size_together():
+    html_structure = importlib.import_module("html_structure")
+
+    html = html_structure.format_config_table_html(
+        {
+            "batch_size": "auto",
+            "learning_rate": "auto",
+            "image_size": "96x96",
+            "image_size_adaptation": {
+                "final_training_size": "96x96",
+                "model_adaptation_to_size": "224x224",
+            },
+        },
+        training_progress={"batch_size": 16, "learning_rate": 1e-5},
+    )
+
+    batch_size_html = _config_table_value_html(html, "Batch Size")
+    learning_rate_html = _config_table_value_html(html, "Learning Rate")
+    image_size_html = _config_table_value_html(html, "Image Size")
+
+    assert batch_size_html == (
+        "<span style='font-size: 0.85em;'>"
+        "Auto-selection</span><br>"
+        "16"
+    )
+    assert learning_rate_html == (
+        "<span style='font-size: 0.85em;'>"
+        "Auto-selection</span><br>"
+        "1e-05"
+    )
+    assert "224x224" in image_size_html
+    assert "Auto-resize for model compatibility" in image_size_html
+    assert image_size_html.index(
+        "Auto-resize for model compatibility"
+    ) < image_size_html.index("224x224")
+    assert "Auto-selected batch size by Ludwig:" not in batch_size_html
+    assert "Auto-selected learning rate by Ludwig:" not in learning_rate_html
+    assert "Ludwig Auto-selection" not in batch_size_html
+    assert "Ludwig Auto-selection" not in learning_rate_html
+    assert "Image was resized to be compatible with the model selected" not in image_size_html
