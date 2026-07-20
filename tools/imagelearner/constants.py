@@ -218,3 +218,16 @@ METRIC_DISPLAY_NAMES = {
     "mean_absolute_percentage_error": "Mean Absolute % Error",
     "root_mean_squared_percentage_error": "Root Mean Squared % Error",
 }
+# Ludwig 0.10.x quirk: for category (multi-class) outputs, the "accuracy" metric is
+# torchmetrics MulticlassAccuracy with its default average="macro", i.e. the
+# macro-average of per-class recall (balanced accuracy) — NOT sample-level accuracy.
+# "accuracy_micro" (average="micro") is the standard sample-level accuracy, which for
+# single-label multi-class equals micro precision/recall/F1. Ludwig's multi-class
+# "roc_auc" (MulticlassAUROC) is likewise macro-averaged. These overrides are applied
+# only for multi-class reports; binary "accuracy"/"roc_auc" are standard and keep
+# their base labels.
+MULTICLASS_METRIC_DISPLAY_NAME_OVERRIDES = {
+    "accuracy": "Balanced Accuracy (Macro Recall)",
+    "accuracy_micro": "Accuracy",
+    "roc_auc": "Macro ROC-AUC",
+}
