@@ -188,7 +188,9 @@ def format_config_table_html(
             elif key == "validation_metric":
                 if val is not None:
                     val_str = format_metric_display_name(
-                        str(val), int(config.get("top_k") or DEFAULT_HITS_AT_K)
+                        str(val),
+                        int(config.get("top_k") or DEFAULT_HITS_AT_K),
+                        output_type,
                     )
                 else:
                     val_str = "N/A"
