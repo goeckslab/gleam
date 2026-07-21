@@ -146,6 +146,17 @@ def extract_metrics_from_json(
             exclude = {"per_class_stats", "precision_recall_curve", "roc_curve"}
         else:
             exclude = {"per_class_stats", "confusion_matrix"}
+            # Ludwig 0.10.1 bug (ludwig/utils/eval_utils.py::ConfusionMatrix.stats):
+            # "avg_precision_weighted" and "avg_recall_weighted" are computed with
+            # average="micro", so they silently duplicate the micro values instead of
+            # being support-weighted. "token_accuracy" (sklearn accuracy_score) is an
+            # exact duplicate of accuracy_micro under a name that is meaningless for
+            # image classification. Drop all three from the report.
+            exclude |= {
+                "avg_precision_weighted",
+                "avg_recall_weighted",
+                "token_accuracy",
+            }
 
         # 1. Get all scalar test_label_stats not excluded
         test_metrics = {}
@@ -157,8 +168,10 @@ def extract_metrics_from_json(
             if isinstance(v, (int, float, str, bool)):
                 test_metrics[k] = v
 
-        # 2. Add overall_stats (flattened)
+        # 2. Add overall_stats (flattened), applying the same exclusions
         for k, v in overall_stats.items():
+            if k in exclude:
+                continue
             test_metrics[k] = v
 
         # 3. Optionally include combined/loss if present and not already

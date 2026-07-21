@@ -3,7 +3,11 @@ import json
 from html import escape
 from typing import Any, Dict, List, Optional
 
-from constants import DEFAULT_HITS_AT_K, METRIC_DISPLAY_NAMES
+from constants import (
+    DEFAULT_HITS_AT_K,
+    METRIC_DISPLAY_NAMES,
+    MULTICLASS_METRIC_DISPLAY_NAME_OVERRIDES,
+)
 from utils import detect_output_type, extract_metrics_from_json
 
 
@@ -16,10 +20,21 @@ def generate_table_row(cells, styles):
     )
 
 
-def format_metric_display_name(metric_key: str, top_k: int = DEFAULT_HITS_AT_K) -> str:
-    """Return a user-facing metric label with resolved parameters."""
+def format_metric_display_name(
+    metric_key: str,
+    top_k: int = DEFAULT_HITS_AT_K,
+    output_type: Optional[str] = None,
+) -> str:
+    """Return a user-facing metric label with resolved parameters.
+
+    For multi-class ("category") outputs, Ludwig's "accuracy" is macro-averaged
+    per-class recall (balanced accuracy) and "accuracy_micro" is the standard
+    sample-level accuracy, so their labels are overridden accordingly.
+    """
     if metric_key == "hits_at_k":
         return f"Hits@{int(top_k)}"
+    if output_type == "category" and metric_key in MULTICLASS_METRIC_DISPLAY_NAME_OVERRIDES:
+        return MULTICLASS_METRIC_DISPLAY_NAME_OVERRIDES[metric_key]
     return METRIC_DISPLAY_NAMES.get(metric_key, metric_key.replace("_", " ").title())
 
 
@@ -173,7 +188,9 @@ def format_config_table_html(
             elif key == "validation_metric":
                 if val is not None:
                     val_str = format_metric_display_name(
-                        str(val), int(config.get("top_k") or DEFAULT_HITS_AT_K)
+                        str(val),
+                        int(config.get("top_k") or DEFAULT_HITS_AT_K),
+                        output_type,
                     )
                 else:
                     val_str = "N/A"
@@ -691,13 +708,14 @@ def get_metrics_help_modal() -> str:
         '      <h3>3) Classification Metrics</h3>'
         '      <p><strong>Accuracy:</strong> Proportion of correct predictions '
         'among all predictions. Simple but misleading for imbalanced datasets, '
-        'where high accuracy may hide poor performance on minority classes.</p>'
-        '      <p><strong>Micro Accuracy:</strong> Sums true positives and true negatives '
-        'across all classes before computing accuracy. Suitable for multiclass or '
-        'multilabel problems with imbalanced data.</p>'
-        '      <p><strong>Token Accuracy:</strong> Measures how often predicted tokens '
-        '(e.g., in sequences) match true tokens. Common in NLP tasks like text generation '
-        'or token classification.</p>'
+        'where high accuracy may hide poor performance on minority classes. '
+        'For single-label multi-class problems it is identical to micro-averaged '
+        'precision, recall, and F1.</p>'
+        '      <p><strong>Balanced Accuracy (Macro Recall):</strong> The unweighted '
+        'mean of per-class recall, treating every class equally regardless of size. '
+        'Lower than accuracy when minority classes are predicted less reliably. '
+        'In multi-class reports this replaces the raw Ludwig "accuracy" metric, '
+        'which is macro-averaged.</p>'
         '      <p><strong>Precision:</strong> Proportion of positive predictions that are '
         'correct (TP / (TP + FP)). Use when false positives are costly, e.g., spam detection.</p>'
         '      <p><strong>Recall (Sensitivity):</strong> Proportion of actual positives '
@@ -908,7 +926,7 @@ def format_stats_table_html(
             metric_key in all_metrics["validation"]
             and metric_key in all_metrics["test"]
         ):
-            display_name = format_metric_display_name(metric_key, top_k)
+            display_name = format_metric_display_name(metric_key, top_k, output_type)
             t = all_metrics["training"].get(metric_key)
             v = all_metrics["validation"].get(metric_key)
             te = all_metrics["test"].get(metric_key)
@@ -955,11 +973,12 @@ def format_train_val_stats_table_html(
     top_k: int = DEFAULT_HITS_AT_K,
 ) -> str:
     """Format train/validation metrics into an HTML table."""
-    all_metrics = extract_metrics_from_json(train_stats, test_stats, detect_output_type(test_stats))
+    output_type = detect_output_type(test_stats)
+    all_metrics = extract_metrics_from_json(train_stats, test_stats, output_type)
     rows = []
     for metric_key in sorted(all_metrics["training"].keys()):
         if metric_key in all_metrics["validation"]:
-            display_name = format_metric_display_name(metric_key, top_k)
+            display_name = format_metric_display_name(metric_key, top_k, output_type)
             t = all_metrics["training"].get(metric_key)
             v = all_metrics["validation"].get(metric_key)
             if t is not None and v is not None:
@@ -1005,7 +1024,7 @@ def format_test_merged_stats_table_html(
     """Format test metrics into an HTML table."""
     rows = []
     for key in sorted(test_metrics.keys()):
-        display_name = format_metric_display_name(key, top_k)
+        display_name = format_metric_display_name(key, top_k, output_type)
         value = test_metrics[key]
         if value is not None:
             rows.append([display_name, f"{value:.4f}"])

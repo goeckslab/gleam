@@ -2253,7 +2253,9 @@ class LudwigDirectBackend:
                     tab2_content = append_plot_blocks(tab2_content, tv_plots)
                 else:
                     tv_plots = build_train_validation_plots(
-                        str(train_stats_path), top_k=hits_top_k
+                        str(train_stats_path),
+                        top_k=hits_top_k,
+                        output_type=output_type,
                     )
                     # Add threshold plot first, then other train/val plots
                     if threshold_plot:

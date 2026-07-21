@@ -36,6 +36,63 @@ def test_train_validation_plots_include_hits_at_3_when_available(tmp_path):
     assert "Hits@3 across epochs (correct class in top 3)" in titles
 
 
+def _write_multiclass_training_stats(tmp_path):
+    stats_path = tmp_path / "training_statistics.json"
+    stats_path.write_text(
+        """
+{
+  "training": {"label": {"accuracy": [0.8, 0.98], "accuracy_micro": [0.82, 0.98],
+                         "roc_auc": [0.95, 0.99], "loss": [1.2, 0.05]}},
+  "validation": {"label": {"accuracy": [0.7, 0.87], "accuracy_micro": [0.72, 0.87],
+                           "roc_auc": [0.93, 0.98], "loss": [1.4, 0.33]}}
+}
+"""
+    )
+    return stats_path
+
+
+def test_train_validation_plot_titles_use_multiclass_metric_labels(tmp_path):
+    """Curve titles must match the performance tables for category runs.
+
+    Ludwig's multiclass "accuracy" is macro-averaged per-class recall and its
+    "roc_auc" is macro-averaged, so plotting them as plain "Accuracy"/"ROC-AUC"
+    contradicts the summary tables.
+    """
+    stats_path = _write_multiclass_training_stats(tmp_path)
+
+    titles = [
+        plot["title"]
+        for plot in build_train_validation_plots(
+            str(stats_path), top_k=3, output_type="category"
+        )
+    ]
+
+    assert "Balanced Accuracy (Macro Recall) across epochs" in titles
+    assert "Accuracy across epochs" in titles  # from accuracy_micro
+    assert "Macro ROC-AUC across epochs" in titles
+    assert "Overfitting gap: Macro ROC-AUC across epochs" in titles
+    assert "Micro Accuracy across epochs" not in titles
+    assert "ROC-AUC across epochs" not in titles
+    assert "Overfitting gap: ROC-AUC across epochs" not in titles
+
+
+def test_train_validation_plot_titles_unchanged_for_binary_and_default(tmp_path):
+    stats_path = _write_multiclass_training_stats(tmp_path)
+
+    for output_type in ("binary", None):
+        titles = [
+            plot["title"]
+            for plot in build_train_validation_plots(
+                str(stats_path), top_k=3, output_type=output_type
+            )
+        ]
+        assert "Accuracy across epochs" in titles
+        assert "ROC-AUC across epochs" in titles
+        assert "Overfitting gap: ROC-AUC across epochs" in titles
+        assert "Balanced Accuracy (Macro Recall) across epochs" not in titles
+        assert "Macro ROC-AUC across epochs" not in titles
+
+
 def test_optimize_binary_threshold_uses_requested_metric():
     result = optimize_binary_threshold_values(
         np.array([0, 1, 1, 0]),

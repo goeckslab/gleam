@@ -7,7 +7,12 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 from calibration_plot import expected_calibration_error
-from constants import DEFAULT_HITS_AT_K, LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME
+from constants import (
+    DEFAULT_HITS_AT_K,
+    LABEL_COLUMN_NAME,
+    MULTICLASS_METRIC_DISPLAY_NAME_OVERRIDES,
+    SPLIT_COLUMN_NAME,
+)
 from sklearn.calibration import calibration_curve
 from sklearn.metrics import (
     accuracy_score,
@@ -436,9 +441,16 @@ def build_classification_plots(
 
 
 def build_train_validation_plots(
-    train_stats_path: str, top_k: int = DEFAULT_HITS_AT_K
+    train_stats_path: str,
+    top_k: int = DEFAULT_HITS_AT_K,
+    output_type: Optional[str] = None,
 ) -> List[Dict[str, str]]:
-    """Generate Train/Validation learning curve plots from training_statistics.json."""
+    """Generate Train/Validation learning curve plots from training_statistics.json.
+
+    For multi-class ("category") runs, Ludwig's "accuracy" is macro-averaged
+    per-class recall and "roc_auc" is macro-averaged, so the curve titles are
+    relabeled to match the performance summary tables.
+    """
     if not train_stats_path or not Path(train_stats_path).exists():
         return []
     try:
@@ -464,15 +476,30 @@ def build_train_validation_plots(
         except Exception:
             return []
 
+    def _label(metric_key: str, default: str) -> str:
+        """Use the category-aware metric name so curves match the summary tables."""
+        if output_type == "category":
+            return MULTICLASS_METRIC_DISPLAY_NAME_OVERRIDES.get(metric_key, default)
+        return default
+
+    accuracy_label = _label("accuracy", "Accuracy")
+    accuracy_micro_label = _label("accuracy_micro", "Micro Accuracy")
+    roc_auc_label = _label("roc_auc", "ROC-AUC")
+
     metric_specs = [
         ("loss", "Loss across epochs", "Loss"),
-        ("accuracy", "Accuracy across epochs", "Accuracy"),
+        ("accuracy", f"{accuracy_label} across epochs", accuracy_label),
+        (
+            "accuracy_micro",
+            f"{accuracy_micro_label} across epochs",
+            accuracy_micro_label,
+        ),
         (
             "hits_at_k",
             f"Hits@{int(top_k)} across epochs (correct class in top {int(top_k)})",
             f"Hits@{int(top_k)}",
         ),
-        ("roc_auc", "ROC-AUC across epochs", "ROC-AUC"),
+        ("roc_auc", f"{roc_auc_label} across epochs", roc_auc_label),
         ("precision", "Precision across epochs", "Precision"),
         ("recall", "Recall/Sensitivity across epochs", "Recall"),
         ("specificity", "Specificity across epochs", "Specificity"),
@@ -530,12 +557,13 @@ def build_train_validation_plots(
     if roc_train and roc_val:
         max_len = min(len(roc_train), len(roc_val))
         gaps = [t - v for t, v in zip(roc_train[:max_len], roc_val[:max_len])]
+        gap_title = f"Overfitting gap: {roc_auc_label} across epochs"
         fig_gap = _line_chart(
-            [("Train - Val ROC-AUC", gaps)],
-            title="Overfitting gap: ROC-AUC across epochs",
+            [(f"Train - Val {roc_auc_label}", gaps)],
+            title=gap_title,
             yaxis_title="Gap",
         )
-        plots.append(_wrap_plot("Overfitting gap: ROC-AUC across epochs", fig_gap, include_js=include_js))
+        plots.append(_wrap_plot(gap_title, fig_gap, include_js=include_js))
         include_js = False
 
     # Best Epoch Dashboard (based on max val ROC-AUC)

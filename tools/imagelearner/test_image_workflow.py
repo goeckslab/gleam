@@ -169,6 +169,50 @@ def test_metric_summary_formats_hits_at_3_without_changing_metric_values():
     assert "1.1000" in html
 
 
+def test_config_table_validation_metric_label_matches_multiclass_tables():
+    """Config table must use the same category-aware labels as the metric tables.
+
+    Ludwig's multiclass "accuracy" is macro-averaged per-class recall, so a run
+    validated on it has to read "Balanced Accuracy (Macro Recall)" in the config
+    table too - otherwise it contradicts the performance summaries.
+    """
+    html_structure = importlib.import_module("html_structure")
+
+    multiclass_html = html_structure.format_config_table_html(
+        {"validation_metric": "accuracy"}, output_type="category"
+    )
+    value_html = _config_table_value_html(multiclass_html, "Validation Metric")
+    assert value_html == "Balanced Accuracy (Macro Recall)"
+
+    # The label must agree with the one used in the performance tables.
+    assert value_html == html_structure.format_metric_display_name(
+        "accuracy", output_type="category"
+    )
+
+    # accuracy_micro is the true sample-level accuracy for multiclass.
+    micro_html = html_structure.format_config_table_html(
+        {"validation_metric": "accuracy_micro"}, output_type="category"
+    )
+    assert _config_table_value_html(micro_html, "Validation Metric") == "Accuracy"
+
+    # Binary and unknown output types keep the original labels.
+    binary_html = html_structure.format_config_table_html(
+        {"validation_metric": "accuracy"}, output_type="binary"
+    )
+    assert _config_table_value_html(binary_html, "Validation Metric") == "Accuracy"
+
+    default_html = html_structure.format_config_table_html(
+        {"validation_metric": "accuracy"}
+    )
+    assert _config_table_value_html(default_html, "Validation Metric") == "Accuracy"
+
+    # top_k resolution still works alongside the new argument.
+    hits_html = html_structure.format_config_table_html(
+        {"validation_metric": "hits_at_k", "top_k": 5}, output_type="category"
+    )
+    assert _config_table_value_html(hits_html, "Validation Metric") == "Hits@5"
+
+
 def test_config_table_shows_model_compatible_image_size_when_adapted():
     html_structure = importlib.import_module("html_structure")
 
