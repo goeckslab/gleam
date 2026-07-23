@@ -6,6 +6,7 @@
     <expand macro="python_requirements" />
     <required_files>
         <include path="base_model_trainer.py" />
+        <include path="calibration_plot.py" />
         <include path="classification_metrics.py" />
         <include path="dashboard.py" />
         <include path="explainability_limits.py" />
