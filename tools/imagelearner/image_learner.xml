@@ -4,6 +4,7 @@
         <container type="docker">quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1</container>
     </requirements>
     <required_files>
+        <include path="calibration_plot.py" />
         <include path="constants.py" />
         <include path="html_structure.py" />
         <include path="image_learner_cli.py" />
