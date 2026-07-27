@@ -5,7 +5,7 @@
 ## Manuscript Components
 
 - **Tabular Learner:** `0.1.5`
-- **Image Learner:** `0.1.5`
+- **Image Learner:** `0.1.6`
 - **Multimodal Learner:** `0.1.9`
 
 ## Containers
