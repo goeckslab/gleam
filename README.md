@@ -110,7 +110,9 @@ Use this path if you are developing GLEAM itself, testing local modifications, o
 The repository includes Galaxy wrapper tests and CI workflows under [.github/workflows](.github/workflows). Local development typically relies on `planemo` plus wrapper-specific test data already versioned in `tools/*/test-data`.
 
 ## Citation and Releases
-
+- version:  1.0.0
+- doi: 10.5281/zenodo.21645650
+- date-released: 2026-07-28
 - Citation metadata is provided in [CITATION.cff](CITATION.cff) and [codemeta.json](codemeta.json).
 - Release history is tracked in [CHANGELOG.md](CHANGELOG.md).
 - Maintainers and author credit are listed in [AUTHORS.md](AUTHORS.md) and [MAINTAINERS.md](MAINTAINERS.md).
