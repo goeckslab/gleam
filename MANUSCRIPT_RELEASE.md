@@ -2,6 +2,9 @@
 
 **GLEAM suite version:** `1.0.0`
 
+- **DOI:** `10.5281/zenodo.21645650`
+- **Date-released:** `2026-07-28`
+
 ## Manuscript Components
 
 - **Tabular Learner:** `0.1.5`

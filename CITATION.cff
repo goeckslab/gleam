@@ -3,6 +3,9 @@ message: "If you use GLEAM, please cite the software using the metadata below an
 title: "GLEAM: Galaxy Learning and Modeling"
 type: software
 license: MIT
+version: 1.0.0
+doi: 10.5281/zenodo.21645650
+data-release: 07/28/2026
 repository-code: "https://github.com/goeckslab/gleam"
 url: "https://github.com/goeckslab/gleam"
 abstract: "GLEAM is a maintained Galaxy workbench for machine learning workflows, including tabular, image, multimodal, and digital pathology tooling."
