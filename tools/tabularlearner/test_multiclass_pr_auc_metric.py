@@ -532,6 +532,10 @@ def test_binary_calibration_curves_render_in_phase_tabs(monkeypatch, tmp_path):
     assert setup_params.loc[
         setup_params["Parameter"] == "Parallel Worker Count", "Value"
     ].item() == "4"
+    assert setup_params["Parameter"].tail(2).tolist() == [
+        "Compute Resource",
+        "Parallel Worker Count",
+    ]
 
 
 def test_tabular_runtime_resource_rows_capture_pycaret_parallelism():

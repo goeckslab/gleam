@@ -2525,12 +2525,6 @@ class BaseModelTrainer:
             else:
                 dv = v if v is not None else "None"
             setup_rows.append([key, dv])
-        setup_rows.extend(
-            self._runtime_resource_rows(
-                all_params,
-                fallback_n_jobs=getattr(self, "n_jobs", None),
-            )
-        )
         setup_rows.extend(self._threshold_report_rows())
         adjustment = getattr(self, "cv_fold_adjustment", None)
         if adjustment:
@@ -2538,6 +2532,12 @@ class BaseModelTrainer:
                 "Cross Validation Fold Adjustment Reason",
                 adjustment["reason"],
             ])
+        setup_rows.extend(
+            self._runtime_resource_rows(
+                all_params,
+                fallback_n_jobs=getattr(self, "n_jobs", None),
+            )
+        )
 
         df_setup = pd.DataFrame(setup_rows, columns=["Parameter", "Value"])
         df_setup.to_csv(
