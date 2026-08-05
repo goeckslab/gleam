@@ -94,6 +94,8 @@ def format_config_table_html(
         "trainable",
         "target_column",
         "task_type",
+        "compute_resource",
+        "preprocessing_worker_count",
         "validation_metric",
         "top_k",
         "loss_function",
@@ -118,6 +120,8 @@ def format_config_table_html(
         "threshold": "Decision Threshold (Test)",
         "threshold_source": "Threshold Source",
         "threshold_metric": "Threshold Optimization Metric",
+        "compute_resource": "Compute Resource",
+        "preprocessing_worker_count": "Preprocessing Worker Count",
     }
 
     for key in display_keys:
@@ -224,6 +228,8 @@ def format_config_table_html(
                     val_str = "Yes" if val else "No"
                 else:
                     val_str = val if val is not None else "N/A"
+            elif key in {"compute_resource", "preprocessing_worker_count"}:
+                val_str = escape(str(val)) if val is not None else "N/A"
             else:
                 val_str = val if val is not None else "N/A"
             if val_str == "N/A" and key not in ["task_type"]:

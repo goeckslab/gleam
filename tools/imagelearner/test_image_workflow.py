@@ -1,5 +1,6 @@
 import importlib
 import json
+import os
 import re
 import sys
 import types
@@ -211,6 +212,79 @@ def test_config_table_validation_metric_label_matches_multiclass_tables():
         {"validation_metric": "hits_at_k", "top_k": 5}, output_type="category"
     )
     assert _config_table_value_html(hits_html, "Validation Metric") == "Hits@5"
+
+
+def test_runtime_resource_metadata_reports_visible_gpus(monkeypatch):
+    ImageLearnerCLI = _load_test_objects()[3]
+    fake_torch = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(
+            is_available=lambda: True,
+            device_count=lambda: 2,
+        )
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+
+    assert ImageLearnerCLI._runtime_resource_metadata(3) == {
+        "compute_resource": "GPU (2 visible CUDA devices)",
+        "preprocessing_worker_count": 3,
+    }
+
+
+def test_runtime_resource_metadata_reports_galaxy_cpu_allocation(monkeypatch):
+    ImageLearnerCLI = _load_test_objects()[3]
+    fake_torch = types.SimpleNamespace(
+        cuda=types.SimpleNamespace(
+            is_available=lambda: False,
+            device_count=lambda: 0,
+        )
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    monkeypatch.setenv("GALAXY_SLOTS", "8")
+
+    assert ImageLearnerCLI._runtime_resource_metadata(4) == {
+        "compute_resource": "CPU (8 process-available cores)",
+        "preprocessing_worker_count": 4,
+    }
+
+
+def test_runtime_resource_metadata_falls_back_to_cpu_affinity(monkeypatch):
+    ImageLearnerCLI = _load_test_objects()[3]
+    monkeypatch.setitem(sys.modules, "torch", None)
+    monkeypatch.setenv("GALAXY_SLOTS", "invalid")
+    monkeypatch.setattr(
+        os,
+        "sched_getaffinity",
+        lambda _pid: {0, 1, 2},
+        raising=False,
+    )
+
+    assert ImageLearnerCLI._runtime_resource_metadata(1) == {
+        "compute_resource": "CPU (3 process-available cores)",
+        "preprocessing_worker_count": 1,
+    }
+
+
+def test_config_table_formats_resource_rows_and_omits_legacy_missing_rows():
+    html_structure = importlib.import_module("html_structure")
+    html = html_structure.format_config_table_html(
+        {
+            "compute_resource": "GPU <2 visible devices>",
+            "preprocessing_worker_count": 5,
+        }
+    )
+
+    assert _config_table_value_html(
+        html, "Compute Resource"
+    ) == "GPU &lt;2 visible devices&gt;"
+    assert _config_table_value_html(
+        html, "Preprocessing Worker Count"
+    ) == "5"
+
+    legacy_html = html_structure.format_config_table_html(
+        {"architecture": "ResNet"}
+    )
+    assert "Compute Resource" not in legacy_html
+    assert "Preprocessing Worker Count" not in legacy_html
 
 
 def test_config_table_shows_model_compatible_image_size_when_adapted():

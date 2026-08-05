@@ -474,7 +474,7 @@ def test_binary_calibration_curves_render_in_phase_tabs(monkeypatch, tmp_path):
     trainer.results = pd.DataFrame({"Model": ["FakeModel"], "Accuracy": [0.9]})
     trainer.best_model = types.SimpleNamespace(get_params=lambda: {})
     trainer.exp = BinaryExperiment()
-    trainer.setup_params = {}
+    trainer.setup_params = {"n_jobs": 4}
     trainer.task_type = "classification"
     trainer.tuning_results = None
     trainer.test_result_df = pd.DataFrame({"Accuracy": [0.8]})
@@ -505,6 +505,7 @@ def test_binary_calibration_curves_render_in_phase_tabs(monkeypatch, tmp_path):
     trainer.save_html_report()
 
     html = (tmp_path / "comparison_result.html").read_text(encoding="utf-8")
+    setup_params = pd.read_csv(tmp_path / "setup_params.csv")
     summary_section = html.split('<div id="summary"', 1)[1].split(
         '<div id="test"', 1
     )[0]
@@ -523,6 +524,25 @@ def test_binary_calibration_curves_render_in_phase_tabs(monkeypatch, tmp_path):
         in test_section
     )
     assert "VALIDATION_CALIBRATION_HTML" not in test_section
+    assert "Compute Resource" in html
+    assert "Parallel Worker Count" in html
+    assert setup_params.loc[
+        setup_params["Parameter"] == "Compute Resource", "Value"
+    ].item() == "CPU"
+    assert setup_params.loc[
+        setup_params["Parameter"] == "Parallel Worker Count", "Value"
+    ].item() == "4"
+
+
+def test_tabular_runtime_resource_rows_capture_pycaret_parallelism():
+    assert BaseModelTrainer._runtime_resource_rows({"n_jobs": 6}) == [
+        ["Compute Resource", "CPU"],
+        ["Parallel Worker Count", 6],
+    ]
+    assert BaseModelTrainer._runtime_resource_rows({"n_jobs": -1}) == [
+        ["Compute Resource", "CPU"],
+        ["Parallel Worker Count", "All available CPUs (-1)"],
+    ]
 
 
 def test_multiclass_explainer_failure_keeps_custom_plots(monkeypatch):

@@ -271,6 +271,8 @@
                     <has_text text="Internal Cross-Validation Summary Across Candidate Models" />
                     <has_text text="Dataset Overview" />
                     <has_text text="Best Model Performance" />
+                    <has_text text="Compute Resource" />
+                    <has_text text="Parallel Worker Count" />
                     <has_text text="Training" />
                     <has_text text="These values can slightly differ from Best Model Performance table." />
                     <has_text text="F1" />

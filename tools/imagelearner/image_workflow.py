@@ -42,6 +42,58 @@ class ImageLearnerCLI:
         self.image_match_summary: Dict[str, int] = {}
         logger.info(f"Orchestrator initialized with backend: {type(backend).__name__}")
 
+    @staticmethod
+    def _process_available_cpu_count() -> int:
+        """Resolve the CPU allocation visible to this process."""
+        slots = os.environ.get("GALAXY_SLOTS")
+        try:
+            slot_count = int(slots) if slots is not None else 0
+        except (TypeError, ValueError):
+            slot_count = 0
+        if slot_count > 0:
+            return slot_count
+
+        try:
+            affinity_count = len(os.sched_getaffinity(0))
+        except (AttributeError, OSError):
+            affinity_count = 0
+        if affinity_count > 0:
+            return affinity_count
+
+        return max(1, int(os.cpu_count() or 1))
+
+    @classmethod
+    def _runtime_resource_metadata(
+        cls,
+        preprocessing_worker_count: int,
+    ) -> Dict[str, Any]:
+        """Capture report-only device and preprocessing-worker metadata."""
+        gpu_count = 0
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                gpu_count = max(0, int(torch.cuda.device_count()))
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
+            gpu_count = 0
+
+        if gpu_count > 0:
+            device_label = "device" if gpu_count == 1 else "devices"
+            compute_resource = (
+                f"GPU ({gpu_count} visible CUDA {device_label})"
+            )
+        else:
+            cpu_count = cls._process_available_cpu_count()
+            core_label = "core" if cpu_count == 1 else "cores"
+            compute_resource = (
+                f"CPU ({cpu_count} process-available {core_label})"
+            )
+
+        return {
+            "compute_resource": compute_resource,
+            "preprocessing_worker_count": int(preprocessing_worker_count),
+        }
+
     def _create_temp_dirs(self) -> None:
         """Create temporary output and image extraction directories."""
         try:
@@ -453,6 +505,10 @@ class ImageLearnerCLI:
 
             use_pretrained = self.args.use_pretrained or self.args.fine_tune
 
+            resource_metadata = self._runtime_resource_metadata(
+                self.args.preprocessing_num_processes,
+            )
+
             backend_args = {
                 "model_name": self.args.model_name,
                 "fine_tune": self.args.fine_tune,
@@ -480,6 +536,7 @@ class ImageLearnerCLI:
                 "validation_metric": self.args.validation_metric,
                 "target_column": getattr(self.args, "report_target_column", LABEL_COLUMN_NAME),
                 "image_column": getattr(self.args, "report_image_column", IMAGE_PATH_COLUMN_NAME),
+                **resource_metadata,
             }
             yaml_str = self.backend.prepare_config(backend_args, split_cfg)
 

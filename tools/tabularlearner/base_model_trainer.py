@@ -2417,6 +2417,27 @@ class BaseModelTrainer:
         return " ".join(part if part.isupper() else part.capitalize()
                         for part in parts)
 
+    @staticmethod
+    def _runtime_resource_rows(all_params, fallback_n_jobs=None):
+        """Describe the CPU parallelism used by the PyCaret experiment."""
+        n_jobs = all_params.get("n_jobs", fallback_n_jobs)
+        try:
+            normalized_n_jobs = int(n_jobs)
+        except (TypeError, ValueError):
+            normalized_n_jobs = n_jobs
+
+        if normalized_n_jobs == -1:
+            worker_count = "All available CPUs (-1)"
+        elif normalized_n_jobs is None:
+            worker_count = "Not recorded"
+        else:
+            worker_count = normalized_n_jobs
+
+        return [
+            ["Compute Resource", "CPU"],
+            ["Parallel Worker Count", worker_count],
+        ]
+
     def save_html_report(self):
         LOG.info("Saving HTML report")
 
@@ -2504,6 +2525,12 @@ class BaseModelTrainer:
             else:
                 dv = v if v is not None else "None"
             setup_rows.append([key, dv])
+        setup_rows.extend(
+            self._runtime_resource_rows(
+                all_params,
+                fallback_n_jobs=getattr(self, "n_jobs", None),
+            )
+        )
         setup_rows.extend(self._threshold_report_rows())
         adjustment = getattr(self, "cv_fold_adjustment", None)
         if adjustment:
