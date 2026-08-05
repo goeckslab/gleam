@@ -132,11 +132,8 @@ def format_config_table_html(
             if output_type != "category" or val is None:
                 continue
             top_k = int(val)
-            display_label = f"Hits@{top_k} Top Classes"
-            val_str = (
-                f"{top_k} "
-                f"(the correct class must appear in the top {top_k} predictions)"
-            )
+            display_label = "Hits@K"
+            val_str = str(top_k)
         elif key == "threshold":
             if output_type != "binary":
                 continue

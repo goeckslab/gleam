@@ -212,6 +212,9 @@ def test_config_table_validation_metric_label_matches_multiclass_tables():
         {"validation_metric": "hits_at_k", "top_k": 5}, output_type="category"
     )
     assert _config_table_value_html(hits_html, "Validation Metric") == "Hits@5"
+    assert _config_table_value_html(hits_html, "Hits@K") == "5"
+    assert "Hits@5 Top Classes" not in hits_html
+    assert "the correct class must appear" not in hits_html
 
 
 def test_runtime_resource_metadata_reports_visible_gpus(monkeypatch):
