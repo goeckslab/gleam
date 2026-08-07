@@ -431,6 +431,8 @@
                     <has_text text="Experiment Summary" />
                     <has_text text="Validation Summary" />
                     <has_text text="Test Summary" />
+                    <has_text text="Compute Resource" />
+                    <has_text text="Preprocessing Worker Count" />
                 </assert_contents>
             </output>
             <output name="output_artifacts_zip" ftype="zip">

@@ -94,6 +94,8 @@ def format_config_table_html(
         "trainable",
         "target_column",
         "task_type",
+        "compute_resource",
+        "preprocessing_worker_count",
         "validation_metric",
         "top_k",
         "loss_function",
@@ -118,6 +120,8 @@ def format_config_table_html(
         "threshold": "Decision Threshold (Test)",
         "threshold_source": "Threshold Source",
         "threshold_metric": "Threshold Optimization Metric",
+        "compute_resource": "Compute Resource",
+        "preprocessing_worker_count": "Preprocessing Worker Count",
     }
 
     for key in display_keys:
@@ -128,11 +132,8 @@ def format_config_table_html(
             if output_type != "category" or val is None:
                 continue
             top_k = int(val)
-            display_label = f"Hits@{top_k} Top Classes"
-            val_str = (
-                f"{top_k} "
-                f"(the correct class must appear in the top {top_k} predictions)"
-            )
+            display_label = "Hits@K"
+            val_str = str(top_k)
         elif key == "threshold":
             if output_type != "binary":
                 continue
@@ -224,6 +225,8 @@ def format_config_table_html(
                     val_str = "Yes" if val else "No"
                 else:
                     val_str = val if val is not None else "N/A"
+            elif key in {"compute_resource", "preprocessing_worker_count"}:
+                val_str = escape(str(val)) if val is not None else "N/A"
             else:
                 val_str = val if val is not None else "N/A"
             if val_str == "N/A" and key not in ["task_type"]:
