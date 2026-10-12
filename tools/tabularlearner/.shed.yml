@@ -4,6 +4,10 @@ categories:
   - Machine Learning
 homepage_url: https://github.com/goeckslab/gleam
 remote_repository_url: https://github.com/goeckslab/gleam
+long_description: |
+  The tabular learner tool is designed to streamline the process of building machine learning models for tabular datasets.
+  It provides a user-friendly interface and a set of powerful features that allow users to quickly and easily create, train,
+  and evaluate machine learning models without needing extensive coding knowledge.
 auto_tool_repositories:
   name_template: "{{ tool_id }}"
   description_template: "Wrapper for tabular learner tool: {{ tool_name }}"
