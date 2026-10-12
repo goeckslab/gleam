@@ -1,4 +1,5 @@
 import base64
+import html
 import logging
 import os
 
@@ -273,49 +274,41 @@ class FeatureImportanceAnalyzer:
         bg = X_data.sample(min(len(X_data), 100), random_state=42)
         predict_fn = self._get_predict_fn(model)
 
-        # Optimized explainer based on model type
-        explainer, explainer_label, tree_based = self._choose_shap_explainer(
-            model, bg, predict_fn
-        )
+        # Explainer construction can fail too (e.g. unsupported tree formats).
+        try:
+            explainer, explainer_label, tree_based = self._choose_shap_explainer(
+                model, bg, predict_fn
+            )
+        except Exception as exc:
+            self._skip_shap(f"Could not initialize the explainer: {exc}")
+            return
         if explainer is None:
-            LOG.warning("No suitable SHAP explainer for model %s; skipping SHAP.", model)
-            self.shap_model_name = None
+            self._skip_shap(
+                f"No suitable explainer for {model.__class__.__name__}."
+            )
             return
 
+        LOG.info(
+            "Computing %s SHAP for %s rows and %s transformed features.",
+            explainer_label,
+            n_rows,
+            n_features,
+        )
         try:
             shap_values = explainer(X_data)
             self.shap_model_name = explainer.__class__.__name__
         except Exception as e:
             error_message = str(e)
-            needs_tree_fallback = (
+            leaf_coverage_error = (
                 tree_based
                 and "does not cover all the leaves" in error_message.lower()
             )
             feature_name_mismatch = "feature names should match" in error_message.lower()
-            if needs_tree_fallback:
-                LOG.warning(
-                    "SHAP computation failed using '%s' perturbation (%s). "
-                    "Retrying with interventional perturbation.",
-                    explainer_label,
-                    error_message,
-                )
-                try:
-                    explainer = self._tree_explainer(
-                        model,
-                        bg,
-                        feature_perturbation="interventional",
-                    )
-                    shap_values = explainer(X_data)
-                    self.shap_model_name = (
-                        f"{explainer.__class__.__name__} (interventional)"
-                    )
-                except Exception as retry_exc:
-                    LOG.error(
-                        "SHAP computation failed even after fallback: %s",
-                        retry_exc,
-                    )
-                    self.shap_model_name = None
-                    return
+            if leaf_coverage_error:
+                # Do not silently change the explanation's dependence assumptions
+                # or enter the native interventional code after a coverage error.
+                self._skip_shap(f"Tree-path explanation failed: {error_message}")
+                return
             elif feature_name_mismatch:
                 LOG.warning(
                     "SHAP computation failed due to feature-name mismatch (%s). "
@@ -331,11 +324,9 @@ class FeatureImportanceAnalyzer:
                         f"{agnostic_explainer.__class__.__name__} (fallback)"
                     )
                 except Exception as fallback_exc:
-                    LOG.error(
-                        "Model-agnostic SHAP fallback also failed: %s",
-                        fallback_exc,
+                    self._skip_shap(
+                        f"Model-agnostic fallback also failed: {fallback_exc}"
                     )
-                    self.shap_model_name = None
                     return
             elif explainer_label == "linear":
                 LOG.warning(
@@ -352,15 +343,12 @@ class FeatureImportanceAnalyzer:
                         f"{agnostic_explainer.__class__.__name__} (fallback)"
                     )
                 except Exception as fallback_exc:
-                    LOG.error(
-                        "Model-agnostic SHAP fallback also failed: %s",
-                        fallback_exc,
+                    self._skip_shap(
+                        f"Model-agnostic fallback also failed: {fallback_exc}"
                     )
-                    self.shap_model_name = None
                     return
             else:
-                LOG.error(f"SHAP computation failed: {e}")
-                self.shap_model_name = None
+                self._skip_shap(f"Computation failed: {e}")
                 return
 
         shap_shape = getattr(shap_values, "shape", None)
@@ -401,8 +389,7 @@ class FeatureImportanceAnalyzer:
             shap_outputs.append((None, None, shap_values))
 
         if not shap_outputs:
-            LOG.error("No SHAP outputs available for plotting.")
-            self.shap_model_name = None
+            self._skip_shap("No outputs available for plotting.")
             return
 
         # --- Plot SHAP summary (one per class if needed) ---
@@ -439,7 +426,10 @@ class FeatureImportanceAnalyzer:
 
     def generate_html_report(self):
         LOG.info("Generating HTML report")
-        plots_html = ""
+        plots_html = "".join(
+            f"<p class='report-footnote'>{html.escape(message)}</p>"
+            for message in getattr(self, "_skip_messages", [])
+        )
         for plot_name, plot_path in self.plots.items():
             if plot_name == "tree_importance" and not getattr(
                 self, "tree_model_name", None
@@ -467,7 +457,19 @@ class FeatureImportanceAnalyzer:
             return model.decision_function
         return model.predict
 
+    def _skip_shap(self, reason):
+        self.shap_model_name = None
+        message = f"SHAP summary unavailable: {reason}"
+        LOG.warning(message)
+        if not hasattr(self, "_skip_messages"):
+            self._skip_messages = []
+        self._skip_messages.append(message)
+
     def _tree_explainer(self, model, background, **kwargs):
+        if kwargs.get("feature_perturbation") == "tree_path_dependent":
+            # Use fitted training leaf counts. A sampled background can miss
+            # leaves and disables the native LightGBM/XGBoost/CatBoost SHAP path.
+            return shap.TreeExplainer(model, **kwargs)
         return shap.TreeExplainer(model, background, **kwargs)
 
     @staticmethod
@@ -726,5 +728,8 @@ class FeatureImportanceAnalyzer:
         if not self._experiment_is_setup():
             self.setup_pycaret()
         self.save_tree_importance()
-        self.save_shap_values()
+        try:
+            self.save_shap_values()
+        except Exception as exc:
+            self._skip_shap(f"Could not generate the optional explanation: {exc}")
         return self.generate_html_report()

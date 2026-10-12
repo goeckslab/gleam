@@ -4,6 +4,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 
 TOOL_DIR = Path(__file__).resolve().parent
@@ -867,13 +868,22 @@ def test_feature_importance_setup_prefers_supplied_data_over_exp_dataset(tmp_pat
     assert exp.setup_kwargs["target"] == "AGE"
 
 
-def test_tree_shap_explainer_does_not_pass_unsupported_n_jobs(monkeypatch):
+@pytest.mark.parametrize(
+    ("task_type", "model_class"),
+    [
+        ("classification", "LGBMClassifier"),
+        ("regression", "LGBMRegressor"),
+    ],
+)
+def test_lightgbm_tree_shap_uses_model_leaf_counts_without_background(
+    monkeypatch, task_type, model_class
+):
     import feature_importance
 
     calls = []
 
-    def fake_tree_explainer(model, background, **kwargs):
-        calls.append(kwargs)
+    def fake_tree_explainer(model, background=None, **kwargs):
+        calls.append((background, kwargs))
         if "n_jobs" in kwargs:
             raise TypeError("__init__() got an unexpected keyword argument 'n_jobs'")
         return "explainer"
@@ -885,14 +895,11 @@ def test_tree_shap_explainer_does_not_pass_unsupported_n_jobs(monkeypatch):
         raising=False,
     )
 
-    class LGBMClassifier:
-        pass
-
     analyzer = object.__new__(FeatureImportanceAnalyzer)
-    analyzer.task_type = "classification"
+    analyzer.task_type = task_type
 
     explainer, label, tree_based = analyzer._choose_shap_explainer(
-        LGBMClassifier(),
+        type(model_class, (), {})(),
         pd.DataFrame({"feature": [1, 2]}),
         lambda X: X,
     )
@@ -901,11 +908,43 @@ def test_tree_shap_explainer_does_not_pass_unsupported_n_jobs(monkeypatch):
     assert label == "tree_path_dependent"
     assert tree_based is True
     assert calls == [
-        {
-            "model_output": "raw",
-            "feature_perturbation": "tree_path_dependent",
-        }
+        (
+            None,
+            {
+                "model_output": "raw",
+                "feature_perturbation": "tree_path_dependent",
+            },
+        )
     ]
+
+
+def test_explicit_interventional_tree_shap_keeps_background(monkeypatch):
+    import feature_importance
+
+    calls = []
+    model = object()
+    background = pd.DataFrame({"feature": [1, 2]})
+
+    def fake_tree_explainer(model, data=None, **kwargs):
+        calls.append((model, data, kwargs))
+        return "explainer"
+
+    monkeypatch.setattr(
+        feature_importance.shap,
+        "TreeExplainer",
+        fake_tree_explainer,
+        raising=False,
+    )
+    analyzer = object.__new__(FeatureImportanceAnalyzer)
+
+    assert analyzer._tree_explainer(
+        model, background, feature_perturbation="interventional"
+    ) == "explainer"
+    assert len(calls) == 1
+    called_model, called_background, kwargs = calls[0]
+    assert called_model is model
+    assert called_background is background
+    assert kwargs == {"feature_perturbation": "interventional"}
 
 
 class FakeShapExplanation:
@@ -936,6 +975,7 @@ def _build_shap_analyzer(tmp_path, task_type, model, explanation, max_features=1
     analyzer.output_dir = str(tmp_path)
     analyzer.plots = {}
     analyzer.plot_titles = {}
+    analyzer._skip_messages = []
     analyzer.max_shap_rows = None
     analyzer.max_plot_features = max_features
     analyzer.polynomial_features = False
@@ -952,6 +992,119 @@ def _build_shap_analyzer(tmp_path, task_type, model, explanation, max_features=1
         False,
     )
     return analyzer
+
+
+@pytest.mark.parametrize("failure_stage", ["construction", "computation"])
+def test_tree_shap_leaf_coverage_failure_skips_without_interventional_retry(
+    monkeypatch, tmp_path, caplog, failure_stage
+):
+    import feature_importance
+
+    calls = []
+    error_message = "The background dataset does not cover all the leaves in the model"
+
+    class LGBMClassifier:
+        classes_ = [0, 1]
+
+        def predict_proba(self, X):
+            return np.ones((len(X), 2)) * 0.5
+
+    class CoverageFailureExplainer:
+        def __call__(self, X):
+            raise ValueError(error_message)
+
+    def fake_tree_explainer(model, background=None, **kwargs):
+        calls.append((background, kwargs))
+        if failure_stage == "construction":
+            raise ValueError(error_message)
+        return CoverageFailureExplainer()
+
+    monkeypatch.setattr(
+        feature_importance.shap,
+        "TreeExplainer",
+        fake_tree_explainer,
+        raising=False,
+    )
+    analyzer = _build_shap_analyzer(
+        tmp_path, "classification", LGBMClassifier(), None
+    )
+    del analyzer._choose_shap_explainer
+
+    analyzer.save_shap_values()
+
+    assert len(calls) == 1
+    background, kwargs = calls[0]
+    assert background is None
+    assert kwargs["feature_perturbation"] == "tree_path_dependent"
+    assert analyzer.shap_model_name is None
+    assert analyzer.plots == {}
+    assert analyzer._skip_messages
+    assert error_message in caplog.text
+    assert "Retrying with interventional" not in caplog.text
+
+
+def test_shap_explainer_construction_error_is_optional(monkeypatch, tmp_path, caplog):
+    import feature_importance
+
+    class LGBMRegressor:
+        def predict(self, X):
+            return np.zeros(len(X))
+
+    def failing_tree_explainer(*args, **kwargs):
+        raise RuntimeError("model format is unsupported")
+
+    monkeypatch.setattr(
+        feature_importance.shap,
+        "TreeExplainer",
+        failing_tree_explainer,
+        raising=False,
+    )
+    analyzer = _build_shap_analyzer(
+        tmp_path, "regression", LGBMRegressor(), None
+    )
+    del analyzer._choose_shap_explainer
+
+    analyzer.save_shap_values()
+
+    assert analyzer.shap_model_name is None
+    assert analyzer.plots == {}
+    assert analyzer._skip_messages
+    assert "model format is unsupported" in caplog.text
+
+
+def test_shap_failure_preserves_native_importance_and_escapes_report_note(
+    tmp_path, caplog
+):
+    class LGBMRegressor:
+        feature_importances_ = np.array([0.1, 0.7, 0.2])
+
+        def predict(self, X):
+            return np.zeros(len(X))
+
+    analyzer = _build_shap_analyzer(
+        tmp_path, "regression", LGBMRegressor(), None
+    )
+    analyzer._experiment_is_setup = lambda: True
+    analyzer.shap_model_name = "PreviousExplainer"
+    failure_reason = "SHAP plot failed: <script>alert('error')</script> & invalid values"
+
+    def fail_shap_values():
+        raise RuntimeError(failure_reason)
+
+    analyzer.save_shap_values = fail_shap_values
+
+    html = analyzer.run()
+
+    assert (tmp_path / "tree_importance.png").is_file()
+    assert list(analyzer.plots) == ["tree_importance"]
+    assert analyzer.shap_model_name is None
+    assert 'id="tree_importance"' in html
+    assert "data:image/png;base64," in html
+    assert "SHAP" in html
+    assert "&lt;script&gt;" in html
+    assert "&lt;/script&gt; &amp; invalid values" in html
+    assert "<script>" not in html
+    assert failure_reason in caplog.text
 
 
 def test_custom_shap_binary_plots_positive_class_only_with_display_cap(
