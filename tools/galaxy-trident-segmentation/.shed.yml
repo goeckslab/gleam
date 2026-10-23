@@ -1,0 +1,11 @@
+categories:
+  - Machine Learning
+owner: goeckslab
+remote_repository_url: https://github.com/goeckslab/gleam.git
+homepage_url: https://github.com/goeckslab/gleam/tree/main/tools/galaxy-trident-segmentation
+auto_tool_repositories:
+  name_template: "{{ tool_id }}"
+  description_template: "TRIDENT tissue segmentation tool for whole-slide images"
+suite:
+  name: suite_trident_segmentation
+  description: A Galaxy tool for tissue segmentation using TRIDENT models.

@@ -1,0 +1,120 @@
+<?xml version="1.0"?>
+<tool id="trident_segmentation" name="TRIDENT Tissue Segmentation" version="1.0.0">
+    <description>Segment tissue regions from whole-slide images using TRIDENT</description>
+    
+    <requirements>
+        <container type="docker">quay.io/goeckslab/galaxy-trident:1.0.0</container>
+    </requirements>
+    
+    <stdio>
+        <exit_code range="137" level="fatal_oom" description="Out of Memory" />
+        <exit_code range="1:" level="fatal" description="Error occurred. Please check Tool Standard Error" />
+    </stdio>
+    
+    <command><![CDATA[
+        python '$__tool_directory__/trident_segmentation.py'
+        #for $i, $img in enumerate($input_collection)
+            --input '${img}' --original_name "${img.element_identifier}"
+        #end for
+        --output_zip '$output_zip'
+        --segmenter '$segmenter'
+        #if $remove_artifacts
+            --remove_artifacts
+        #end if
+        #if $remove_penmarks
+            --remove_penmarks
+        #end if
+        --gpu $gpu_index
+        #if $skip_errors
+            --skip_errors
+        #end if
+    ]]></command>
+    
+    <inputs>
+        <param name="input_collection" type="data_collection" collection_type="list" 
+               format="svs,tiff,tif,ndpi" label="Input WSI Collection"
+               help="Provide a dataset collection of whole-slide images (.svs, .tiff, .tif, .ndpi)." />
+        
+        <param name="segmenter" type="select" label="Segmentation Model" 
+               help="Select the segmentation model to use for tissue detection.">
+            <option value="hest" selected="true">HEST (Histology Enhanced Segmentation Tool)</option>
+            <option value="grandqc">GrandQC (Fast H&amp;E segmentation)</option>
+        </param>
+        
+        <param name="remove_artifacts" type="boolean" label="Remove Artifacts" 
+               checked="false"
+               help="Run an additional model to remove artifacts (penmarks, blurs, stains, etc.) from segmentation." />
+        
+        <param name="remove_penmarks" type="boolean" label="Remove Penmarks" 
+               checked="false"
+               help="Run an additional model to remove penmarks from segmentation." />
+        
+        <param name="gpu_index" type="integer" value="0" min="0" max="15" 
+               label="GPU Index" 
+               help="GPU device index to use for processing (0-based)." />
+        
+        <param name="skip_errors" type="boolean" label="Skip Errors" 
+               checked="false"
+               help="Skip errored slides and continue processing remaining slides." />
+    </inputs>
+    
+    <outputs>
+        <data name="output_zip" format="zip" label="Segmentation Results (ZIP)" />
+    </outputs>
+    
+    <tests>
+        <!-- 
+        Automated testing disabled for this tool due to:
+        - Large model downloads (~200MB total)
+        - WSI processing requires significant compute resources
+        - Test execution time exceeds CI timeout limits
+        
+        To test locally with Docker:
+        planemo test --biocontainers trident_segmentation.xml
+        
+        Models are pre-downloaded in Docker image for production use.
+        -->
+    </tests>
+    
+    <help><![CDATA[
+**TRIDENT Tissue Segmentation**
+
+This tool segments tissue regions from whole-slide images (WSI) using TRIDENT's segmentation models.
+
+**Inputs:**
+- **Input WSI Collection**: A collection of whole-slide images in supported formats (.svs, .tiff, .tif, .ndpi)
+- **Segmentation Model**: 
+  - **HEST**: Histology Enhanced Segmentation Tool - default, works with H&E and IHC stains
+  - **GrandQC**: Fast H&E segmentation model
+- **Remove Artifacts**: Optional post-processing to remove artifacts (penmarks, blurs, stains)
+- **Remove Penmarks**: Optional post-processing specifically for penmark removal
+- **GPU Index**: GPU device to use (0-based indexing)
+
+**Outputs:**
+- **Segmentation Results (ZIP)**: Contains:
+  - GeoJSON files with tissue contours (can be opened in QuPath)
+  - Thumbnail images with tissue contours overlaid
+  - Segmentation masks
+
+**Notes:**
+- This is the first step in the TRIDENT pipeline
+- GeoJSON outputs can be edited in QuPath for quality control
+- Processing time depends on WSI size and selected options
+- GPU acceleration is recommended for faster processing
+
+**Citation:**
+If you use TRIDENT in your research, please cite:
+Zhang, A., Jaume, G., Vaidya, A., Ding, T., & Mahmood, F. (2025). Accelerating Data Processing and Benchmarking of AI Models for Pathology. arXiv preprint arXiv:2502.06750.
+    ]]></help>
+    
+    <citations>
+        <citation type="bibtex">
+@article{zhang2025standardizing,
+  title={Accelerating Data Processing and Benchmarking of AI Models for Pathology},
+  author={Zhang, Andrew and Jaume, Guillaume and Vaidya, Anurag and Ding, Tong and Mahmood, Faisal},
+  journal={arXiv preprint arXiv:2502.06750},
+  year={2025}
+}
+        </citation>
+    </citations>
+</tool>
