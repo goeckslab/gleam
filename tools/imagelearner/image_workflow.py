@@ -8,9 +8,12 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import numpy as np
 import pandas as pd
 import pandas.api.types as ptypes
 from constants import (
+    DEFAULT_HITS_AT_K,
+    DESCRIPTION_FILE_NAME,
     IMAGE_FILE_SUFFIXES,
     IMAGE_PATH_COLUMN_NAME,
     LABEL_COLUMN_NAME,
@@ -18,11 +21,37 @@ from constants import (
     TEMP_CONFIG_FILENAME,
     TEMP_CSV_FILENAME,
     TEMP_DIR_PREFIX,
+    TEST_STATISTICS_FILE_NAME,
+    TRAINING_STATISTICS_FILE_NAME,
+    VALIDATION_PREDICTIONS_FILE_NAME,
+)
+from ensemble import (
+    aggregate_member_predictions,
+    apply_binary_threshold,
+    attach_row_metadata,
+    build_member_plan,
+    canonical_label,
+    class_name_from_column,
+    compute_classification_statistics,
+    compute_regression_statistics,
+    ensemble_enabled,
+    ENSEMBLE_SUMMARY_FILE_NAME,
+    flatten_label_statistics,
+    FOLD_ROLE_TEST,
+    FOLD_ROLE_VALIDATION,
+    member_metrics,
+    MEMBERS_DIR_NAME,
+    normalize_prediction_frame,
+    positive_class_index,
+    PREDICTIONS_COLUMN,
+    PROBABILITIES_PREFIX,
+    probability_columns,
+    summarize_member_metrics,
 )
 from ludwig.globals import PREDICTIONS_PARQUET_FILE_NAME
 from ludwig_backend import Backend
 from split_data import create_stratified_random_split, split_data_0_2
-from utils import load_metadata_table
+from utils import detect_output_type, load_metadata_table
 
 logger = logging.getLogger("ImageLearner")
 
@@ -285,7 +314,13 @@ class ImageLearnerCLI:
             logger.error("Error saving prepared CSV", exc_info=True)
             raise
 
-        # Capture actual split counts for downstream reporting (avoids heuristic 70/10/20 tables)
+        self._capture_split_counts(df)
+        self._capture_label_metadata(df)
+
+        return final_csv, split_config, split_info
+
+    def _capture_split_counts(self, df: pd.DataFrame) -> None:
+        """Capture actual split counts for downstream reporting (avoids heuristic 70/10/20 tables)."""
         try:
             split_series = pd.to_numeric(df[SPLIT_COLUMN_NAME], errors="coerce")
             split_series = split_series.dropna().astype(int)
@@ -312,10 +347,6 @@ class ImageLearnerCLI:
             logger.warning("Unable to capture split counts for reporting", exc_info=True)
             self.label_split_counts = []
             self.split_counts = {}
-
-        self._capture_label_metadata(df)
-
-        return final_csv, split_config, split_info
 
     def _capture_label_metadata(self, df: pd.DataFrame) -> None:
         """Record basic statistics about the label column for downstream hints."""
@@ -544,32 +575,46 @@ class ImageLearnerCLI:
             config_file.write_text(yaml_str)
             logger.info(f"Wrote backend config: {config_file}")
 
+            ensemble_run = ensemble_enabled(
+                getattr(self.args, "cross_validation", False),
+                getattr(self.args, "num_seeds", 1),
+            )
             ran_ok = True
-            try:
-                # Run Ludwig experiment with absolute paths to avoid working directory issues
-                self.backend.run_experiment(
-                    csv_path,
-                    config_file,
-                    self.args.output_dir,
-                    self.args.random_seed,
-                )
-            except Exception:
-                logger.error("Workflow execution failed", exc_info=True)
-                ran_ok = False
+            if ensemble_run:
+                try:
+                    ran_ok = self._run_ensemble(csv_path, config_file, backend_args)
+                except Exception:
+                    logger.error("Ensemble workflow failed", exc_info=True)
+                    ran_ok = False
+                if ran_ok:
+                    split_info = self._ensemble_split_info(split_info, backend_args["ensemble"])
+            else:
+                try:
+                    # Run Ludwig experiment with absolute paths to avoid working directory issues
+                    self.backend.run_experiment(
+                        csv_path,
+                        config_file,
+                        self.args.output_dir,
+                        self.args.random_seed,
+                    )
+                except Exception:
+                    logger.error("Workflow execution failed", exc_info=True)
+                    ran_ok = False
 
             if ran_ok:
                 logger.info("Workflow completed successfully.")
-                # Convert predictions parquet → csv
-                self.backend.convert_parquet_to_csv(self.args.output_dir)
-                logger.info("Converted Parquet to CSV.")
-                self.backend.generate_split_predictions(
-                    self.args.output_dir,
-                    csv_path,
-                    split_value=1,
-                    output_filename="validation_predictions.csv",
-                )
-                # Generate a very small set of plots to conserve disk space
-                self.backend.generate_plots(self.args.output_dir)
+                if not ensemble_run:
+                    # Convert predictions parquet → csv
+                    self.backend.convert_parquet_to_csv(self.args.output_dir)
+                    logger.info("Converted Parquet to CSV.")
+                    self.backend.generate_split_predictions(
+                        self.args.output_dir,
+                        csv_path,
+                        split_value=1,
+                        output_filename=VALIDATION_PREDICTIONS_FILE_NAME,
+                    )
+                    # Generate a very small set of plots to conserve disk space
+                    self.backend.generate_plots(self.args.output_dir)
                 self._write_image_size_details_artifact(
                     self.args.output_dir,
                     backend_args,
@@ -621,6 +666,530 @@ class ImageLearnerCLI:
             raise
         finally:
             self._cleanup_temp_dirs()
+
+    # ------------------------------------------------------------------
+    # Cross-validation / multi-seed ensembles
+    # ------------------------------------------------------------------
+    def _run_ensemble(
+        self,
+        csv_path: Path,
+        config_file: Path,
+        backend_args: Dict[str, Any],
+    ) -> bool:
+        """Train every ensemble member, average their predictions, and lay the
+        results out under output_dir/experiment_run like a single-model run.
+
+        Returns False when no member trained successfully.
+        """
+        df = pd.read_csv(csv_path)
+        cross_validation = bool(getattr(self.args, "cross_validation", False))
+        num_folds = int(getattr(self.args, "num_folds", 5))
+        fold_role = str(getattr(self.args, "fold_role", FOLD_ROLE_VALIDATION))
+        num_seeds = int(getattr(self.args, "num_seeds", 1))
+        likely_regression = bool(self.label_metadata.get("likely_regression"))
+
+        members = build_member_plan(
+            df,
+            cross_validation=cross_validation,
+            num_folds=num_folds,
+            fold_role=fold_role,
+            num_seeds=num_seeds,
+            random_seed=int(self.args.random_seed),
+            validation_size=float(self.args.validation_size),
+            label_column=LABEL_COLUMN_NAME,
+            group_column=self.args.sample_id_column,
+            stratify=not likely_regression,
+        )
+        logger.info(
+            "Ensemble plan: %d member(s): %s",
+            len(members),
+            ", ".join(member.name for member in members),
+        )
+
+        members_root = self.args.output_dir / "ensemble_members"
+        label_values = df[LABEL_COLUMN_NAME].dropna().unique().tolist()
+        records: List[Dict[str, Any]] = []
+        for position, member in enumerate(members, start=1):
+            logger.info("Training ensemble member %d/%d: %s", position, len(members), member.name)
+            member_df = df.copy()
+            member_df[SPLIT_COLUMN_NAME] = member.split.to_numpy()
+            member_csv = self.temp_dir / f"{member.name}.csv"
+            member_df.to_csv(member_csv, index=False)
+            member_out = members_root / member.name
+
+            record: Dict[str, Any] = {
+                "name": member.name,
+                "fold": member.fold,
+                "seed": member.seed,
+                "status": "failed",
+                "training": {},
+                "validation": {},
+                "test": {},
+            }
+            exp_dir: Optional[Path] = None
+            try:
+                self.backend.run_experiment(member_csv, config_file, member_out, member.seed)
+                self.backend.convert_parquet_to_csv(member_out)
+                self.backend.generate_split_predictions(
+                    member_out,
+                    member_csv,
+                    split_value=1,
+                    output_filename=VALIDATION_PREDICTIONS_FILE_NAME,
+                )
+                exp_dir = self._latest_experiment_dir(member_out)
+                if exp_dir is None:
+                    raise RuntimeError("Ludwig produced no experiment_run directory.")
+                record.update(
+                    self._collect_member_outputs(
+                        exp_dir, member_df, label_values, member_csv, member_out
+                    )
+                )
+                record["status"] = "ok"
+            except Exception:
+                logger.error("Ensemble member %s failed.", member.name, exc_info=True)
+            finally:
+                if exp_dir is None:
+                    exp_dir = self._latest_experiment_dir(member_out)
+                if exp_dir is not None:
+                    self._trim_member_run(exp_dir)
+                    record["exp_dir"] = exp_dir
+            records.append(record)
+
+        trained = [record for record in records if record["status"] == "ok"]
+        if not trained:
+            logger.error("All %d ensemble members failed.", len(records))
+            return False
+        if len(trained) < len(records):
+            logger.warning(
+                "%d of %d ensemble members failed; averaging the %d that trained.",
+                len(records) - len(trained),
+                len(records),
+                len(trained),
+            )
+
+        task_type = self._ensemble_task_type(trained)
+        test_agg = aggregate_member_predictions(
+            [record.get("test_frame") for record in trained], task_type
+        )
+        val_agg = aggregate_member_predictions(
+            [record.get("validation_frame") for record in trained], task_type
+        )
+        logger.info(
+            "Averaged predictions: %d test row(s), %d validation row(s).",
+            len(test_agg),
+            len(val_agg),
+        )
+
+        # The report reads ground truth by split from this CSV: rows scored as
+        # test by the ensemble are 2, rows scored out-of-fold as validation are 1.
+        view_df = df.copy()
+        view_df[SPLIT_COLUMN_NAME] = 0
+        if not val_agg.empty:
+            view_df.loc[val_agg.index, SPLIT_COLUMN_NAME] = 1
+        if not test_agg.empty:
+            view_df.loc[test_agg.index, SPLIT_COLUMN_NAME] = 2
+        view_csv = self.temp_dir / "ensemble_view_data.csv"
+        view_df.to_csv(view_csv, index=False)
+        backend_args["label_column_data_path"] = view_csv
+        if cross_validation and fold_role == FOLD_ROLE_TEST:
+            # The original split no longer applies: every row is scored as test.
+            self._capture_split_counts(view_df)
+            backend_args["label_split_counts"] = self.label_split_counts
+            backend_args["split_counts"] = self.split_counts
+
+        threshold: Optional[float] = None
+        test_thresholds: Any = None
+        threshold_info: Dict[str, Any] = {}
+        if task_type == "binary":
+            threshold, test_thresholds, threshold_info = self._ensemble_thresholds(
+                trained, members, test_agg, val_agg, df, cross_validation, fold_role
+            )
+            backend_args["threshold"] = threshold
+            # Exported labels and confidences follow the selected threshold(s), not arg-max.
+            if not test_agg.empty:
+                test_agg = apply_binary_threshold(
+                    test_agg, test_thresholds if test_thresholds is not None else threshold
+                )
+            if not val_agg.empty:
+                val_agg = apply_binary_threshold(val_agg, threshold)
+
+        reference = test_agg if not test_agg.empty else val_agg
+        class_order = self._ensemble_class_order(trained, reference)
+        test_label_stats: Dict[str, Any] = {}
+        ensemble_test_metrics: Dict[str, float] = {}
+        if not test_agg.empty:
+            test_label_stats = self._ensemble_label_statistics(
+                test_agg,
+                df,
+                task_type,
+                class_order,
+                test_thresholds if test_thresholds is not None else threshold,
+            )
+            ensemble_test_metrics = flatten_label_statistics(test_label_stats)
+        ensemble_validation_metrics: Dict[str, float] = {}
+        if not val_agg.empty:
+            ensemble_validation_metrics = flatten_label_statistics(
+                self._ensemble_label_statistics(val_agg, df, task_type, class_order, threshold)
+            )
+
+        summary: Dict[str, Any] = {
+            "cross_validation": cross_validation,
+            "num_folds": num_folds if cross_validation else None,
+            "fold_role": fold_role if cross_validation else None,
+            "num_seeds": num_seeds,
+            "random_seed": int(self.args.random_seed),
+            "seeds": sorted({member.seed for member in members}),
+            "aggregation": (
+                "mean of predicted values" if task_type == "regression" else "mean of class probabilities"
+            ),
+            "task_type": task_type,
+            "threshold": threshold,
+            **threshold_info,
+            "members_planned": len(members),
+            "members_trained": len(trained),
+            "exported_model": trained[0]["name"],
+            "members": [
+                {key: record.get(key) for key in ("name", "fold", "seed", "status", "training", "validation", "test")}
+                for record in records
+            ],
+            "member_summary": {
+                "validation": summarize_member_metrics(trained, "validation"),
+                "test": summarize_member_metrics(trained, "test"),
+            },
+            "ensemble_test_metrics": ensemble_test_metrics,
+            "ensemble_validation_metrics": ensemble_validation_metrics,
+            "rows": {"test": int(len(test_agg)), "validation": int(len(val_agg))},
+        }
+
+        # Lay out output_dir/experiment_run so the report and the Galaxy wrapper
+        # find the ensemble where a single run would be.
+        top_dir = self.args.output_dir / "experiment_run"
+        if top_dir.exists():
+            shutil.rmtree(top_dir, ignore_errors=True)
+        members_dir = top_dir / MEMBERS_DIR_NAME
+        members_dir.mkdir(parents=True, exist_ok=True)
+        for record in records:
+            exp_dir = record.pop("exp_dir", None)
+            if exp_dir and Path(exp_dir).exists():
+                shutil.move(str(exp_dir), str(members_dir / record["name"]))
+        shutil.rmtree(members_root, ignore_errors=True)
+
+        first_member_dir = members_dir / trained[0]["name"]
+        if (first_member_dir / "model").exists():
+            shutil.copytree(first_member_dir / "model", top_dir / "model")
+        description_path = first_member_dir / DESCRIPTION_FILE_NAME
+        if description_path.exists():
+            shutil.copy2(description_path, top_dir / DESCRIPTION_FILE_NAME)
+
+        metadata_columns = [LABEL_COLUMN_NAME, IMAGE_PATH_COLUMN_NAME]
+        canonical = task_type != "regression"
+        if not test_agg.empty:
+            attach_row_metadata(
+                test_agg, df, 2, metadata_columns, canonical_labels=canonical
+            ).to_csv(top_dir / "predictions.csv", index=False)
+        if not val_agg.empty:
+            attach_row_metadata(
+                val_agg, df, 1, metadata_columns, canonical_labels=canonical
+            ).to_csv(top_dir / VALIDATION_PREDICTIONS_FILE_NAME, index=False)
+        if test_label_stats:
+            (top_dir / TEST_STATISTICS_FILE_NAME).write_text(
+                json.dumps({"label": test_label_stats, "combined": {}}, indent=2)
+            )
+        (top_dir / ENSEMBLE_SUMMARY_FILE_NAME).write_text(
+            json.dumps(summary, indent=2, default=str)
+        )
+        backend_args["ensemble"] = summary
+        logger.info("Ensemble assembled under %s", top_dir)
+        return True
+
+    @staticmethod
+    def _latest_experiment_dir(output_dir: Path) -> Optional[Path]:
+        exp_dirs = sorted(
+            Path(output_dir).glob("experiment_run*"),
+            key=lambda p: p.stat().st_mtime,
+        )
+        return exp_dirs[-1] if exp_dirs else None
+
+    @staticmethod
+    def _trim_member_run(exp_dir: Path) -> None:
+        """Drop the checkpoints and parquet of a finished member to bound disk usage."""
+        ckpt_dir = exp_dir / "model" / "training_checkpoints"
+        if ckpt_dir.exists():
+            shutil.rmtree(ckpt_dir, ignore_errors=True)
+        parquet_path = exp_dir / PREDICTIONS_PARQUET_FILE_NAME
+        if parquet_path.exists():
+            try:
+                parquet_path.unlink()
+            except OSError:
+                pass
+
+    @staticmethod
+    def _read_json(path: Path) -> Optional[Dict[str, Any]]:
+        try:
+            if Path(path).exists():
+                with open(path) as f:
+                    data = json.load(f)
+                return data if isinstance(data, dict) else None
+        except Exception as exc:
+            logger.warning("Unable to read %s: %s", path, exc)
+        return None
+
+    def _load_member_split_frame(
+        self,
+        path: Path,
+        rows: pd.Index,
+        label_values: List[Any],
+    ) -> Optional[pd.DataFrame]:
+        """Member predictions for one split, indexed by base row; None when they cannot be aligned."""
+        if len(rows) == 0 or not Path(path).exists():
+            return None
+        try:
+            df_pred = pd.read_csv(path)
+        except Exception as exc:
+            logger.warning("Unable to read member predictions %s: %s", path, exc)
+            return None
+        if len(df_pred) != len(rows):
+            logger.warning(
+                "Prediction rows (%d) in %s do not match the split's %d rows; skipping.",
+                len(df_pred),
+                path,
+                len(rows),
+            )
+            return None
+        frame = normalize_prediction_frame(df_pred, label_values)
+        frame.index = rows
+        return frame
+
+    def _collect_member_outputs(
+        self,
+        exp_dir: Path,
+        member_df: pd.DataFrame,
+        label_values: List[Any],
+        member_csv: Path,
+        member_out: Path,
+    ) -> Dict[str, Any]:
+        """Read one member's test/validation predictions and its metrics."""
+        test_rows = member_df.index[member_df[SPLIT_COLUMN_NAME] == 2]
+        test_frame = self._load_member_split_frame(exp_dir / "predictions.csv", test_rows, label_values)
+        if test_frame is None and len(test_rows):
+            # Ludwig's test predictions could not be aligned by order; score the test rows directly.
+            scored = self.backend.generate_split_predictions(
+                member_out,
+                member_csv,
+                split_value=2,
+                output_filename="test_predictions.csv",
+            )
+            if scored:
+                test_frame = self._load_member_split_frame(Path(scored), test_rows, label_values)
+        val_rows = member_df.index[member_df[SPLIT_COLUMN_NAME] == 1]
+        val_frame = self._load_member_split_frame(
+            exp_dir / VALIDATION_PREDICTIONS_FILE_NAME, val_rows, label_values
+        )
+        train_stats = self._read_json(exp_dir / TRAINING_STATISTICS_FILE_NAME)
+        test_stats = self._read_json(exp_dir / TEST_STATISTICS_FILE_NAME)
+        metrics = member_metrics(train_stats, test_stats)
+        return {
+            "test_frame": test_frame,
+            "validation_frame": val_frame,
+            "test_stats": test_stats,
+            "training": metrics.get("training", {}),
+            "validation": metrics.get("validation", {}),
+            "test": metrics.get("test", {}),
+        }
+
+    @staticmethod
+    def _ensemble_task_type(trained: List[Dict[str, Any]]) -> str:
+        """binary / category / regression, from member statistics and prediction columns."""
+        stats_type = next(
+            (detect_output_type(record["test_stats"]) for record in trained if record.get("test_stats")),
+            None,
+        )
+        if stats_type == "regression":
+            return "regression"
+        n_prob = 0
+        for record in trained:
+            for key in ("test_frame", "validation_frame"):
+                frame = record.get(key)
+                if frame is not None:
+                    n_prob = max(n_prob, len(probability_columns(frame.columns)))
+        if n_prob == 0:
+            return stats_type or "regression"
+        return "binary" if n_prob == 2 else "category"
+
+    def _ensemble_class_order(
+        self,
+        trained: List[Dict[str, Any]],
+        aggregated: pd.DataFrame,
+    ) -> List[str]:
+        """Class order for confusion matrices: Ludwig's own order when available."""
+        names = [class_name_from_column(col) for col in probability_columns(aggregated.columns)]
+        exp_dir = trained[0].get("exp_dir")
+        if exp_dir:
+            for meta_name in ("training_set_metadata.json", "train_set_metadata.json"):
+                meta = self._read_json(Path(exp_dir) / "model" / meta_name)
+                label_meta = (meta or {}).get(LABEL_COLUMN_NAME) or {}
+                idx2str = label_meta.get("idx2str")
+                if isinstance(idx2str, list) and {str(v) for v in idx2str} == set(names):
+                    return [str(v) for v in idx2str]
+        return sorted(names)
+
+    def _ensemble_thresholds(
+        self,
+        trained: List[Dict[str, Any]],
+        members: List[Any],
+        test_agg: pd.DataFrame,
+        val_agg: pd.DataFrame,
+        df: pd.DataFrame,
+        cross_validation: bool,
+        fold_role: str,
+    ) -> Tuple[float, Any, Dict[str, Any]]:
+        """Binary decision threshold(s) for the ensemble.
+
+        Returns the threshold shown in the report, an optional per-row array of
+        thresholds for the test rows, and summary fields describing the choice.
+
+        Manual mode uses the given value everywhere. Otherwise the threshold is
+        optimized on averaged validation predictions. With test folds every row
+        is scored as test, so a single threshold tuned on all out-of-fold
+        validation rows would use the test rows' own labels; instead each fold
+        gets a threshold tuned on its members' validation rows only, which never
+        include that fold's test rows.
+        """
+        metric = str(getattr(self.args, "threshold_metric", "f1") or "f1")
+        metric_label = self._threshold_metric_label(metric)
+        if str(getattr(self.args, "threshold_mode", "auto")).lower() == "manual":
+            manual = float(self.args.threshold) if self.args.threshold is not None else 0.5
+            return manual, None, {"threshold_source": "Manual", "threshold_metric": "Not used"}
+
+        if not (cross_validation and fold_role == FOLD_ROLE_TEST):
+            optimized = self._optimize_threshold(val_agg, df, metric)
+            if optimized is None:
+                return 0.5, None, {
+                    "threshold_source": "Default 0.5 (automatic optimization unavailable)",
+                    "threshold_metric": metric_label,
+                }
+            return optimized, None, {
+                "threshold_source": "Optimized on averaged validation split",
+                "threshold_metric": metric_label,
+            }
+
+        fold_thresholds: Dict[str, float] = {}
+        per_row = pd.Series(np.nan, index=test_agg.index, dtype=float)
+        for fold in sorted({record["fold"] for record in trained if record.get("fold") is not None}):
+            fold_members = [record for record in trained if record.get("fold") == fold]
+            fold_val = aggregate_member_predictions(
+                [record.get("validation_frame") for record in fold_members], "binary"
+            )
+            fold_threshold = self._optimize_threshold(fold_val, df, metric)
+            if fold_threshold is None:
+                logger.warning("Fold %d: threshold optimization unavailable; using 0.5.", fold)
+                fold_threshold = 0.5
+            fold_thresholds[str(fold)] = fold_threshold
+            fold_test_rows = next(
+                member.split.index[member.split == 2] for member in members if member.fold == fold
+            )
+            per_row.loc[per_row.index.intersection(fold_test_rows)] = fold_threshold
+        mean_threshold = float(np.mean(list(fold_thresholds.values()))) if fold_thresholds else 0.5
+        per_row = per_row.fillna(mean_threshold)
+        logger.info("Per-fold ensemble thresholds: %s", fold_thresholds)
+        return mean_threshold, per_row.to_numpy(), {
+            "threshold_source": (
+                "Optimized per test fold on that fold's validation rows; "
+                "mean shown, per-fold values applied to predictions"
+            ),
+            "threshold_metric": metric_label,
+            "fold_thresholds": fold_thresholds,
+        }
+
+    @staticmethod
+    def _threshold_metric_label(metric: str) -> str:
+        try:
+            from plotly_plots import _threshold_metric_display_name
+
+            return _threshold_metric_display_name(metric)
+        except Exception:
+            return str(metric)
+
+    @staticmethod
+    def _optimize_threshold(
+        val_agg: pd.DataFrame,
+        df: pd.DataFrame,
+        metric: str,
+    ) -> Optional[float]:
+        """Threshold maximizing ``metric`` on averaged validation probabilities, or None."""
+        if val_agg is None or val_agg.empty:
+            logger.warning("No averaged validation predictions to optimize the threshold on.")
+            return None
+        prob_cols = probability_columns(val_agg.columns)
+        names = [class_name_from_column(col) for col in prob_cols]
+        if len(names) != 2:
+            return None
+        pos = positive_class_index(names)
+        y_true = np.asarray([canonical_label(v) for v in df.loc[val_agg.index, LABEL_COLUMN_NAME]])
+        y_true_bin = (y_true == names[pos]).astype(int)
+        if len(np.unique(y_true_bin)) < 2:
+            logger.warning("Averaged validation predictions contain a single class.")
+            return None
+        y_score = val_agg[prob_cols[pos]].to_numpy(dtype=float)
+        try:
+            from plotly_plots import optimize_binary_threshold_values
+
+            result = optimize_binary_threshold_values(y_true_bin, y_score, metric=metric)
+        except Exception as exc:
+            logger.warning("Threshold optimization failed: %s", exc)
+            return None
+        if not result:
+            return None
+        logger.info(
+            "Threshold %.3f selected on %d averaged validation predictions (%s=%.4f).",
+            result["threshold"],
+            len(y_score),
+            result.get("metric_display", metric),
+            result.get("metric_value", float("nan")),
+        )
+        return float(result["threshold"])
+
+    @staticmethod
+    def _ensemble_label_statistics(
+        aggregated: pd.DataFrame,
+        df: pd.DataFrame,
+        task_type: str,
+        class_order: List[str],
+        threshold: Any,
+    ) -> Dict[str, Any]:
+        """Ludwig-shaped label statistics of averaged predictions against the ground truth."""
+        y_true = df.loc[aggregated.index, LABEL_COLUMN_NAME].to_numpy()
+        if task_type == "regression":
+            return compute_regression_statistics(y_true, aggregated[PREDICTIONS_COLUMN].to_numpy())
+        names = [class_name_from_column(col) for col in probability_columns(aggregated.columns)]
+        order = [name for name in class_order if name in names]
+        order += [name for name in names if name not in order]
+        probs = aggregated[[f"{PROBABILITIES_PREFIX}{name}" for name in order]].to_numpy(dtype=float)
+        return compute_classification_statistics(
+            y_true,
+            probs,
+            order,
+            top_k=min(DEFAULT_HITS_AT_K, len(order)),
+            threshold=threshold if task_type == "binary" else None,
+        )
+
+    @staticmethod
+    def _ensemble_split_info(split_info: str, summary: Dict[str, Any]) -> str:
+        """Append the ensemble layout to the data-split description shown in the report."""
+        num_seeds = int(summary.get("num_seeds") or 1)
+        if summary.get("cross_validation"):
+            role = summary.get("fold_role")
+            layout = f"{summary.get('num_folds')}-fold cross-validation ({role} folds)"
+            if role == FOLD_ROLE_TEST:
+                layout += "; every row is scored out-of-fold, so any original test split is ignored"
+        else:
+            layout = "single split"
+        if num_seeds > 1:
+            layout += f" x {num_seeds} random seeds"
+        return (
+            f"{split_info} Ensemble: {layout}; {summary.get('members_trained')} of "
+            f"{summary.get('members_planned')} members trained; predictions averaged across members."
+        )
 
     def _write_image_size_details_artifact(
         self,

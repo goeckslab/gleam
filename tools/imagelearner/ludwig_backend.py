@@ -23,6 +23,8 @@ from html_structure import (
     encode_image_to_base64,
     format_config_table_html,
     format_dataset_overview_table,
+    format_ensemble_members_table_html,
+    format_ensemble_summary_html,
     format_image_match_notice,
     format_stats_table_html,
     format_test_merged_stats_table_html,
@@ -1992,8 +1994,40 @@ class LudwigDirectBackend:
         hits_top_k = int(config_for_summary.get("top_k") or DEFAULT_HITS_AT_K)
         train_stats_path = exp_dir / "training_statistics.json"
         test_stats_path = exp_dir / TEST_STATISTICS_FILE_NAME
+        ensemble = config.get("ensemble") if isinstance(config.get("ensemble"), dict) else None
+        # Ensemble runs embed split and label columns in their averaged prediction
+        # CSVs, so prediction-based plots must not re-align rows against the label CSV.
+        preds_label_path = (
+            None
+            if ensemble
+            else (
+                str(config.get("label_column_data_path"))
+                if config.get("label_column_data_path")
+                else None
+            )
+        )
         try:
-            if train_stats_path.exists() and test_stats_path.exists():
+            if ensemble:
+                output_type = ensemble.get("task_type")
+                if test_stats_path.exists():
+                    with open(test_stats_path) as f:
+                        test_stats = json.load(f)
+                    output_type = detect_output_type(test_stats)
+                metrics_html = format_ensemble_summary_html(
+                    ensemble, output_type, top_k=hits_top_k
+                )
+                train_val_metrics_html = format_ensemble_members_table_html(
+                    ensemble,
+                    output_type,
+                    top_k=hits_top_k,
+                    title="Member Validation and Test Metrics",
+                )
+                test_metrics_html = format_test_merged_stats_table_html(
+                    ensemble.get("ensemble_test_metrics") or {},
+                    output_type,
+                    top_k=hits_top_k,
+                )
+            elif train_stats_path.exists() and test_stats_path.exists():
                 with open(train_stats_path) as f:
                     train_stats = json.load(f)
                 with open(test_stats_path) as f:
@@ -2043,7 +2077,16 @@ class LudwigDirectBackend:
                 or config.get("threshold_metric")
                 or "f1"
             )
-            if threshold_mode == "manual":
+            if ensemble and ensemble.get("threshold") is not None and ensemble.get("threshold_source"):
+                # The workflow already chose the ensemble threshold (per fold for
+                # test-fold CV); re-optimizing on the pooled validation rows would
+                # use the test rows' labels.
+                config_for_summary["threshold"] = float(ensemble["threshold"])
+                config_for_summary["threshold_source"] = str(ensemble["threshold_source"])
+                config_for_summary["threshold_metric"] = str(
+                    ensemble.get("threshold_metric") or requested_metric
+                )
+            elif threshold_mode == "manual":
                 threshold = (
                     config_for_summary.get("threshold")
                     if config_for_summary.get("threshold") is not None
@@ -2059,9 +2102,7 @@ class LudwigDirectBackend:
                     threshold_mode,
                     str(requested_metric),
                     str(validation_predictions_path),
-                    label_data_path=str(config.get("label_column_data_path"))
-                    if config.get("label_column_data_path")
-                    else None,
+                    label_data_path=preds_label_path,
                     existing_threshold=float(existing_threshold)
                     if existing_threshold is not None
                     else None,
@@ -2086,14 +2127,14 @@ class LudwigDirectBackend:
         else:
             config_for_summary["threshold"] = None
 
-        if output_type == "binary" and predictions_csv_path.exists():
+        # Ensemble test metrics were already computed at the selected threshold(s),
+        # including per-fold thresholds that a single recompute cannot reproduce.
+        if output_type == "binary" and predictions_csv_path.exists() and not ensemble:
             try:
                 threshold_metrics = compute_binary_threshold_metrics_from_predictions(
                     str(predictions_csv_path),
                     float(config_for_summary.get("threshold", 0.5)),
-                    label_data_path=str(config.get("label_column_data_path"))
-                    if config.get("label_column_data_path")
-                    else None,
+                    label_data_path=preds_label_path,
                     split_value=2,
                 )
                 if threshold_metrics:
@@ -2230,9 +2271,7 @@ class LudwigDirectBackend:
             try:
                 threshold_plot = build_binary_threshold_plot(
                     str(validation_predictions_path),
-                    label_data_path=str(config.get("label_column_data_path"))
-                    if config.get("label_column_data_path")
-                    else None,
+                    label_data_path=preds_label_path,
                     split_value=1,
                     selected_threshold=float(threshold_value)
                     if threshold_value is not None
@@ -2270,6 +2309,11 @@ class LudwigDirectBackend:
             except Exception as e:
                 logger.warning(f"Could not generate train/val plots: {e}")
 
+        if threshold_plot:
+            # No training curves to pair it with (ensemble runs): still show the threshold sweep.
+            tab2_content = append_plot_blocks(tab2_content, [threshold_plot])
+            threshold_plot = None
+
         # Only include training PNGs for regression; classification is handled by filtered Plotly plots
         if output_type == "regression":
             tab2_content += render_img_section(
@@ -2289,9 +2333,7 @@ class LudwigDirectBackend:
             try:
                 val_diag_plots = build_prediction_diagnostics(
                     str(validation_predictions_path),
-                    label_data_path=str(config.get("label_column_data_path"))
-                    if config.get("label_column_data_path")
-                    else None,
+                    label_data_path=preds_label_path,
                     split_value=1,
                 )
                 val_conf_plots = [
@@ -2306,7 +2348,26 @@ class LudwigDirectBackend:
         # --- Predictions vs Ground Truth table (REGRESSION ONLY) ---
         preds_section = ""
         parquet_path = exp_dir / PREDICTIONS_PARQUET_FILE_NAME
-        if output_type == "regression" and parquet_path.exists():
+        if output_type == "regression" and ensemble and predictions_csv_path.exists():
+            # Averaged ensemble predictions already carry the ground truth.
+            try:
+                df_table = pd.read_csv(predictions_csv_path)
+                df_table = df_table[[LABEL_COLUMN_NAME, "label_predictions"]].rename(
+                    columns={"label_predictions": "prediction"}
+                )
+                preds_html = df_table.to_html(index=False, classes="predictions-table")
+                preds_section = (
+                    "<h2 style='text-align: center;'>Ground Truth vs. Predictions</h2>"
+                    "<div class='preds-controls'>"
+                    "<button id='downloadPredsCsv' class='download-btn'>Download CSV</button>"
+                    "</div>"
+                    "<div class='scroll-rows-30' style='overflow-x:auto; overflow-y:auto; max-height:350px; margin-bottom:20px;'>"
+                    + preds_html
+                    + "</div>"
+                )
+            except Exception as e:
+                logger.warning(f"Could not build ensemble Predictions vs GT table: {e}")
+        elif output_type == "regression" and parquet_path.exists():
             try:
                 # 1) load predictions from Parquet
                 df_preds = pd.read_parquet(parquet_path).reset_index(drop=True)
@@ -2362,9 +2423,7 @@ class LudwigDirectBackend:
                     interactive_plots = build_binary_threshold_classification_plots_from_predictions(
                         str(predictions_csv_path),
                         float(threshold_value) if threshold_value is not None else 0.5,
-                        label_data_path=str(config.get("label_column_data_path"))
-                        if config.get("label_column_data_path")
-                        else None,
+                        label_data_path=preds_label_path,
                         split_value=2,
                     )
                     if not interactive_plots:
@@ -2418,9 +2477,7 @@ class LudwigDirectBackend:
                 try:
                     test_diag_plots = build_prediction_diagnostics(
                         str(predictions_csv_path),
-                        label_data_path=str(config.get("label_column_data_path"))
-                        if config.get("label_column_data_path")
-                        else None,
+                        label_data_path=preds_label_path,
                         split_value=2,
                     )
                     if test_diag_plots:
@@ -2431,6 +2488,11 @@ class LudwigDirectBackend:
 
         if gradcam_info.get("status") == "generated":
             tab3_content += "<h2 style='text-align: center;'>Grad-CAM Heatmaps</h2>"
+            if ensemble and ensemble.get("exported_model"):
+                tab3_content += (
+                    "<p style='text-align:center; color:#666;'>Computed with the exported member model "
+                    f"({ensemble['exported_model']}), not with the averaged ensemble.</p>"
+                )
             for orig_path, heat_path in gradcam_info.get("pairs", [])[:4]:
                 try:
                     display_name = Path(str(orig_path)).name
