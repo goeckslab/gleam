@@ -1189,10 +1189,14 @@ def format_ensemble_members_table_html(
     # Two header rows (split group above metric names) keep the table narrow
     # enough to read; the summary rows must stay at the bottom, so the columns
     # are not sortable.
-    th_style = "padding: 8px 10px; border: 1px solid #ccc; text-align: center; vertical-align: middle;"
+    th_style = (
+        "padding: 8px 10px; border: 1px solid #ccc; text-align: center; vertical-align: middle; "
+        "word-break: normal; overflow-wrap: normal;"
+    )
     cell_style = "padding: 8px 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;"
     header_top = "".join(
-        f"<th rowspan='2' style='{th_style}'>{col}</th>" for col in ("Member", "Fold", "Seed", "Status")
+        f"<th rowspan='2' style='{th_style} white-space: nowrap;'>{col}</th>"
+        for col in ("Member", "Fold", "Seed", "Status")
     )
     if val_keys:
         header_top += f"<th colspan='{len(val_keys)}' style='{th_style}'>Validation</th>"

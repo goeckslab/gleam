@@ -1714,11 +1714,12 @@ def build_binary_threshold_classification_plots_from_predictions(
     ]
     threshold_text = f"{float(threshold):.3f}"
     if per_row_thresholds:
-        cm_title = f"Confusion Matrix (Per-Fold Thresholds, Mean: {threshold_text})"
+        threshold_label = f"Per-Fold Thresholds, Mean: {threshold_text}"
         marker_name = "Operating point (per-fold thresholds)"
     else:
-        cm_title = f"Confusion Matrix (Selected Threshold: {threshold_text})"
+        threshold_label = f"Selected Threshold: {threshold_text}"
         marker_name = f"Selected threshold={threshold_text}"
+    cm_title = f"Confusion Matrix ({threshold_label})"
     common_cfg = {"displayModeBar": True, "scrollZoom": True}
     plots: List[Dict[str, str]] = []
 
@@ -1921,7 +1922,7 @@ def build_binary_threshold_classification_plots_from_predictions(
         )
     )
     fig_cr.update_layout(
-        title=dict(text=f"Per-Class Metrics (Selected Threshold: {threshold_text})", x=0.5),
+        title=dict(text=f"Per-Class Metrics ({threshold_label})", x=0.5),
         xaxis_title="",
         yaxis_title="Class",
         width=700,
