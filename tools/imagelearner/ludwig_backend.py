@@ -22,6 +22,7 @@ from html_structure import (
     build_tabbed_html,
     encode_image_to_base64,
     format_config_table_html,
+    format_cross_validation_overview_table,
     format_dataset_overview_table,
     format_ensemble_members_table_html,
     format_ensemble_summary_html,
@@ -1852,8 +1853,17 @@ class LudwigDirectBackend:
             label_split_counts: Optional[List[Dict[str, int]]] = None,
             split_counts: Optional[Dict[int, int]] = None,
             fallback_dataset: Optional[Path] = None,
+            ensemble_summary: Optional[Dict[str, Any]] = None,
         ) -> str:
             """Summarize dataset distribution across splits using the actual split config."""
+            if (
+                ensemble_summary
+                and ensemble_summary.get("cross_validation")
+                and ensemble_summary.get("fold_layout")
+            ):
+                # Folds rotate the splits, so describe the per-fold layout instead.
+                return format_cross_validation_overview_table(ensemble_summary)
+
             if label_split_counts:
                 # Use the actual counts captured during data prep instead of heuristics.
                 return format_dataset_overview_table(label_split_counts, regression_mode=False)
@@ -2154,6 +2164,7 @@ class LudwigDirectBackend:
             config.get("label_split_counts"),
             config.get("split_counts"),
             dataset_path_from_desc,
+            ensemble_summary=ensemble,
         )
         dataset_overview_html += format_image_match_notice(
             config.get("image_match_summary")

@@ -25,6 +25,8 @@ DESCRIPTION_FILE_NAME = "description.json"
 TRAINING_STATISTICS_FILE_NAME = "training_statistics.json"
 PREDICTIONS_SHAPES_FILE_NAME = "predictions.shapes"
 VALIDATION_PREDICTIONS_FILE_NAME = "validation_predictions.csv"
+# Per-row binary decision threshold column written by ensemble runs.
+DECISION_THRESHOLD_COLUMN = "decision_threshold"
 MODEL_ENCODER_TEMPLATES: Dict[str, Any] = {
     "stacked_cnn": "stacked_cnn",
     "resnet18": {"type": "resnet", "model_variant": 18},

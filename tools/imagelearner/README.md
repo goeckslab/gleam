@@ -22,7 +22,7 @@ Image Learner is a Galaxy wrapper for training and evaluating image classificati
 - A Galaxy composite model dataset
 - An HTML report with training curves and evaluation plots
 - Derived prediction and metric assets stored with the model output
-- For ensemble runs: averaged predictions, `ensemble_summary.json`, and one `members/<fold>_<seed>/` folder per trained member inside the artifacts ZIP
+- For ensemble runs: averaged predictions, `ensemble_summary.json`, and one `members/<fold>_<seed>/` folder per trained member (predictions and statistics, no weights) inside the artifacts ZIP
 
 ## Cross-validation and ensembles
 
@@ -32,7 +32,7 @@ Under "Customize Default Settings" the wrapper can train several models per run:
 - *k-fold cross-validation* trains one model per fold. "Validation folds" keep the test split fixed and rotate the folds through the validation set; "test folds" score every sample exactly once out-of-fold.
 - Both options combine to folds x seeds members. Class probabilities (or regression values) are averaged across the members that did not train on a row, and the report lists every member, their mean ± SD, and the averaged ensemble.
 
-Members are trained sequentially, so plan GPU time accordingly. The ludwig_model output holds the first trained member; the other members live in the artifacts ZIP.
+Members are trained sequentially, so plan GPU time accordingly. The ludwig_model output holds the first trained member's weights; the other members' predictions and statistics live in the artifacts ZIP, without their weights.
 
 ## Typical use
 

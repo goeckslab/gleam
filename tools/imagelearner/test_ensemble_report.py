@@ -103,10 +103,15 @@ def test_report_renders_binary_ensemble(tmp_path, monkeypatch):
     assert "Ensemble Summary" in html
     assert "Member Models and Averaged Ensemble" in html
     assert "Member Validation and Test Metrics" in html
-    assert "Mean ± SD (members)" in html
-    assert "Ensemble (averaged predictions)" in html
+    assert "Members mean ± SD" in html
+    assert "Ensemble (averaged)" in html
     for name in ("fold1_seed42", "fold1_seed43", "fold2_seed42", "fold2_seed43"):
         assert name in html
+    # the Dataset Overview describes the folds, not a single split
+    assert "Rows in folds" in html
+    assert "Test (fixed)" in html
+    assert "Rows per fold" in html
+    assert "test = the fixed test split, averaged across all members" in html
     assert "Test Performance Summary" in html
     assert "Decision Threshold (Test)" in html
     assert "Optimized on averaged validation split" in html
@@ -114,6 +119,41 @@ def test_report_renders_binary_ensemble(tmp_path, monkeypatch):
     # binary plots are built from the averaged prediction CSVs
     assert "Threshold plot" in html
     assert "Confusion Matrix" in html
+
+
+def test_report_renders_test_fold_ensemble_with_per_fold_thresholds(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    csv_path, zip_path, base_df = test_ensemble._make_dataset(tmp_path, n_per_class=16)
+    args = test_ensemble._make_args(
+        tmp_path, csv_path, zip_path, fold_role="test", num_folds=2, num_seeds=1
+    )
+    backend = ReportBackend()
+
+    image_workflow.ImageLearnerCLI(args, backend).run()
+
+    html = (tmp_path / "image_classification_results_report.html").read_text()
+    exp_dir = args.output_dir / "experiment_run"
+    summary = json.loads((exp_dir / "ensemble_summary.json").read_text())
+    preds = pd.read_csv(exp_dir / "predictions.csv")
+    assert len(preds) == len(base_df)
+    # every row carries the threshold of the fold that held it out
+    assert set(np.round(preds["decision_threshold"], 6)) == {
+        round(v, 6) for v in summary["fold_thresholds"].values()
+    }
+    if len(set(summary["fold_thresholds"].values())) > 1:
+        # plots re-derive labels from the per-row thresholds, not the mean
+        assert "Per-Fold Thresholds, Mean:" in html
+        assert "Operating point (per-fold thresholds)" in html
+    assert "test = every row, scored out-of-fold" in html
+    # overview: per-fold layout, no fixed test column
+    assert "Rows per fold" in html
+    assert "Test (fixed)" not in html
+    assert "held out as the test set" in html
+    assert sum(row["test"] for row in summary["fold_layout"]) == len(base_df)
+    assert all(
+        row["train"] + row["validation"] + row["test"] == len(base_df)
+        for row in summary["fold_layout"]
+    )
 
 
 def test_report_renders_regression_ensemble(tmp_path, monkeypatch):

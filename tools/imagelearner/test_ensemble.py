@@ -543,6 +543,13 @@ def test_workflow_trains_members_and_averages_predictions(tmp_path, monkeypatch)
     # dataset overview keeps the original split (members train on its train+val rows)
     assert config["label_split_counts"][0]["train"] > 0
     assert config["label_split_counts"][0]["test"] == n_test // 2
+    # the report also gets the per-fold layout: fixed test rows, rotating validation
+    layout = config["ensemble"]["fold_layout"]
+    assert [row["fold"] for row in layout] == [1, 2]
+    assert all(row["test"] == n_test for row in layout)
+    assert sum(row["validation"] for row in layout) == len(base_df) - n_test
+    assert sum(row["test"] for row in config["ensemble"]["label_counts"]) == n_test
+    assert sum(row["rows"] for row in config["ensemble"]["label_counts"]) == len(base_df) - n_test
 
 
 def test_workflow_test_folds_score_every_row_out_of_fold(tmp_path, monkeypatch):
@@ -574,6 +581,13 @@ def test_workflow_test_folds_score_every_row_out_of_fold(tmp_path, monkeypatch):
     assert "original test split is ignored" in split_info
     # dataset overview shows every row as test
     assert all(row["train"] == 0 and row["validation"] == 0 for row in config["label_split_counts"])
+    # per-fold layout: each row is tested in exactly one fold
+    layout = summary["fold_layout"]
+    assert [row["fold"] for row in layout] == [1, 2, 3]
+    assert sum(row["test"] for row in layout) == len(base_df)
+    assert all(row["validation"] > 0 for row in layout)
+    assert all(row["test"] == 0 for row in summary["label_counts"])
+    assert sum(row["rows"] for row in summary["label_counts"]) == len(base_df)
 
 
 def test_workflow_seeds_only_reuses_split_and_counts_members(tmp_path, monkeypatch):

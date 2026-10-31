@@ -11,7 +11,11 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
-from constants import LABEL_COLUMN_NAME, SPLIT_COLUMN_NAME
+from constants import (
+    DECISION_THRESHOLD_COLUMN,
+    LABEL_COLUMN_NAME,
+    SPLIT_COLUMN_NAME,
+)
 from sklearn.metrics import (
     accuracy_score,
     balanced_accuracy_score,
@@ -49,7 +53,6 @@ PROBABILITY_COLUMN = "label_probability"
 PROBABILITIES_VECTOR_COLUMN = "label_probabilities"
 PROBABILITIES_PREFIX = "label_probabilities_"
 N_MODELS_COLUMN = "n_models"
-DECISION_THRESHOLD_COLUMN = "decision_threshold"
 
 ENSEMBLE_SUMMARY_FILE_NAME = "ensemble_summary.json"
 MEMBERS_DIR_NAME = "members"

@@ -106,7 +106,7 @@
 
             mkdir -p '$output_model.extra_files_path' &&
             cp -r experiment_run/model/*.json experiment_run/model/model_weights '$output_model.extra_files_path' &&
-            python -c "import pathlib, zipfile; out = pathlib.Path('$output_artifacts_zip'); exp = pathlib.Path('experiment_run'); model_dir = exp / 'model'; zf = zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED); [zf.write(path, path.relative_to(exp.parent)) for path in sorted(exp.rglob('*')) if path.is_file() and model_dir not in path.parents]; zf.close()" &&
+            python -c "import pathlib, zipfile; out = pathlib.Path('$output_artifacts_zip'); exp = pathlib.Path('experiment_run'); model_dir = exp / 'model'; zf = zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED); [zf.write(path, path.relative_to(exp.parent)) for path in sorted(exp.rglob('*')) if path.is_file() and model_dir not in path.parents and 'model_weights' not in path.parts]; zf.close()" &&
 
             echo "Image Learner Classification Experiment is Done!"
         ]]>
@@ -671,7 +671,7 @@ For classification the class probabilities are averaged across the models that d
 The tool will output a trained model in the form of a ludwig_model file,
 a report in the form of an HTML file, and a hidden ZIP archive containing the predictions, image-size details, experiment stats, and visualizations.
 The html report will contain metrics&experiment setup parameters, train&val plots and test plots.
-For ensemble runs the ZIP also contains ``experiment_run/ensemble_summary.json`` and one ``experiment_run/members/<fold>_<seed>/`` folder per member with its own predictions, statistics and model weights; ``predictions.csv`` and ``validation_predictions.csv`` at the top level hold the averaged predictions. The ludwig_model output is the first trained member.
+For ensemble runs the ZIP also contains ``experiment_run/ensemble_summary.json`` and one ``experiment_run/members/<fold>_<seed>/`` folder per member with its own predictions and statistics (member weights are left out to keep the archive small); ``predictions.csv`` and ``validation_predictions.csv`` at the top level hold the averaged predictions. The ludwig_model output is the first trained member.
 
         ]]>
     </help>

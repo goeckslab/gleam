@@ -848,6 +848,7 @@ class ImageLearnerCLI:
             "members_planned": len(members),
             "members_trained": len(trained),
             "exported_model": trained[0]["name"],
+            **self._ensemble_dataset_layout(df, members, cross_validation, fold_role, task_type),
             "members": [
                 {key: record.get(key) for key in ("name", "fold", "seed", "status", "training", "validation", "test")}
                 for record in records
@@ -1172,6 +1173,46 @@ class ImageLearnerCLI:
             top_k=min(DEFAULT_HITS_AT_K, len(order)),
             threshold=threshold if task_type == "binary" else None,
         )
+
+    @staticmethod
+    def _ensemble_dataset_layout(
+        df: pd.DataFrame,
+        members: List[Any],
+        cross_validation: bool,
+        fold_role: str,
+        task_type: str,
+    ) -> Dict[str, Any]:
+        """Per-fold split sizes and per-label row counts for the report's Dataset Overview.
+
+        Only cross-validated runs need this: a seeds-only run keeps the single
+        split that the overview already describes.
+        """
+        if not cross_validation:
+            return {}
+        fold_layout: List[Dict[str, int]] = []
+        for fold in sorted({member.fold for member in members if member.fold is not None}):
+            split = next(member.split for member in members if member.fold == fold)
+            counts = split.value_counts()
+            fold_layout.append(
+                {
+                    "fold": int(fold),
+                    "train": int(counts.get(0, 0)),
+                    "validation": int(counts.get(1, 0)),
+                    "test": int(counts.get(2, 0)),
+                }
+            )
+        label_counts: List[Dict[str, Any]] = []
+        if task_type != "regression" and LABEL_COLUMN_NAME in df.columns:
+            labels = df[LABEL_COLUMN_NAME].dropna().map(canonical_label)
+            if fold_role == FOLD_ROLE_VALIDATION and members:
+                fixed_test = (members[0].split == 2).reindex(labels.index).fillna(False)
+            else:
+                fixed_test = pd.Series(False, index=labels.index)
+            for name in sorted(labels.unique()):
+                mask = labels == name
+                n_test = int(fixed_test[mask].sum())
+                label_counts.append({"label": name, "rows": int(mask.sum()) - n_test, "test": n_test})
+        return {"fold_layout": fold_layout, "label_counts": label_counts}
 
     @staticmethod
     def _ensemble_split_info(split_info: str, summary: Dict[str, Any]) -> str:
