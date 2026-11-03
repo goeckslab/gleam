@@ -81,6 +81,19 @@ def format_image_size_report(config: dict, val: Any) -> str:
     )
 
 
+def format_binary_threshold_notice(threshold: float, source: str, metric: Optional[str] = None) -> str:
+    """Explain the decision rule used by the adjacent binary metrics table."""
+    selection = f" Optimization metric: {escape(str(metric))}." if metric and metric != "Not used" else ""
+    return (
+        "<p class='threshold-notice' style='text-align:center;'>"
+        f"<strong>Decision threshold: {float(threshold):.6f}</strong>. "
+        f"Source: {escape(source)}.{selection} "
+        "This table's accuracy, precision, recall, specificity, F1, balanced accuracy and MCC "
+        "use this threshold where shown. ROC-AUC and loss are independent of the decision threshold."
+        "</p>"
+    )
+
+
 def format_config_table_html(
     config: dict,
     split_info: Optional[str] = None,
@@ -99,6 +112,7 @@ def format_config_table_html(
         "validation_metric",
         "top_k",
         "loss_function",
+        "evaluation_threshold",
         "threshold",
         "threshold_source",
         "threshold_metric",
@@ -117,7 +131,8 @@ def format_config_table_html(
 
     rows = []
     label_map = {
-        "threshold": "Decision Threshold (Test)",
+        "evaluation_threshold": "Evaluation Threshold (Experiment and Validation Summaries)",
+        "threshold": "Selected Threshold (Test Summary)",
         "threshold_source": "Threshold Source",
         "threshold_metric": "Threshold Optimization Metric",
         "compute_resource": "Compute Resource",
@@ -134,11 +149,11 @@ def format_config_table_html(
             top_k = int(val)
             display_label = "Hits@K"
             val_str = str(top_k)
-        elif key == "threshold":
+        elif key in {"threshold", "evaluation_threshold"}:
             if output_type != "binary":
                 continue
             val = val if val is not None else 0.5
-            val_str = f"{float(val):.3f}"
+            val_str = f"{float(val):.6f}"
         elif key in {"threshold_source", "threshold_metric"}:
             if output_type != "binary":
                 continue

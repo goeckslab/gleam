@@ -1,11 +1,13 @@
 import importlib
 import io
+import json
 import sys
 import types
 import zipfile
 from pathlib import Path
 
 import pandas as pd
+import pytest
 import yaml
 from PIL import Image
 
@@ -268,3 +270,84 @@ def test_prepare_config_records_metaformer_model_size_adaptation(tmp_path):
     assert params["image_size_adaptation"]["model_adaptation_size"] == "224x224"
     assert params["image_size_adaptation"]["model_adaptation_from_size"] == "96x96"
     assert params["image_size_adaptation"]["model_adaptation_to_size"] == "224x224"
+
+
+@pytest.mark.parametrize("mode, include_test_predictions, evaluation_threshold, selected_threshold", [
+    ("auto", True, 0.5, 0.7),
+    ("manual", True, 0.3, 0.3),
+    ("auto", False, 0.5, 0.7),
+    ("manual", True, 0.0, 0.0),
+])
+def test_report_labels_each_metrics_table_with_its_actual_threshold(
+    tmp_path, monkeypatch, mode, include_test_predictions, evaluation_threshold, selected_threshold
+):
+    *_, backend_class = _load_backend_test_objects()
+    backend_module = importlib.import_module("ludwig_backend")
+    exp_dir = tmp_path / "experiment_run"
+    exp_dir.mkdir()
+    (exp_dir / "description.json").write_text(json.dumps({"config": {
+        "output_features": [{"type": "binary", "threshold": evaluation_threshold}],
+    }}))
+    label_stats = {
+        "accuracy": 0.75, "precision": 0.8, "recall": 0.5, "specificity": 1.0,
+        "roc_auc": 0.9, "loss": 0.3, "confusion_matrix": [[2, 0], [1, 1]],
+        "per_class_stats": {"0": {}, "1": {}},
+    }
+    (exp_dir / "test_statistics.json").write_text(json.dumps({"label": label_stats}))
+    (exp_dir / "training_statistics.json").write_text(json.dumps({
+        split: {"label": {key: [value] for key, value in label_stats.items()
+                          if isinstance(value, float)}}
+        for split in ("training", "validation")
+    }))
+    for name, split in [("validation_predictions.csv", 1), ("predictions.csv", 2)]:
+        if split == 2 and not include_test_predictions:
+            continue
+        pd.DataFrame({
+            "split": [split] * 4, "label": [1, 0, 1, 0],
+            "label_probabilities_True": [0.9, 0.6, 0.7, 0.2],
+            "label_probabilities_False": [0.1, 0.4, 0.3, 0.8],
+        }).to_csv(exp_dir / name, index=False)
+    fallback_thresholds = []
+
+    def capture_fallback(*args, **kwargs):
+        fallback_thresholds.append(kwargs["threshold"])
+        return []
+
+    monkeypatch.setattr(backend_module, "build_classification_plots", capture_fallback)
+    for name in ("build_train_validation_plots", "build_prediction_diagnostics",
+                 "build_binary_threshold_classification_plots_from_predictions"):
+        monkeypatch.setattr(backend_module, name, lambda *args, **kwargs: [])
+    monkeypatch.setattr(backend_module, "build_binary_threshold_plot", lambda *args, **kwargs: None)
+    monkeypatch.setattr(backend_class, "_generate_gradcam_heatmaps", lambda *args: {})
+    monkeypatch.setattr(backend_class, "get_training_process", lambda *args: {})
+    tabs = {}
+
+    def capture_tabs(first, second, third):
+        tabs.update(first=first, second=second, third=third)
+        return first + second + third
+
+    monkeypatch.setattr(backend_module, "build_tabbed_html", capture_tabs)
+    monkeypatch.chdir(tmp_path)
+    config = {"threshold_mode": mode, "threshold_metric": "balanced_accuracy"}
+    if mode == "manual":
+        config["threshold"] = evaluation_threshold
+    report_path = backend_class().generate_html_report("Threshold test", str(tmp_path), config, "Fixed split")
+    assert report_path.exists()
+    for tab in (tabs["first"], tabs["second"]):
+        assert f"Decision threshold: {evaluation_threshold:.6f}" in tab
+        assert "Source: Ludwig model evaluation." in tab
+        assert "ROC-AUC and loss are independent of the decision threshold" in tab
+    actual_test_threshold = selected_threshold if include_test_predictions else evaluation_threshold
+    assert f"Decision threshold: {actual_test_threshold:.6f}" in tabs["third"]
+    if not include_test_predictions:
+        assert "selected-threshold test metrics unavailable" in tabs["third"]
+    elif mode == "auto":
+        assert "Source: Optimized on validation split." in tabs["third"]
+        assert "Optimization metric: Balanced Accuracy." in tabs["third"]
+    else:
+        assert "Source: Manual." in tabs["third"]
+        assert "Optimization metric:" not in tabs["third"]
+    assert "Evaluation Threshold (Experiment and Validation Summaries)" in tabs["first"]
+    assert "Selected Threshold (Test Summary)" in tabs["first"]
+    assert "Decision Threshold (Test)" not in tabs["first"]
+    assert fallback_thresholds == [evaluation_threshold]
