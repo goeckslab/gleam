@@ -349,7 +349,10 @@ def build_classification_plots(
         title=dict(text=cm_title, x=0.5),
         xaxis_title="Predicted",
         yaxis_title="Observed",
-        yaxis_autorange="reversed",
+        # Numeric-looking class names must remain discrete categories, including
+        # annotation coordinates, rather than being inferred as continuous axes.
+        xaxis=dict(type="category", categoryorder="array", categoryarray=labels),
+        yaxis=dict(type="category", categoryorder="array", categoryarray=labels, autorange="reversed"),
         width=side_px,
         height=side_px,
         margin=dict(t=100, l=80, r=80, b=80),
@@ -1719,7 +1722,10 @@ def build_binary_threshold_classification_plots_from_predictions(
         ),
         xaxis_title="Predicted",
         yaxis_title="Observed",
-        yaxis_autorange="reversed",
+        # Numeric-looking class names must remain discrete categories, including
+        # annotation coordinates, rather than being inferred as continuous axes.
+        xaxis=dict(type="category", categoryorder="array", categoryarray=labels),
+        yaxis=dict(type="category", categoryorder="array", categoryarray=labels, autorange="reversed"),
         width=600,
         height=600,
         margin=dict(t=100, l=80, r=80, b=80),

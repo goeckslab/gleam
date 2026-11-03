@@ -365,3 +365,83 @@ def test_boolean_probability_exports_keep_threshold_metrics_and_auc_consistent(t
     )
     roc_plot = next(plot for plot in plots if plot["title"] == "ROC Curve")
     assert "ROC Curve (AUC=1.000)" in roc_plot["html"]
+
+
+@pytest.mark.parametrize("reverse_rows", [False, True])
+@pytest.mark.parametrize("threshold, expected", [
+    (0.5, [[2, 2], [1, 3]]),
+    (0.75, [[2, 2], [3, 1]]),
+])
+def test_binary_confusion_matrix_counts_labels_and_annotations(
+    tmp_path, monkeypatch, reverse_rows, threshold, expected
+):
+    import plotly_plots
+
+    predictions_path = tmp_path / "predictions.csv"
+    frame = pd.DataFrame({
+        "split": [2] * 8,
+        "label": [1, 0, 1, 0, 0, 1, 1, 0],
+        "label_probabilities_True": [0.9, 0.8, 0.6, 0.2, 0.1, 0.7, 0.4, 0.8],
+    })
+    frame["label_probabilities_False"] = 1 - frame["label_probabilities_True"]
+    if reverse_rows:
+        frame = frame.iloc[::-1]
+    frame.to_csv(predictions_path, index=False)
+    figures = {}
+
+    def capture_plot(title, fig, **kwargs):
+        figures[title] = fig
+        return {"title": title, "html": ""}
+
+    monkeypatch.setattr(plotly_plots, "_wrap_plot", capture_plot)
+    build_binary_threshold_classification_plots_from_predictions(
+        str(predictions_path), threshold=threshold, split_value=2
+    )
+    fig = figures["Confusion Matrix"]
+    np.testing.assert_array_equal(fig.data[0].z, expected)
+    assert list(fig.data[0].x) == ["0", "1"]
+    assert list(fig.data[0].y) == ["0", "1"]
+    assert fig.layout.xaxis.title.text == "Predicted"
+    assert fig.layout.yaxis.title.text == "Observed"
+    for axis in (fig.layout.xaxis, fig.layout.yaxis):
+        assert axis.type == "category"
+        assert axis.categoryorder == "array"
+        assert list(axis.categoryarray) == ["0", "1"]
+    assert fig.layout.yaxis.autorange == "reversed"
+    assert f"Selected Threshold: {threshold:.3f}" in fig.layout.title.text
+    annotations = {(a.y, a.x): a.text for a in fig.layout.annotations}
+    assert len(annotations) == 4
+    for i in range(2):
+        for j in range(2):
+            count = expected[i][j]
+            assert annotations[str(i), str(j)] == f"<b>{count}</b><br>{count / 8 * 100:.1f}%"
+    metrics = compute_binary_threshold_metrics_from_predictions(
+        str(predictions_path), threshold=threshold, split_value=2
+    )
+    tn, fp = expected[0]
+    fn, tp = expected[1]
+    assert metrics["accuracy"] == (tn + tp) / 8
+    assert metrics["recall"] == tp / (tp + fn)
+    assert metrics["specificity"] == tn / (tn + fp)
+
+
+def test_statistics_confusion_matrix_keeps_numeric_class_axes_categorical(tmp_path, monkeypatch):
+    import plotly_plots
+
+    stats_path = tmp_path / "test_statistics.json"
+    stats_path.write_text('{"label": {"confusion_matrix": [[2, 2], [1, 3]]}}')
+    figures = {}
+
+    def capture_plot(title, fig, **kwargs):
+        figures[title] = fig
+        return {"title": title, "html": ""}
+
+    monkeypatch.setattr(plotly_plots, "_wrap_plot", capture_plot)
+    plotly_plots.build_classification_plots(str(stats_path))
+    fig = figures["Confusion Matrix"]
+    np.testing.assert_array_equal(fig.data[0].z, [[2, 2], [1, 3]])
+    for axis in (fig.layout.xaxis, fig.layout.yaxis):
+        assert axis.type == "category"
+        assert axis.categoryorder == "array"
+        assert list(axis.categoryarray) == list(fig.data[0].x)
+    assert fig.layout.yaxis.autorange == "reversed"
