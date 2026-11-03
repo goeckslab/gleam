@@ -1,10 +1,13 @@
 import numpy as np
 import pandas as pd
+import pytest
 from plotly_plots import (
     _resolve_display_labels,
+    _resolve_positive_label_from_probability,
     build_binary_threshold_classification_plots_from_predictions,
     build_prediction_diagnostics,
     build_train_validation_plots,
+    compute_binary_threshold_metrics_from_predictions,
     load_binary_threshold_data,
     optimize_binary_threshold_values,
     resolve_binary_threshold_for_report,
@@ -318,3 +321,47 @@ def test_prediction_diagnostics_handles_probability_export_without_labels(tmp_pa
     assert [plot["title"] for plot in plots] == [
         "Prediction Confidence Distribution",
     ]
+
+
+@pytest.mark.parametrize("labels", [[1, 0], [0, 1], [1.0, 0.0], [True, False], ["0", "1"]])
+@pytest.mark.parametrize("hint, expected", [("True", 1), ("False", 0), ("1", 1), ("0", 0)])
+def test_positive_label_resolves_binary_aliases_independently_of_row_order(labels, hint, expected):
+    label = _resolve_positive_label_from_probability(np.array(labels), hint)
+    assert str(label).lower() in ({"true", "1", "1.0"} if expected else {"false", "0", "0.0"})
+
+
+@pytest.mark.parametrize("labels", [["case", "control"], ["control", "case"]])
+def test_positive_label_requires_unambiguous_mapping(labels):
+    assert _resolve_positive_label_from_probability(np.array(labels), "True") is None
+    assert _resolve_positive_label_from_probability(np.array(labels), None) is None
+    assert _resolve_positive_label_from_probability(np.array(labels), "case") == "case"
+
+
+@pytest.mark.parametrize("order", [[0, 1, 2, 3], [1, 0, 3, 2]])
+def test_boolean_probability_exports_keep_threshold_metrics_and_auc_consistent(tmp_path, order):
+    predictions_path = tmp_path / "predictions.csv"
+    pd.DataFrame({
+        "split": [1, 1, 1, 1],
+        "label": [1, 0, 1, 0],
+        "label_probabilities_False": [0.1, 0.8, 0.4, 0.7],
+        "label_probabilities_True": [0.9, 0.2, 0.6, 0.3],
+    }).iloc[order].to_csv(predictions_path, index=False)
+
+    data = load_binary_threshold_data(str(predictions_path), split_value=1)
+    assert data["positive_label"] == 1
+    np.testing.assert_array_equal(data["y_true_bin"], np.array([1, 0, 1, 0])[order])
+    result = resolve_binary_threshold_for_report(
+        "auto", "balanced_accuracy", str(predictions_path), split_value=1
+    )
+    assert result["threshold"] == 0.5
+    assert result["threshold_metric_value"] == 1.0
+    metrics = compute_binary_threshold_metrics_from_predictions(
+        str(predictions_path), result["threshold"], split_value=1
+    )
+    assert metrics["accuracy"] == 1.0
+    assert metrics["balanced_accuracy"] == 1.0
+    plots = build_binary_threshold_classification_plots_from_predictions(
+        str(predictions_path), threshold=result["threshold"], split_value=1
+    )
+    roc_plot = next(plot for plot in plots if plot["title"] == "ROC Curve")
+    assert "ROC Curve (AUC=1.000)" in roc_plot["html"]

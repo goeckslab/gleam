@@ -102,9 +102,22 @@ def _resolve_positive_label_from_probability(
             if str(label) == hint:
                 return label
 
-    if len(unique_labels) == 2:
-        return unique_labels[1]
-    return unique_labels[0]
+    # Ludwig exports binary probabilities with True/False suffixes even when
+    # the original targets are numeric 0/1. Resolve those aliases explicitly;
+    # encounter order cannot establish which target a probability represents.
+    binary_aliases = {"false": 0, "0": 0, "0.0": 0, "true": 1, "1": 1, "1.0": 1}
+    hint_value = binary_aliases.get(str(positive_label_hint).lower())
+    label_values = [binary_aliases.get(str(label).lower()) for label in unique_labels]
+    if (
+        hint_value is not None
+        and all(value is not None for value in label_values)
+        and len(set(label_values)) == len(label_values)
+    ):
+        for label, value in zip(unique_labels, label_values):
+            if value == hint_value:
+                return label
+
+    return None
 
 
 def _line_chart(
