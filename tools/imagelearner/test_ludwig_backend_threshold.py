@@ -3,6 +3,7 @@ import io
 import json
 import sys
 import types
+import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
@@ -275,6 +276,7 @@ def test_prepare_config_records_metaformer_model_size_adaptation(tmp_path):
 @pytest.mark.parametrize("mode, include_test_predictions, evaluation_threshold, selected_threshold", [
     ("auto", True, 0.5, 0.7),
     ("manual", True, 0.3, 0.3),
+    ("manual", True, 0.6, 0.6),
     ("auto", False, 0.5, 0.7),
     ("manual", True, 0.0, 0.0),
 ])
@@ -321,10 +323,11 @@ def test_report_labels_each_metrics_table_with_its_actual_threshold(
     monkeypatch.setattr(backend_class, "_generate_gradcam_heatmaps", lambda *args: {})
     monkeypatch.setattr(backend_class, "get_training_process", lambda *args: {})
     tabs = {}
+    render_tabs = backend_module.build_tabbed_html
 
     def capture_tabs(first, second, third):
         tabs.update(first=first, second=second, third=third)
-        return first + second + third
+        return render_tabs(first, second, third)
 
     monkeypatch.setattr(backend_module, "build_tabbed_html", capture_tabs)
     monkeypatch.chdir(tmp_path)
@@ -351,3 +354,15 @@ def test_report_labels_each_metrics_table_with_its_actual_threshold(
     assert "Selected Threshold (Test Summary)" in tabs["first"]
     assert "Decision Threshold (Test)" not in tabs["first"]
     assert fallback_thresholds == [evaluation_threshold]
+
+    if mode == "manual" and evaluation_threshold == 0.6:
+        # Exercise the actual Galaxy report assertions locally without retraining.
+        # This catches stale wrapper expectations when report labels change.
+        wrapper = ET.parse(TOOL_DIR / "image_learner.xml").getroot()
+        manual_test = next(
+            test for test in wrapper.findall("./tests/test")
+            if any(param.get("name", "").endswith("binary_threshold_policy|threshold")
+                   and param.get("value") == "0.6" for param in test.findall("param"))
+        )
+        for assertion in manual_test.findall("./output[@name='output_report']/assert_contents/has_text"):
+            assert assertion.get("text") in report_path.read_text()
