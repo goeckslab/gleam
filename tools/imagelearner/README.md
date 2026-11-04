@@ -34,7 +34,7 @@ Under "Customize Default Settings" the wrapper can train several models per run:
 
 Members are trained sequentially, so plan GPU time accordingly. The ludwig_model output holds the first trained member's weights; the other members' predictions and statistics live in the artifacts ZIP, without their weights.
 
-Seeds on the same split share Ludwig's preprocessing cache and reuse the first member's automatically selected training and evaluation batch sizes. Different folds use separate caches. Validation predictions reuse the trained model and prepared validation data; if reused batch sizes run out of memory, the member retries with automatic tuning. Explicit batch sizes remain unchanged.
+Seeds on the same split reuse the prepared datasets in their original row order. Different folds use separate caches. Validation predictions reuse the trained model and prepared validation data. Automatic batch sizes are reused only for models without mutable persistent buffers: models with buffers such as BatchNorm statistics retain the original probes, which can change those statistics. If reused sizes run out of memory, the member retries with automatic tuning. Explicit batch sizes remain unchanged.
 
 ## Typical use
 

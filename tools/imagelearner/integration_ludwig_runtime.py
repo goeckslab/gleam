@@ -35,9 +35,8 @@ class SmallImageBackend(LudwigDirectBackend):
             "conv_layers": [{"num_filters": 2, "filter_size": 3, "pool_size": 2}],
             "fc_layers": [{"output_size": 4}],
         }
-        # Only batch size 2 fits the dataset-fraction limit. Real probing then
-        # selects the same size independently of CPU throughput fluctuations.
-        config["trainer"]["max_batch_size"] = 2
+        # A single candidate makes real probing independent of CPU throughput.
+        config["trainer"]["max_batch_size"] = 1
         config["trainer"]["eval_batch_size"] = "auto"
         return yaml.safe_dump(config)
 
@@ -57,21 +56,21 @@ class OriginalBackend(SmallImageBackend):
 
 
 class RuntimeEquivalenceTest(unittest.TestCase):
-    def assert_values_equal(self, expected, actual):
+    def assert_values_equal(self, expected, actual, path="root"):
         if isinstance(expected, dict):
             self.assertEqual(expected.keys(), actual.keys())
             for key in expected:
-                self.assert_values_equal(expected[key], actual[key])
+                self.assert_values_equal(expected[key], actual[key], f"{path}.{key}")
         elif isinstance(expected, list):
             self.assertEqual(len(expected), len(actual))
-            for left, right in zip(expected, actual):
-                self.assert_values_equal(left, right)
+            for index, (left, right) in enumerate(zip(expected, actual)):
+                self.assert_values_equal(left, right, f"{path}[{index}]")
         elif isinstance(expected, (int, float)) and not isinstance(expected, bool):
-            np.testing.assert_allclose(expected, actual, rtol=1e-6, atol=1e-7, equal_nan=True)
+            np.testing.assert_allclose(expected, actual, rtol=1e-6, atol=1e-7, equal_nan=True, err_msg=path)
         else:
             self.assertEqual(expected, actual)
 
-    def compare_ensemble(self, task="binary", fold_role="validation", num_seeds=2, cross_validation=True):
+    def compare_ensemble(self, task="binary", fold_role="validation", num_seeds=2, cross_validation=True, stateful=False):
         torch.set_num_threads(1)
         with tempfile.TemporaryDirectory(prefix="imagelearner_runtime_") as tmp:
             root = Path(tmp).resolve()
@@ -131,8 +130,18 @@ class RuntimeEquivalenceTest(unittest.TestCase):
                 started = time.monotonic()
                 try:
                     os.chdir(output)
+                    backend = backend_class()
+                    if stateful:
+                        prepare_config = backend.prepare_config
+
+                        def stateful_config(*args, **kwargs):
+                            config = yaml.safe_load(prepare_config(*args, **kwargs))
+                            config["input_features"][0]["encoder"]["conv_layers"][0]["norm"] = "batch"
+                            return yaml.safe_dump(config)
+
+                        backend.prepare_config = stateful_config
                     with patch.object(DatasetCache, "put", put), patch.object(Trainer, "tune_batch_size", tune):
-                        ImageLearnerCLI(args, backend_class()).run()
+                        ImageLearnerCLI(args, backend).run()
                 finally:
                     os.chdir(previous_dir)
                 durations.append(time.monotonic() - started)
@@ -144,7 +153,6 @@ class RuntimeEquivalenceTest(unittest.TestCase):
             before_summary = json.loads((before / "ensemble_summary.json").read_text())
             after_summary = json.loads((after / "ensemble_summary.json").read_text())
             self.assertEqual(after_summary["members_trained"], (2 if cross_validation else 1) * num_seeds)
-            self.assert_values_equal(before_summary, after_summary)
             for relative in ("predictions.csv", "validation_predictions.csv", *[
                 f"members/{member['name']}/{filename}"
                 for member in after_summary["members"]
@@ -152,26 +160,27 @@ class RuntimeEquivalenceTest(unittest.TestCase):
             ]):
                 left = pd.read_csv(before / relative)
                 right = pd.read_csv(after / relative)
-                pd.testing.assert_frame_equal(left, right, check_exact=False, rtol=1e-6, atol=1e-7)
+                pd.testing.assert_frame_equal(left, right, check_exact=False, rtol=1e-6, atol=1e-7, obj=relative)
             for member in after_summary["members"]:
                 relative = Path("members") / member["name"]
                 for filename in ("training_statistics.json", "test_statistics.json"):
                     self.assert_values_equal(
                         json.loads((before / relative / filename).read_text()),
-                        json.loads((after / relative / filename).read_text()),
+                        json.loads((after / relative / filename).read_text()), str(relative / filename),
                     )
                 weights_before = torch.load(before / relative / "model/model_weights", map_location="cpu")
                 weights_after = torch.load(after / relative / "model/model_weights", map_location="cpu")
                 self.assertEqual(weights_before.keys(), weights_after.keys())
                 for name in weights_before:
-                    self.assertTrue(torch.equal(weights_before[name], weights_after[name]), name)
+                    self.assertTrue(torch.equal(weights_before[name], weights_after[name]), f"{relative}: {name}")
+            self.assert_values_equal(before_summary, after_summary)
             folds = 2 if cross_validation else 1
             self.assertEqual(counts[0]["preprocessing"], folds * num_seeds)
             self.assertEqual(counts[1]["preprocessing"], folds)
             self.assertEqual(counts[0]["batch_probes"], 2 * folds * num_seeds)
-            self.assertEqual(counts[1]["batch_probes"], 2 * folds)
+            self.assertEqual(counts[1]["batch_probes"], 2 * folds * (num_seeds if stateful else 1))
             print(json.dumps({
-                "task": task, "fold_role": fold_role, "cross_validation": cross_validation,
+                "task": task, "fold_role": fold_role, "cross_validation": cross_validation, "stateful": stateful,
                 "before": dict(counts[0]), "after": dict(counts[1]),
                 "seconds_before": durations[0], "seconds_after": durations[1],
             }), flush=True)
@@ -184,6 +193,9 @@ class RuntimeEquivalenceTest(unittest.TestCase):
 
     def test_category_validation_folds(self):
         self.compare_ensemble(task="category")
+
+    def test_stateful_encoder_preserves_probe_side_effects(self):
+        self.compare_ensemble(stateful=True)
 
     def test_regression_seeds_only(self):
         self.compare_ensemble(task="regression", cross_validation=False)

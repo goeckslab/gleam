@@ -338,6 +338,16 @@ jobs:
     - name: Get number of CPU cores
       uses: SimenB/github-actions-cpu-cores@v2
       id: cpu-cores
+    - name: Verify Image Learner runtime optimizations with real Ludwig
+      if: contains(needs.setup.outputs.repository-list, 'tools/imagelearner')
+      run: |
+        set -euo pipefail
+        mkdir -p upload
+        docker run --rm --entrypoint python \
+          -e CUDA_VISIBLE_DEVICES="" -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
+          -v "$PWD:/workspace" -w /workspace/tools/imagelearner \
+          quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1 \
+          integration_ludwig_runtime.py 2>&1 | tee upload/imagelearner-runtime-integration.log
     - name: Planemo test
       uses: galaxyproject/planemo-ci-action@v1
       id: test
@@ -351,16 +361,6 @@ jobs:
         galaxy-slots: ${{ steps.cpu-cores.outputs.count }}
         # Limit each test to 15 minutes
         test_timeout: 1800
-    - name: Verify Image Learner runtime optimizations with real Ludwig
-      if: contains(needs.setup.outputs.repository-list, 'tools/imagelearner')
-      run: |
-        set -euo pipefail
-        mkdir -p upload
-        docker run --rm --entrypoint python \
-          -e CUDA_VISIBLE_DEVICES="" -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
-          -v "$PWD:/workspace" -w /workspace/tools/imagelearner \
-          quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1 \
-          integration_ludwig_runtime.py 2>&1 | tee upload/imagelearner-runtime-integration.log
     - uses: actions/upload-artifact@v7
       if: always()
       with:

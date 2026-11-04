@@ -5,6 +5,7 @@ import logging
 import os
 import zipfile
 from collections import Counter
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
@@ -111,6 +112,7 @@ class LudwigDirectBackend:
 
     def __init__(self):
         self._prediction_context = None
+        self._prepared_context = None
         self._batch_size_key = None
         self._batch_sizes = {}
 
@@ -904,6 +906,21 @@ class LudwigDirectBackend:
             config_text,
         )
         cached_sizes = self._batch_sizes if cache_key == self._batch_size_key else {}
+        cached_prepared = None
+        if self._prepared_context is not None and self._prepared_context[0] == cache_key:
+            cached_prepared = self._prepared_context[1]
+        else:
+            self._prepared_context = None
+        prepared_kwargs = {}
+        if cached_prepared is not None:
+            # Reloading Ludwig's HDF5 cache shuffles training rows again. Reuse
+            # the original datasets so each seed keeps its original row order.
+            prepared_kwargs = dict(
+                training_set=cached_prepared[0],
+                validation_set=cached_prepared[1],
+                test_set=cached_prepared[2],
+                training_set_metadata=deepcopy(cached_prepared[3]),
+            )
         trainer = config.setdefault("trainer", {})
         used_cached_sizes = False
         for name, size in cached_sizes.items():
@@ -920,6 +937,7 @@ class LudwigDirectBackend:
                     config=config,
                     output_directory=str(output_dir),
                     random_seed=random_seed,
+                    **prepared_kwargs,
                 )
             except RuntimeError as exc:
                 if not used_cached_sizes or "out of memory" not in str(exc).lower():
@@ -943,14 +961,33 @@ class LudwigDirectBackend:
                     config=str(config_path),
                     output_directory=str(output_dir),
                     random_seed=random_seed,
+                    **prepared_kwargs,
                 )
 
-            model, _, _, prepared_data, _ = result
+            model, _, _, prepared_data, run_dir = result
+            self._prepared_context = (cache_key, prepared_data)
+            description_path = Path(run_dir) / DESCRIPTION_FILE_NAME
+            if not description_path.exists():
+                from ludwig.api import get_experiment_description
+
+                # Ludwig omits this artifact when already-prepared datasets are supplied.
+                description = get_experiment_description(
+                    model._user_config, dataset=str(dataset_path),
+                    backend=model.backend, random_seed=random_seed,
+                )
+                description_path.write_text(json.dumps(description, indent=2))
             self._batch_size_key = cache_key
+            parameter_names = dict(model.model.named_parameters())
+            stateful = any(
+                name not in parameter_names and not name.endswith((".loss_fn.weight", ".loss_fn.pos_weight"))
+                for name in model.model.state_dict()
+            )
+            # Probing can update buffers such as BatchNorm statistics. Such
+            # models must keep probing for every seed; loss weights are constant.
             self._batch_sizes = {
                 name: size
                 for name in ("batch_size", "eval_batch_size")
-                if isinstance(size := getattr(model.config_obj.trainer, name, None), int) and size > 0
+                if not stateful and isinstance(size := getattr(model.config_obj.trainer, name, None), int) and size > 0
             }
             self._prediction_context = (
                 output_dir.resolve(), dataset_path.resolve(), model, prepared_data,

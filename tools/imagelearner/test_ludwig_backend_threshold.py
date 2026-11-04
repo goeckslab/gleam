@@ -134,12 +134,13 @@ def runtime_backend(tmp_path, monkeypatch):
     prepared = (["train"], ["val1", "val2"], ["test"], {})
     model = types.SimpleNamespace(config_obj=types.SimpleNamespace(
         trainer=types.SimpleNamespace(batch_size=8, eval_batch_size=16),
-    ))
+    ), model=types.SimpleNamespace(named_parameters=lambda: [], state_dict=lambda: {}))
 
     def experiment_cli(**kwargs):
         calls.append(kwargs)
         output = Path(kwargs["output_directory"]) / "experiment_run"
         (output / "model").mkdir(parents=True, exist_ok=True)
+        (output / "description.json").write_text("{}")
         return model, {}, {}, prepared, str(output)
 
     experiment_module = types.ModuleType("ludwig.experiment")
@@ -149,7 +150,7 @@ def runtime_backend(tmp_path, monkeypatch):
 
 
 def test_runtime_reuses_batch_sizes_only_for_unchanged_split_and_config(runtime_backend, tmp_path):
-    backend, dataset, config, calls, _, _, _ = runtime_backend
+    backend, dataset, config, calls, _, prepared, _ = runtime_backend
     backend.run_experiment(dataset, config, tmp_path / "seed42", 42)
     backend.run_experiment(dataset, config, tmp_path / "seed43", 43)
     assert calls[0]["config"]["trainer"]["batch_size"] == "auto"
@@ -157,10 +158,13 @@ def test_runtime_reuses_batch_sizes_only_for_unchanged_split_and_config(runtime_
         "batch_size": 8, "eval_batch_size": 16, "learning_rate": 0.001,
     }
     assert [call["random_seed"] for call in calls] == [42, 43]
+    assert calls[1]["training_set"] is prepared[0]
+    assert calls[1]["training_set_metadata"] is not backend._prepared_context[1][3]
 
     dataset.write_text(dataset.read_text().replace("0,0", "1,0"))
     backend.run_experiment(dataset, config, tmp_path / "changed_data", 44)
     assert calls[-1]["config"]["trainer"]["batch_size"] == "auto"
+    assert "training_set" not in calls[-1]
 
     config.write_text(config.read_text().replace("0.001", "0.002"))
     backend.run_experiment(dataset, config, tmp_path / "changed_config", 45)
@@ -180,6 +184,23 @@ def test_runtime_keeps_explicit_batch_size(runtime_backend, tmp_path):
     for seed in (42, 43):
         backend.run_experiment(dataset, config, tmp_path / str(seed), seed)
     assert all(call["config"]["trainer"] == {"batch_size": 4, "eval_batch_size": 12} for call in calls)
+
+
+def test_runtime_keeps_probes_for_models_with_mutable_buffers(runtime_backend, tmp_path):
+    backend, dataset, config, calls, model, prepared, _ = runtime_backend
+    model.model.state_dict = lambda: {"encoder.running_mean": object()}
+    for seed in (42, 43):
+        backend.run_experiment(dataset, config, tmp_path / str(seed), seed)
+    assert all(call["config"]["trainer"]["batch_size"] == "auto" for call in calls)
+    assert calls[1]["training_set"] is prepared[0]
+
+
+def test_runtime_can_reuse_probes_with_constant_loss_weights(runtime_backend, tmp_path):
+    backend, dataset, config, calls, model, _, _ = runtime_backend
+    model.model.state_dict = lambda: {"output_features.label.loss.loss_fn.pos_weight": object()}
+    for seed in (42, 43):
+        backend.run_experiment(dataset, config, tmp_path / str(seed), seed)
+    assert calls[1]["config"]["trainer"]["batch_size"] == 8
 
 
 def test_runtime_reuses_live_model_and_prepared_validation_data(runtime_backend, tmp_path, monkeypatch):
