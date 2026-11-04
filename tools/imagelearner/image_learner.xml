@@ -1,4 +1,4 @@
-<tool id="image_learner" name="Image Learner" version="0.1.6" profile="22.01">
+<tool id="image_learner" name="Image Learner" version="0.1.7" profile="22.01">
     <description>trains and evaluates an image classification/regression model</description>
     <requirements>
         <container type="docker">quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1</container>
@@ -566,7 +566,10 @@
                     <has_text text="Experiment Summary" />
                     <has_text text="Validation Summary" />
                     <has_text text="Test Summary" />
-                    <has_text text="Decision Threshold (Test)" />
+                    <has_text text="Evaluation Threshold (Experiment and Validation Summaries)" />
+                    <has_text text="Selected Threshold (Test Summary)" />
+                    <has_text text="Decision threshold: 0.600000" />
+                    <has_text text="Source: Manual." />
                     <has_text text="Threshold Source" />
                     <has_text text="0.600" />
                 </assert_contents>

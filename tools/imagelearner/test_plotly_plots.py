@@ -1,10 +1,13 @@
 import numpy as np
 import pandas as pd
+import pytest
 from plotly_plots import (
     _resolve_display_labels,
+    _resolve_positive_label_from_probability,
     build_binary_threshold_classification_plots_from_predictions,
     build_prediction_diagnostics,
     build_train_validation_plots,
+    compute_binary_threshold_metrics_from_predictions,
     load_binary_threshold_data,
     optimize_binary_threshold_values,
     resolve_binary_threshold_for_report,
@@ -318,3 +321,173 @@ def test_prediction_diagnostics_handles_probability_export_without_labels(tmp_pa
     assert [plot["title"] for plot in plots] == [
         "Prediction Confidence Distribution",
     ]
+
+
+@pytest.mark.parametrize("labels", [[1, 0], [0, 1], [1.0, 0.0], [True, False], ["0", "1"]])
+@pytest.mark.parametrize("hint, expected", [("True", 1), ("False", 0), ("1", 1), ("0", 0)])
+def test_positive_label_resolves_binary_aliases_independently_of_row_order(labels, hint, expected):
+    label = _resolve_positive_label_from_probability(np.array(labels), hint)
+    assert str(label).lower() in ({"true", "1", "1.0"} if expected else {"false", "0", "0.0"})
+
+
+@pytest.mark.parametrize("labels", [["case", "control"], ["control", "case"]])
+def test_positive_label_requires_unambiguous_mapping(labels):
+    assert _resolve_positive_label_from_probability(np.array(labels), "True") is None
+    assert _resolve_positive_label_from_probability(np.array(labels), None) is None
+    assert _resolve_positive_label_from_probability(np.array(labels), "case") == "case"
+
+
+@pytest.mark.parametrize("labels", [[0, 2], [0, -1], [0.0, 2.5], ["0", "2"], ["0", "-1"]])
+@pytest.mark.parametrize("reverse_rows", [False, True])
+def test_positive_label_resolves_zero_nonzero_numeric_labels(labels, reverse_rows):
+    ordered = np.array(labels[::-1] if reverse_rows else labels)
+    assert _resolve_positive_label_from_probability(ordered, "True") == labels[1]
+    assert _resolve_positive_label_from_probability(ordered, "False") == labels[0]
+    assert _resolve_positive_label_from_probability(ordered, str(labels[1])) == labels[1]
+
+
+@pytest.mark.parametrize("labels", [[1, 2], [-1, 2], ["1", "2"], ["0", "0.0"], [0, np.nan], [0, 1, 2]])
+@pytest.mark.parametrize("reverse_rows", [False, True])
+def test_positive_label_rejects_non_bijective_numeric_mapping(labels, reverse_rows):
+    ordered = np.array(labels[::-1] if reverse_rows else labels)
+    for hint in ("True", "False"):
+        assert _resolve_positive_label_from_probability(ordered, hint) is None
+
+
+@pytest.mark.parametrize("positive_label", [2, -1])
+@pytest.mark.parametrize("reverse_rows", [False, True])
+def test_numeric_binary_labels_keep_threshold_optimization_and_diagnostics(tmp_path, positive_label, reverse_rows):
+    predictions_path = tmp_path / "predictions.csv"
+    frame = pd.DataFrame({
+        "split": [1] * 4,
+        "label": [0, positive_label, 0, positive_label],
+        "label_probabilities_True": [0.1, 0.6, 0.55, 0.8],
+    })
+    if reverse_rows:
+        frame = frame.iloc[::-1]
+    frame.to_csv(predictions_path, index=False)
+    data = load_binary_threshold_data(str(predictions_path), split_value=1)
+    assert data["positive_label"] == positive_label
+    assert data["negative_label"] == 0
+    np.testing.assert_array_equal(data["y_true_bin"], frame["label"].ne(0))
+    result = resolve_binary_threshold_for_report("auto", "f1", str(predictions_path), split_value=1)
+    assert result["threshold"] == 0.6
+    assert result["threshold_metric_value"] == 1.0
+    assert result["threshold_source"] == "Optimized on validation split"
+    metrics = compute_binary_threshold_metrics_from_predictions(str(predictions_path), 0.6, split_value=1)
+    assert metrics["f1"] == metrics["accuracy"] == 1.0
+    assert compute_binary_threshold_metrics_from_predictions(str(predictions_path), 0.5, split_value=1)["f1"] == 0.8
+    plots = build_binary_threshold_classification_plots_from_predictions(str(predictions_path), 0.6, split_value=1)
+    assert "ROC Curve (AUC=1.000)" in next(plot["html"] for plot in plots if plot["title"] == "ROC Curve")
+    diagnostics = build_prediction_diagnostics(str(predictions_path), split_value=1)
+    assert "Calibration Curve (Test)" in [plot["title"] for plot in diagnostics]
+
+
+@pytest.mark.parametrize("order", [[0, 1, 2, 3], [1, 0, 3, 2]])
+def test_boolean_probability_exports_keep_threshold_metrics_and_auc_consistent(tmp_path, order):
+    predictions_path = tmp_path / "predictions.csv"
+    pd.DataFrame({
+        "split": [1, 1, 1, 1],
+        "label": [1, 0, 1, 0],
+        "label_probabilities_False": [0.1, 0.8, 0.4, 0.7],
+        "label_probabilities_True": [0.9, 0.2, 0.6, 0.3],
+    }).iloc[order].to_csv(predictions_path, index=False)
+
+    data = load_binary_threshold_data(str(predictions_path), split_value=1)
+    assert data["positive_label"] == 1
+    np.testing.assert_array_equal(data["y_true_bin"], np.array([1, 0, 1, 0])[order])
+    result = resolve_binary_threshold_for_report(
+        "auto", "balanced_accuracy", str(predictions_path), split_value=1
+    )
+    assert result["threshold"] == 0.5
+    assert result["threshold_metric_value"] == 1.0
+    metrics = compute_binary_threshold_metrics_from_predictions(
+        str(predictions_path), result["threshold"], split_value=1
+    )
+    assert metrics["accuracy"] == 1.0
+    assert metrics["balanced_accuracy"] == 1.0
+    plots = build_binary_threshold_classification_plots_from_predictions(
+        str(predictions_path), threshold=result["threshold"], split_value=1
+    )
+    roc_plot = next(plot for plot in plots if plot["title"] == "ROC Curve")
+    assert "ROC Curve (AUC=1.000)" in roc_plot["html"]
+
+
+@pytest.mark.parametrize("reverse_rows", [False, True])
+@pytest.mark.parametrize("threshold, expected", [
+    (0.5, [[2, 2], [1, 3]]),
+    (0.75, [[2, 2], [3, 1]]),
+])
+def test_binary_confusion_matrix_counts_labels_and_annotations(
+    tmp_path, monkeypatch, reverse_rows, threshold, expected
+):
+    import plotly_plots
+
+    predictions_path = tmp_path / "predictions.csv"
+    frame = pd.DataFrame({
+        "split": [2] * 8,
+        "label": [1, 0, 1, 0, 0, 1, 1, 0],
+        "label_probabilities_True": [0.9, 0.8, 0.6, 0.2, 0.1, 0.7, 0.4, 0.8],
+    })
+    frame["label_probabilities_False"] = 1 - frame["label_probabilities_True"]
+    if reverse_rows:
+        frame = frame.iloc[::-1]
+    frame.to_csv(predictions_path, index=False)
+    figures = {}
+
+    def capture_plot(title, fig, **kwargs):
+        figures[title] = fig
+        return {"title": title, "html": ""}
+
+    monkeypatch.setattr(plotly_plots, "_wrap_plot", capture_plot)
+    build_binary_threshold_classification_plots_from_predictions(
+        str(predictions_path), threshold=threshold, split_value=2
+    )
+    fig = figures["Confusion Matrix"]
+    np.testing.assert_array_equal(fig.data[0].z, expected)
+    assert list(fig.data[0].x) == ["0", "1"]
+    assert list(fig.data[0].y) == ["0", "1"]
+    assert fig.layout.xaxis.title.text == "Predicted"
+    assert fig.layout.yaxis.title.text == "Observed"
+    for axis in (fig.layout.xaxis, fig.layout.yaxis):
+        assert axis.type == "category"
+        assert axis.categoryorder == "array"
+        assert list(axis.categoryarray) == ["0", "1"]
+    assert fig.layout.yaxis.autorange == "reversed"
+    assert f"Selected Threshold: {threshold:.3f}" in fig.layout.title.text
+    annotations = {(a.y, a.x): a.text for a in fig.layout.annotations}
+    assert len(annotations) == 4
+    for i in range(2):
+        for j in range(2):
+            count = expected[i][j]
+            assert annotations[str(i), str(j)] == f"<b>{count}</b><br>{count / 8 * 100:.1f}%"
+    metrics = compute_binary_threshold_metrics_from_predictions(
+        str(predictions_path), threshold=threshold, split_value=2
+    )
+    tn, fp = expected[0]
+    fn, tp = expected[1]
+    assert metrics["accuracy"] == (tn + tp) / 8
+    assert metrics["recall"] == tp / (tp + fn)
+    assert metrics["specificity"] == tn / (tn + fp)
+
+
+def test_statistics_confusion_matrix_keeps_numeric_class_axes_categorical(tmp_path, monkeypatch):
+    import plotly_plots
+
+    stats_path = tmp_path / "test_statistics.json"
+    stats_path.write_text('{"label": {"confusion_matrix": [[2, 2], [1, 3]]}}')
+    figures = {}
+
+    def capture_plot(title, fig, **kwargs):
+        figures[title] = fig
+        return {"title": title, "html": ""}
+
+    monkeypatch.setattr(plotly_plots, "_wrap_plot", capture_plot)
+    plotly_plots.build_classification_plots(str(stats_path))
+    fig = figures["Confusion Matrix"]
+    np.testing.assert_array_equal(fig.data[0].z, [[2, 2], [1, 3]])
+    for axis in (fig.layout.xaxis, fig.layout.yaxis):
+        assert axis.type == "category"
+        assert axis.categoryorder == "array"
+        assert list(axis.categoryarray) == list(fig.data[0].x)
+    assert fig.layout.yaxis.autorange == "reversed"

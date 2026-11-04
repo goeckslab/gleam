@@ -102,9 +102,28 @@ def _resolve_positive_label_from_probability(
             if str(label) == hint:
                 return label
 
-    if len(unique_labels) == 2:
-        return unique_labels[1]
-    return unique_labels[0]
+    # Ludwig exports True/False probabilities for numeric targets, converting
+    # zero to False and nonzero to True. Encounter order cannot determine this.
+    binary_aliases = {"false": 0, "0": 0, "0.0": 0, "true": 1, "1": 1, "1.0": 1}
+    hint_value = binary_aliases.get(str(positive_label_hint).lower())
+    try:
+        numeric_labels = np.asarray(unique_labels, dtype=float)
+    except (TypeError, ValueError):
+        label_values = [binary_aliases.get(str(label).lower()) for label in unique_labels]
+    else:
+        if np.isnan(numeric_labels).any():
+            return None
+        label_values = numeric_labels.astype(bool).tolist()
+    if (
+        hint_value is not None
+        and len(label_values) == 2
+        and set(label_values) == {False, True}
+    ):
+        for label, value in zip(unique_labels, label_values):
+            if value == hint_value:
+                return label
+
+    return None
 
 
 def _line_chart(
@@ -336,7 +355,10 @@ def build_classification_plots(
         title=dict(text=cm_title, x=0.5),
         xaxis_title="Predicted",
         yaxis_title="Observed",
-        yaxis_autorange="reversed",
+        # Numeric-looking class names must remain discrete categories, including
+        # annotation coordinates, rather than being inferred as continuous axes.
+        xaxis=dict(type="category", categoryorder="array", categoryarray=labels),
+        yaxis=dict(type="category", categoryorder="array", categoryarray=labels, autorange="reversed"),
         width=side_px,
         height=side_px,
         margin=dict(t=100, l=80, r=80, b=80),
@@ -1706,7 +1728,10 @@ def build_binary_threshold_classification_plots_from_predictions(
         ),
         xaxis_title="Predicted",
         yaxis_title="Observed",
-        yaxis_autorange="reversed",
+        # Numeric-looking class names must remain discrete categories, including
+        # annotation coordinates, rather than being inferred as continuous axes.
+        xaxis=dict(type="category", categoryorder="array", categoryarray=labels),
+        yaxis=dict(type="category", categoryorder="array", categoryarray=labels, autorange="reversed"),
         width=600,
         height=600,
         margin=dict(t=100, l=80, r=80, b=80),
