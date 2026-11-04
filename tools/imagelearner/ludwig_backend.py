@@ -60,6 +60,21 @@ VALIDATION_PREDICTIONS_CSV = "validation_predictions.csv"
 MAX_IMAGE_DIMENSION_INSPECTION_COUNT = 1000
 
 
+def configure_binary_metrics() -> None:
+    """Make Ludwig's binary metrics share the model's configured decision rule."""
+    from ludwig.constants import BINARY, MAXIMIZE, PREDICTIONS
+    from ludwig.modules.metric_modules import PrecisionMetric, RecallMetric, SpecificityMetric
+    from ludwig.modules.metric_registry import register_metric
+
+    # Ludwig 0.10.1 otherwise thresholds probabilities again at TorchMetrics' 0.5.
+    for name, metric in (
+        ("precision", PrecisionMetric),
+        ("recall", RecallMetric),
+        ("specificity", SpecificityMetric),
+    ):
+        register_metric(name, [BINARY], MAXIMIZE, PREDICTIONS)(metric)
+
+
 class Backend(Protocol):
     """Interface for a machine learning backend."""
 
@@ -886,6 +901,7 @@ class LudwigDirectBackend:
             )
             raise RuntimeError("Ludwig import failed.") from e
 
+        configure_binary_metrics()
         output_dir.mkdir(parents=True, exist_ok=True)
 
         try:
