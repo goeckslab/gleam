@@ -590,7 +590,10 @@
                     <has_text text="Experiment Summary" />
                     <has_text text="Validation Summary" />
                     <has_text text="Test Summary" />
-                    <has_text text="Decision Threshold (Test)" />
+                    <has_text text="Evaluation Threshold (Experiment and Validation Summaries)" />
+                    <has_text text="Selected Threshold (Test Summary)" />
+                    <has_text text="Decision threshold: 0.600000" />
+                    <has_text text="Source: Manual." />
                     <has_text text="Threshold Source" />
                     <has_text text="0.600" />
                 </assert_contents>

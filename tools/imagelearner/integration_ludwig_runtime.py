@@ -23,7 +23,7 @@ from image_workflow import ImageLearnerCLI
 from ludwig.data.cache.manager import DatasetCache
 from ludwig.experiment import experiment_cli
 from ludwig.trainers.trainer import Trainer
-from ludwig_backend import LudwigDirectBackend
+from ludwig_backend import configure_binary_metrics, LudwigDirectBackend
 from PIL import Image
 
 
@@ -48,6 +48,7 @@ class OriginalBackend(SmallImageBackend):
         member_csv = dataset_path.with_name(f"{output_dir.name}.csv")
         shutil.copyfile(dataset_path, member_csv)
         output_dir.mkdir(parents=True, exist_ok=True)
+        configure_binary_metrics()
         experiment_cli(
             dataset=str(member_csv), config=str(config_path),
             output_directory=str(output_dir), random_seed=random_seed,

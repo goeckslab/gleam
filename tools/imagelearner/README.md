@@ -48,3 +48,14 @@ Seeds on the same split reuse the prepared datasets in their original row order.
 - The wrapper references `quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1`.
 - Some backbones may download pretrained weights during execution.
 - GPU-backed execution is recommended for larger training jobs.
+
+## Binary metric regression tests
+
+Run `python tools/imagelearner/test_binary_metrics_integration.py` in the container
+declared by `image_learner.xml`. This uses real Ludwig and TorchMetrics, including a
+small CPU image-training run without pretrained weights. It checks decision-threshold
+boundaries and verifies saved training, validation, and test metrics against the
+model's predictions. The PR workflow runs it when Image Learner changes.
+
+Run this test in its own process: the lightweight backend/workflow tests install
+Ludwig module stubs and must not share its interpreter.

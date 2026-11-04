@@ -23,6 +23,7 @@ from constants import (
 from html_structure import (
     build_tabbed_html,
     encode_image_to_base64,
+    format_binary_threshold_notice,
     format_config_table_html,
     format_cross_validation_overview_table,
     format_dataset_overview_table,
@@ -62,6 +63,21 @@ logger = logging.getLogger("ImageLearner")
 
 VALIDATION_PREDICTIONS_CSV = "validation_predictions.csv"
 MAX_IMAGE_DIMENSION_INSPECTION_COUNT = 1000
+
+
+def configure_binary_metrics() -> None:
+    """Make Ludwig's binary metrics share the model's configured decision rule."""
+    from ludwig.constants import BINARY, MAXIMIZE, PREDICTIONS
+    from ludwig.modules.metric_modules import PrecisionMetric, RecallMetric, SpecificityMetric
+    from ludwig.modules.metric_registry import register_metric
+
+    # Ludwig 0.10.1 otherwise thresholds probabilities again at TorchMetrics' 0.5.
+    for name, metric in (
+        ("precision", PrecisionMetric),
+        ("recall", RecallMetric),
+        ("specificity", SpecificityMetric),
+    ):
+        register_metric(name, [BINARY], MAXIMIZE, PREDICTIONS)(metric)
 
 
 class Backend(Protocol):
@@ -896,6 +912,7 @@ class LudwigDirectBackend:
             )
             raise RuntimeError("Ludwig import failed.") from e
 
+        configure_binary_metrics()
         output_dir.mkdir(parents=True, exist_ok=True)
         self._prediction_context = None
         config_text = config_path.read_text()
@@ -1787,6 +1804,12 @@ class LudwigDirectBackend:
 
         # Pull additional config details from description.json if available
         config_for_summary = dict(config)
+        # Keep the model evaluation threshold separate from the report-selected
+        # threshold, which may be recomputed from validation predictions below.
+        evaluation_threshold = (
+            config.get("threshold") if config.get("threshold_mode") == "manual" else None
+        )
+        evaluation_threshold = 0.5 if evaluation_threshold is None else float(evaluation_threshold)
         if "target_column" not in config_for_summary or not config_for_summary.get("target_column"):
             config_for_summary["target_column"] = LABEL_COLUMN_NAME
         desc_path = exp_dir / DESCRIPTION_FILE_NAME
@@ -1805,6 +1828,8 @@ class LudwigDirectBackend:
                     if isinstance(desc_cfg.get("output_features", [{}]), list)
                     else {}
                 )
+                if output_cfg.get("threshold") is not None:
+                    evaluation_threshold = float(output_cfg["threshold"])
                 trainer_cfg = desc_cfg.get("trainer", {}) if isinstance(desc_cfg, dict) else {}
                 loss_cfg = output_cfg.get("loss", {}) if isinstance(output_cfg, dict) else {}
                 opt_cfg = trainer_cfg.get("optimizer", {}) if isinstance(trainer_cfg, dict) else {}
@@ -2237,8 +2262,8 @@ class LudwigDirectBackend:
         else:
             config_for_summary["threshold"] = None
 
-        # Ensemble test metrics were already computed at the selected threshold(s),
-        # including per-fold thresholds that a single recompute cannot reproduce.
+        test_metrics_at_selected_threshold = bool(ensemble and ensemble.get("ensemble_test_metrics"))
+        # Ensemble metrics already use the selected thresholds, including per-fold values.
         if output_type == "binary" and predictions_csv_path.exists() and not ensemble:
             try:
                 threshold_metrics = compute_binary_threshold_metrics_from_predictions(
@@ -2248,6 +2273,7 @@ class LudwigDirectBackend:
                     split_value=2,
                 )
                 if threshold_metrics:
+                    test_metrics_at_selected_threshold = True
                     test_metrics_html = format_test_merged_stats_table_html(
                         threshold_metrics, output_type, top_k=hits_top_k
                     )
@@ -2256,6 +2282,36 @@ class LudwigDirectBackend:
                     "Could not recompute binary test metrics at selected threshold: %s",
                     exc,
                 )
+
+        if output_type == "binary":
+            config_for_summary["evaluation_threshold"] = evaluation_threshold
+            # Ensemble tables mix member metrics with thresholded averaged predictions.
+            if not ensemble:
+                evaluation_notice = format_binary_threshold_notice(
+                    evaluation_threshold, "Ludwig model evaluation"
+                )
+                metrics_html = evaluation_notice + metrics_html
+                train_val_metrics_html = evaluation_notice + train_val_metrics_html
+            if ensemble and ensemble.get("fold_thresholds"):
+                test_notice = (
+                    "<p class='threshold-notice' style='text-align:center;'>"
+                    "<strong>Decision thresholds: per fold</strong>. "
+                    "Each test row uses the threshold selected on that fold's validation data. "
+                    f"Mean threshold: {float(config_for_summary['threshold']):.6f}. "
+                    "ROC-AUC and loss are independent of the decision threshold.</p>"
+                )
+            elif test_metrics_at_selected_threshold:
+                test_notice = format_binary_threshold_notice(
+                    float(config_for_summary["threshold"]),
+                    str(config_for_summary.get("threshold_source", "Selected for test evaluation")),
+                    config_for_summary.get("threshold_metric"),
+                )
+            else:
+                test_notice = format_binary_threshold_notice(
+                    evaluation_threshold,
+                    "Ludwig model evaluation (selected-threshold test metrics unavailable)",
+                )
+            test_metrics_html = test_notice + test_metrics_html
 
         dataset_overview_html = build_dataset_overview(
             label_metadata_path,
@@ -2541,6 +2597,7 @@ class LudwigDirectBackend:
                         interactive_plots = build_classification_plots(
                             str(test_stats_path),
                             str(train_stats_path) if train_stats_path.exists() else None,
+                            threshold=evaluation_threshold,
                             metadata_csv_path=str(label_metadata_path)
                             if label_metadata_path and label_metadata_path.exists()
                             else None,
@@ -2552,6 +2609,7 @@ class LudwigDirectBackend:
                     interactive_plots = build_classification_plots(
                         str(test_stats_path),
                         str(train_stats_path) if train_stats_path.exists() else None,
+                        threshold=evaluation_threshold if output_type == "binary" else None,
                         metadata_csv_path=str(label_metadata_path)
                         if label_metadata_path and label_metadata_path.exists()
                         else None,

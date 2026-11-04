@@ -113,7 +113,10 @@ def test_report_renders_binary_ensemble(tmp_path, monkeypatch):
     assert "Rows per fold" in html
     assert "test = the fixed test split, averaged across all members" in html
     assert "Test Performance Summary" in html
-    assert "Decision Threshold (Test)" in html
+    assert "Evaluation Threshold (Member Models)" in html
+    assert "Selected Threshold (Test Summary)" in html
+    assert "Source: Optimized on averaged validation split." in html
+    assert "selected-threshold test metrics unavailable" not in html
     assert "Optimized on averaged validation split" in html
     assert "2-fold cross-validation (validation folds) x 2 random seeds" in html
     # binary plots are built from the averaged prediction CSVs
@@ -128,8 +131,16 @@ def test_report_renders_test_fold_ensemble_with_per_fold_thresholds(tmp_path, mo
         tmp_path, csv_path, zip_path, fold_role="test", num_folds=2, num_seeds=1
     )
     backend = ReportBackend()
+    recomputations = []
+
+    def unexpected_recompute(*args, **kwargs):
+        recomputations.append(args)
+        raise AssertionError("ensemble metrics must retain the per-row thresholds")
+
+    monkeypatch.setattr(ludwig_backend, "compute_binary_threshold_metrics_from_predictions", unexpected_recompute)
 
     image_workflow.ImageLearnerCLI(args, backend).run()
+    assert not recomputations
 
     html = (tmp_path / "image_classification_results_report.html").read_text()
     exp_dir = args.output_dir / "experiment_run"
@@ -145,6 +156,10 @@ def test_report_renders_test_fold_ensemble_with_per_fold_thresholds(tmp_path, mo
         assert "Per-Fold Thresholds, Mean:" in html
         assert "Operating point (per-fold thresholds)" in html
     assert "test = every row, scored out-of-fold" in html
+    assert "Decision thresholds: per fold" in html
+    assert "Mean of Per-Fold Test Thresholds" in html
+    assert "Source: Ludwig model evaluation." not in html
+    assert "selected-threshold test metrics unavailable" not in html
     # overview: per-fold layout, no fixed test column
     assert "Rows per fold" in html
     assert "Test (fixed)" not in html
