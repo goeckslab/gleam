@@ -11,6 +11,7 @@ import torch
 import yaml
 from ludwig.api import LudwigModel
 from ludwig.constants import BINARY, LOGITS, MAXIMIZE, PREDICTIONS, PROBABILITIES
+from ludwig.distributed import init_dist_strategy
 from ludwig.features.binary_feature import BinaryOutputFeature
 from ludwig.modules.metric_registry import get_metric_cls, get_metric_tensor_input, register_metric
 from ludwig.schema.features.binary_feature import ECDBinaryOutputFeatureConfig
@@ -22,6 +23,7 @@ from sklearn.metrics import accuracy_score, confusion_matrix, precision_score, r
 
 class BinaryMetricsIntegrationTest(unittest.TestCase):
     def setUp(self):
+        init_dist_strategy("local")
         self.original_inputs = {
             name: get_metric_tensor_input(name)
             for name in ("precision", "recall", "specificity")
@@ -34,8 +36,8 @@ class BinaryMetricsIntegrationTest(unittest.TestCase):
     def test_metrics_follow_model_predictions_at_threshold_boundaries(self):
         configure_binary_metrics()
         configure_binary_metrics()  # Repeated experiments must be safe in one process.
-        probabilities = torch.tensor([0.9, 0.55, 0.57, 0.2, 0.6, 0.0, 1.0])
-        targets = torch.tensor([1, 0, 1, 0, 1, 0, 1], dtype=torch.bool)
+        probabilities = torch.tensor([0.9, 0.55, 0.57, 0.2, 0.6, 0.0, 1.0, 0.5])
+        targets = torch.tensor([1, 0, 1, 0, 1, 0, 1, 1], dtype=torch.bool)
         logits = torch.logit(probabilities).clamp(-100, 100)
         reference_loss = None
         for threshold in (0.0, 0.5, 0.6, 1.0):
@@ -89,7 +91,10 @@ class BinaryMetricsIntegrationTest(unittest.TestCase):
             config = {
                 "input_features": [{
                     "name": "image_path", "type": "image",
-                    "encoder": {"type": "stacked_cnn", "num_conv_layers": 1, "num_filters": 4, "num_fc_layers": 0},
+                    "encoder": {
+                        "type": "stacked_cnn", "num_conv_layers": 1, "num_filters": 4,
+                        "num_fc_layers": 1, "fc_size": 8,
+                    },
                     "preprocessing": {"height": 32, "width": 32, "num_channels": 3, "in_memory": True},
                 }],
                 "output_features": [{"name": "label", "type": "binary", "threshold": 0.6}],
