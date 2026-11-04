@@ -13,7 +13,7 @@ from ludwig.api import LudwigModel
 from ludwig.constants import BINARY, LOGITS, MAXIMIZE, PREDICTIONS, PROBABILITIES
 from ludwig.features.binary_feature import BinaryOutputFeature
 from ludwig.modules.metric_registry import get_metric_cls, get_metric_tensor_input, register_metric
-from ludwig.schema.features.binary_feature import BinaryOutputFeatureConfig
+from ludwig.schema.features.binary_feature import ECDBinaryOutputFeatureConfig
 from ludwig.utils.output_feature_utils import get_feature_concat_name
 from ludwig_backend import configure_binary_metrics, LudwigDirectBackend
 from PIL import Image
@@ -40,7 +40,7 @@ class BinaryMetricsIntegrationTest(unittest.TestCase):
         reference_loss = None
         for threshold in (0.0, 0.5, 0.6, 1.0):
             with self.subTest(threshold=threshold):
-                config = BinaryOutputFeatureConfig(name="label", threshold=threshold)
+                config = ECDBinaryOutputFeatureConfig(name="label", threshold=threshold)
                 config.input_size = 1
                 feature = BinaryOutputFeature(config, {})
                 predictions = feature.predictions(
@@ -110,30 +110,27 @@ class BinaryMetricsIntegrationTest(unittest.TestCase):
             training_stats = json.loads((experiment / "training_statistics.json").read_text())
             test_stats = json.loads((experiment / "test_statistics.json").read_text())["label"]
             model = LudwigModel.load(str(experiment / "model"))
-            try:
-                for split, name in ((0, "training"), (1, "validation"), (2, "test")):
-                    with self.subTest(split=name):
-                        subset = dataset[dataset["split"] == split].reset_index(drop=True)
-                        stats, predictions, _ = model.evaluate(
-                            subset, collect_predictions=True, collect_overall_stats=True,
-                            output_directory=str(root / f"evaluate-{name}"),
-                        )
-                        scores = predictions["label_probabilities_True"].to_numpy()
-                        decisions = scores >= 0.6
-                        np.testing.assert_array_equal(predictions["label_predictions"], decisions)
-                        expected = self.expected_metrics(subset["label"], decisions)
-                        for metric, value in expected.items():
-                            self.assertAlmostEqual(stats["label"][metric], value, places=6)
-                            self.assertAlmostEqual(training_stats[name]["label"][metric][-1], value, places=6)
-                            if split == 2:
-                                self.assertAlmostEqual(test_stats[metric], value, places=6)
-                        np.testing.assert_array_equal(
-                            stats["label"]["confusion_matrix"],
-                            confusion_matrix(subset["label"], decisions, labels=[0, 1]),
-                        )
-                        print(f"Verified {name} at threshold 0.6: {expected}", flush=True)
-            finally:
-                model.close()
+            for split, name in ((0, "training"), (1, "validation"), (2, "test")):
+                with self.subTest(split=name):
+                    subset = dataset[dataset["split"] == split].reset_index(drop=True)
+                    stats, predictions, _ = model.evaluate(
+                        subset, collect_predictions=True, collect_overall_stats=True,
+                        output_directory=str(root / f"evaluate-{name}"),
+                    )
+                    scores = predictions["label_probabilities_True"].to_numpy()
+                    decisions = scores >= 0.6
+                    np.testing.assert_array_equal(predictions["label_predictions"], decisions)
+                    expected = self.expected_metrics(subset["label"], decisions)
+                    for metric, value in expected.items():
+                        self.assertAlmostEqual(stats["label"][metric], value, places=6)
+                        self.assertAlmostEqual(training_stats[name]["label"][metric][-1], value, places=6)
+                        if split == 2:
+                            self.assertAlmostEqual(test_stats[metric], value, places=6)
+                    np.testing.assert_array_equal(
+                        stats["label"]["confusion_matrix"],
+                        confusion_matrix(subset["label"], decisions, labels=[0, 1]),
+                    )
+                    print(f"Verified {name} at threshold 0.6: {expected}", flush=True)
 
 
 if __name__ == "__main__":
