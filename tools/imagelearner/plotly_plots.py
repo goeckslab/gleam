@@ -102,16 +102,22 @@ def _resolve_positive_label_from_probability(
             if str(label) == hint:
                 return label
 
-    # Ludwig exports binary probabilities with True/False suffixes even when
-    # the original targets are numeric 0/1. Resolve those aliases explicitly;
-    # encounter order cannot establish which target a probability represents.
+    # Ludwig exports True/False probabilities for numeric targets, converting
+    # zero to False and nonzero to True. Encounter order cannot determine this.
     binary_aliases = {"false": 0, "0": 0, "0.0": 0, "true": 1, "1": 1, "1.0": 1}
     hint_value = binary_aliases.get(str(positive_label_hint).lower())
-    label_values = [binary_aliases.get(str(label).lower()) for label in unique_labels]
+    try:
+        numeric_labels = np.asarray(unique_labels, dtype=float)
+    except (TypeError, ValueError):
+        label_values = [binary_aliases.get(str(label).lower()) for label in unique_labels]
+    else:
+        if np.isnan(numeric_labels).any():
+            return None
+        label_values = numeric_labels.astype(bool).tolist()
     if (
         hint_value is not None
-        and all(value is not None for value in label_values)
-        and len(set(label_values)) == len(label_values)
+        and len(label_values) == 2
+        and set(label_values) == {False, True}
     ):
         for label, value in zip(unique_labels, label_values):
             if value == hint_value:

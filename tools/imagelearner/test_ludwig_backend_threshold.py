@@ -273,15 +273,20 @@ def test_prepare_config_records_metaformer_model_size_adaptation(tmp_path):
     assert params["image_size_adaptation"]["model_adaptation_to_size"] == "224x224"
 
 
-@pytest.mark.parametrize("mode, include_test_predictions, evaluation_threshold, selected_threshold", [
-    ("auto", True, 0.5, 0.7),
-    ("manual", True, 0.3, 0.3),
-    ("manual", True, 0.6, 0.6),
-    ("auto", False, 0.5, 0.7),
-    ("manual", True, 0.0, 0.0),
+@pytest.mark.parametrize("mode, include_test_predictions, evaluation_threshold, selected_threshold, positive_label, reverse_rows", [
+    ("auto", True, 0.5, 0.7, 1, False),
+    ("manual", True, 0.3, 0.3, 1, False),
+    ("manual", True, 0.6, 0.6, 1, False),
+    ("auto", False, 0.5, 0.7, 1, False),
+    ("manual", True, 0.0, 0.0, 1, False),
+    ("auto", True, 0.5, 0.7, 2, False),
+    ("auto", True, 0.5, 0.7, 2, True),
+    ("auto", True, 0.5, 0.7, -1, False),
+    ("auto", True, 0.5, 0.7, -1, True),
 ])
 def test_report_labels_each_metrics_table_with_its_actual_threshold(
-    tmp_path, monkeypatch, mode, include_test_predictions, evaluation_threshold, selected_threshold
+    tmp_path, monkeypatch, mode, include_test_predictions, evaluation_threshold, selected_threshold,
+    positive_label, reverse_rows
 ):
     *_, backend_class = _load_backend_test_objects()
     backend_module = importlib.import_module("ludwig_backend")
@@ -304,11 +309,14 @@ def test_report_labels_each_metrics_table_with_its_actual_threshold(
     for name, split in [("validation_predictions.csv", 1), ("predictions.csv", 2)]:
         if split == 2 and not include_test_predictions:
             continue
-        pd.DataFrame({
-            "split": [split] * 4, "label": [1, 0, 1, 0],
+        frame = pd.DataFrame({
+            "split": [split] * 4, "label": [positive_label, 0, positive_label, 0],
             "label_probabilities_True": [0.9, 0.6, 0.7, 0.2],
             "label_probabilities_False": [0.1, 0.4, 0.3, 0.8],
-        }).to_csv(exp_dir / name, index=False)
+        })
+        if reverse_rows:
+            frame = frame.iloc[::-1]
+        frame.to_csv(exp_dir / name, index=False)
     fallback_thresholds = []
 
     def capture_fallback(*args, **kwargs):
@@ -347,6 +355,8 @@ def test_report_labels_each_metrics_table_with_its_actual_threshold(
     elif mode == "auto":
         assert "Source: Optimized on validation split." in tabs["third"]
         assert "Optimization metric: Balanced Accuracy." in tabs["third"]
+        assert "validation probabilities unavailable" not in report_path.read_text()
+        assert "selected-threshold test metrics unavailable" not in tabs["third"]
     else:
         assert "Source: Manual." in tabs["third"]
         assert "Optimization metric:" not in tabs["third"]

@@ -10,6 +10,7 @@ import pandas as pd
 import torch
 import yaml
 from ludwig.api import LudwigModel
+from ludwig.backend import initialize_backend
 from ludwig.constants import BINARY, LOGITS, MAXIMIZE, PREDICTIONS, PROBABILITIES
 from ludwig.distributed import init_dist_strategy
 from ludwig.features.binary_feature import BinaryOutputFeature
@@ -18,6 +19,7 @@ from ludwig.schema.features.binary_feature import ECDBinaryOutputFeatureConfig
 from ludwig.utils.output_feature_utils import get_feature_concat_name
 from ludwig_backend import configure_binary_metrics, LudwigDirectBackend
 from PIL import Image
+from plotly_plots import _resolve_positive_label_from_probability
 from sklearn.metrics import accuracy_score, confusion_matrix, precision_score, recall_score, roc_auc_score
 
 
@@ -72,6 +74,19 @@ class BinaryMetricsIntegrationTest(unittest.TestCase):
             "specificity": tn / (tn + fp),
         }
 
+    def test_numeric_label_mapping_matches_ludwig_preprocessing(self):
+        backend = initialize_backend("local")
+        for values in ([0, 2], [0, -1], ["0", "2"], ["0", "-1"]):
+            for labels in (values, values[::-1]):
+                with self.subTest(labels=labels):
+                    targets = pd.Series(labels)
+                    converted = BinaryOutputFeature.cast_column(targets, backend)
+                    positive = _resolve_positive_label_from_probability(targets.to_numpy(), "True")
+                    np.testing.assert_array_equal(targets.eq(positive), converted)
+        targets = pd.Series([1, 2])
+        self.assertTrue(BinaryOutputFeature.cast_column(targets, backend).all())
+        self.assertIsNone(_resolve_positive_label_from_probability(targets.to_numpy(), "True"))
+
     def test_training_validation_and_test_statistics_use_manual_threshold(self):
         # Start from Ludwig's original routing so this also tests the training-entry hook.
         for name in self.original_inputs:
@@ -111,6 +126,8 @@ class BinaryMetricsIntegrationTest(unittest.TestCase):
             config_path = root / "config.yaml"
             config_path.write_text(yaml.safe_dump(config))
             LudwigDirectBackend().run_experiment(dataset_path, config_path, root, random_seed=42)
+            for metric in self.original_inputs:
+                self.assertEqual(get_metric_tensor_input(metric), PREDICTIONS)
             experiment = root / "experiment_run"
             training_stats = json.loads((experiment / "training_statistics.json").read_text())
             test_stats = json.loads((experiment / "test_statistics.json").read_text())["label"]

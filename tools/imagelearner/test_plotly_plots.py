@@ -337,6 +337,52 @@ def test_positive_label_requires_unambiguous_mapping(labels):
     assert _resolve_positive_label_from_probability(np.array(labels), "case") == "case"
 
 
+@pytest.mark.parametrize("labels", [[0, 2], [0, -1], [0.0, 2.5], ["0", "2"], ["0", "-1"]])
+@pytest.mark.parametrize("reverse_rows", [False, True])
+def test_positive_label_resolves_zero_nonzero_numeric_labels(labels, reverse_rows):
+    ordered = np.array(labels[::-1] if reverse_rows else labels)
+    assert _resolve_positive_label_from_probability(ordered, "True") == labels[1]
+    assert _resolve_positive_label_from_probability(ordered, "False") == labels[0]
+    assert _resolve_positive_label_from_probability(ordered, str(labels[1])) == labels[1]
+
+
+@pytest.mark.parametrize("labels", [[1, 2], [-1, 2], ["1", "2"], ["0", "0.0"], [0, np.nan], [0, 1, 2]])
+@pytest.mark.parametrize("reverse_rows", [False, True])
+def test_positive_label_rejects_non_bijective_numeric_mapping(labels, reverse_rows):
+    ordered = np.array(labels[::-1] if reverse_rows else labels)
+    for hint in ("True", "False"):
+        assert _resolve_positive_label_from_probability(ordered, hint) is None
+
+
+@pytest.mark.parametrize("positive_label", [2, -1])
+@pytest.mark.parametrize("reverse_rows", [False, True])
+def test_numeric_binary_labels_keep_threshold_optimization_and_diagnostics(tmp_path, positive_label, reverse_rows):
+    predictions_path = tmp_path / "predictions.csv"
+    frame = pd.DataFrame({
+        "split": [1] * 4,
+        "label": [0, positive_label, 0, positive_label],
+        "label_probabilities_True": [0.1, 0.6, 0.55, 0.8],
+    })
+    if reverse_rows:
+        frame = frame.iloc[::-1]
+    frame.to_csv(predictions_path, index=False)
+    data = load_binary_threshold_data(str(predictions_path), split_value=1)
+    assert data["positive_label"] == positive_label
+    assert data["negative_label"] == 0
+    np.testing.assert_array_equal(data["y_true_bin"], frame["label"].ne(0))
+    result = resolve_binary_threshold_for_report("auto", "f1", str(predictions_path), split_value=1)
+    assert result["threshold"] == 0.6
+    assert result["threshold_metric_value"] == 1.0
+    assert result["threshold_source"] == "Optimized on validation split"
+    metrics = compute_binary_threshold_metrics_from_predictions(str(predictions_path), 0.6, split_value=1)
+    assert metrics["f1"] == metrics["accuracy"] == 1.0
+    assert compute_binary_threshold_metrics_from_predictions(str(predictions_path), 0.5, split_value=1)["f1"] == 0.8
+    plots = build_binary_threshold_classification_plots_from_predictions(str(predictions_path), 0.6, split_value=1)
+    assert "ROC Curve (AUC=1.000)" in next(plot["html"] for plot in plots if plot["title"] == "ROC Curve")
+    diagnostics = build_prediction_diagnostics(str(predictions_path), split_value=1)
+    assert "Calibration Curve (Test)" in [plot["title"] for plot in diagnostics]
+
+
 @pytest.mark.parametrize("order", [[0, 1, 2, 3], [1, 0, 3, 2]])
 def test_boolean_probability_exports_keep_threshold_metrics_and_auc_consistent(tmp_path, order):
     predictions_path = tmp_path / "predictions.csv"
