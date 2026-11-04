@@ -713,8 +713,11 @@ class ImageLearnerCLI:
             logger.info("Training ensemble member %d/%d: %s", position, len(members), member.name)
             member_df = df.copy()
             member_df[SPLIT_COLUMN_NAME] = member.split.to_numpy()
-            member_csv = self.temp_dir / f"{member.name}.csv"
-            member_df.to_csv(member_csv, index=False)
+            # Ludwig keys its preprocessing cache by CSV name; seeds share a split.
+            split_name = f"fold{member.fold}" if member.fold is not None else "seed_members"
+            member_csv = self.temp_dir / f"{split_name}.csv"
+            if not member_csv.exists():
+                member_df.to_csv(member_csv, index=False)
             member_out = members_root / member.name
 
             record: Dict[str, Any] = {

@@ -6,6 +6,7 @@ import zipfile
 from pathlib import Path
 
 import pandas as pd
+import pytest
 import yaml
 from PIL import Image
 
@@ -115,6 +116,164 @@ def test_generate_validation_predictions_writes_split_specific_file(tmp_path):
     assert df[split_col].tolist() == [1, 1]
     assert df[label_col].tolist() == [1, 0]
     assert df["label_probabilities_1"].tolist() == [0.8, 0.3]
+
+
+@pytest.fixture
+def runtime_backend(tmp_path, monkeypatch):
+    _, _, _, backend_class = _load_backend_test_objects()
+    monkeypatch.setattr(backend_class, "_patch_torchvision_download", lambda self: None)
+    dataset = tmp_path / "fold1.csv"
+    pd.DataFrame({
+        "image_path": ["images/a.png"] * 4,
+        "label": [0, 1, 0, 1],
+        "split": [0, 1, 1, 2],
+    }).to_csv(dataset, index=False)
+    config = tmp_path / "config.yaml"
+    config.write_text("trainer:\n  batch_size: auto\n  learning_rate: 0.001\n")
+    calls = []
+    prepared = (["train"], ["val1", "val2"], ["test"], {})
+    model = types.SimpleNamespace(config_obj=types.SimpleNamespace(
+        trainer=types.SimpleNamespace(batch_size=8, eval_batch_size=16),
+    ))
+
+    def experiment_cli(**kwargs):
+        calls.append(kwargs)
+        output = Path(kwargs["output_directory"]) / "experiment_run"
+        (output / "model").mkdir(parents=True, exist_ok=True)
+        return model, {}, {}, prepared, str(output)
+
+    experiment_module = types.ModuleType("ludwig.experiment")
+    experiment_module.experiment_cli = experiment_cli
+    monkeypatch.setitem(sys.modules, "ludwig.experiment", experiment_module)
+    return backend_class(), dataset, config, calls, model, prepared, experiment_module
+
+
+def test_runtime_reuses_batch_sizes_only_for_unchanged_split_and_config(runtime_backend, tmp_path):
+    backend, dataset, config, calls, _, _, _ = runtime_backend
+    backend.run_experiment(dataset, config, tmp_path / "seed42", 42)
+    backend.run_experiment(dataset, config, tmp_path / "seed43", 43)
+    assert calls[0]["config"]["trainer"]["batch_size"] == "auto"
+    assert calls[1]["config"]["trainer"] == {
+        "batch_size": 8, "eval_batch_size": 16, "learning_rate": 0.001,
+    }
+    assert [call["random_seed"] for call in calls] == [42, 43]
+
+    dataset.write_text(dataset.read_text().replace("0,0", "1,0"))
+    backend.run_experiment(dataset, config, tmp_path / "changed_data", 44)
+    assert calls[-1]["config"]["trainer"]["batch_size"] == "auto"
+
+    config.write_text(config.read_text().replace("0.001", "0.002"))
+    backend.run_experiment(dataset, config, tmp_path / "changed_config", 45)
+    assert calls[-1]["config"]["trainer"]["batch_size"] == "auto"
+
+    other_fold = tmp_path / "fold2.csv"
+    other_fold.write_bytes(dataset.read_bytes())
+    backend.run_experiment(other_fold, config, tmp_path / "other_fold", 46)
+    assert calls[-1]["config"]["trainer"]["batch_size"] == "auto"
+
+
+def test_runtime_keeps_explicit_batch_size(runtime_backend, tmp_path):
+    backend, dataset, config, calls, model, _, _ = runtime_backend
+    config.write_text("trainer:\n  batch_size: 4\n  eval_batch_size: 12\n")
+    model.config_obj.trainer.batch_size = 4
+    model.config_obj.trainer.eval_batch_size = 12
+    for seed in (42, 43):
+        backend.run_experiment(dataset, config, tmp_path / str(seed), seed)
+    assert all(call["config"]["trainer"] == {"batch_size": 4, "eval_batch_size": 12} for call in calls)
+
+
+def test_runtime_reuses_live_model_and_prepared_validation_data(runtime_backend, tmp_path, monkeypatch):
+    backend, dataset, config, _, model, prepared, _ = runtime_backend
+    output = tmp_path / "seed42"
+    backend.run_experiment(dataset, config, output, 42)
+
+    def predict(dataset, **kwargs):
+        assert dataset is prepared[1]
+        return pd.DataFrame({"label_probabilities_1": [0.8, 0.3]}), None
+
+    model.predict = predict
+    monkeypatch.delitem(sys.modules, "ludwig.api", raising=False)
+    prediction_path = backend.generate_split_predictions(output, dataset, 1, "validation_predictions.csv")
+    predictions = pd.read_csv(prediction_path)
+    assert predictions["label"].tolist() == [1, 0]
+    assert predictions["label_probabilities_1"].tolist() == [0.8, 0.3]
+    assert backend._prediction_context is None
+
+
+def test_runtime_falls_back_to_raw_data_when_prepared_prediction_fails(runtime_backend, tmp_path):
+    backend, dataset, config, _, model, prepared, _ = runtime_backend
+    output = tmp_path / "seed42"
+    backend.run_experiment(dataset, config, output, 42)
+    calls = []
+
+    def predict(dataset, **kwargs):
+        calls.append(dataset)
+        if dataset is prepared[1]:
+            raise ValueError("prepared data unavailable")
+        assert isinstance(dataset, pd.DataFrame)
+        return pd.DataFrame({"label_probabilities_1": [0.8, 0.3]})
+
+    model.predict = predict
+    assert backend.generate_split_predictions(output, dataset, 1, "validation_predictions.csv").exists()
+    assert len(calls) == 2
+
+
+def test_runtime_does_not_use_another_runs_model(runtime_backend, tmp_path, monkeypatch):
+    backend, dataset, config, _, live_model, _, _ = runtime_backend
+    backend.run_experiment(dataset, config, tmp_path / "first", 42)
+    other_output = tmp_path / "second"
+    model_dir = other_output / "experiment_run/model"
+    model_dir.mkdir(parents=True)
+
+    class SavedModel:
+        @classmethod
+        def load(cls, path):
+            assert path == str(model_dir)
+            return cls()
+
+        def predict(self, dataset, **kwargs):
+            assert isinstance(dataset, pd.DataFrame)
+            return pd.DataFrame({"label_probabilities_1": [0.6, 0.4]})
+
+    monkeypatch.setitem(sys.modules, "ludwig.api", types.SimpleNamespace(LudwigModel=SavedModel))
+    live_model.predict = lambda **kwargs: pytest.fail("reused the wrong member")
+    path = backend.generate_split_predictions(other_output, dataset, 1, "validation_predictions.csv")
+    assert pd.read_csv(path)["label_probabilities_1"].tolist() == [0.6, 0.4]
+    assert backend._prediction_context is None
+
+
+def test_runtime_retries_oom_with_original_config(runtime_backend, tmp_path, monkeypatch):
+    backend, dataset, config, calls, _, _, module = runtime_backend
+    backend.run_experiment(dataset, config, tmp_path / "seed42", 42)
+    original = module.experiment_cli
+
+    def experiment_cli(**kwargs):
+        if isinstance(kwargs["config"], dict):
+            assert kwargs["config"]["trainer"]["batch_size"] == 8
+            raise RuntimeError("CUDA out of memory")
+        assert kwargs["config"] == str(config)
+        return original(**kwargs)
+
+    monkeypatch.setattr(module, "experiment_cli", experiment_cli)
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace(
+        cuda=types.SimpleNamespace(is_available=lambda: False),
+    ))
+    backend.run_experiment(dataset, config, tmp_path / "seed43", 43)
+    assert calls[-1]["random_seed"] == 43
+    assert backend._prediction_context is not None
+
+
+def test_runtime_propagates_non_oom_and_releases_previous_model(runtime_backend, tmp_path, monkeypatch):
+    backend, dataset, config, _, _, _, module = runtime_backend
+    backend.run_experiment(dataset, config, tmp_path / "seed42", 42)
+
+    def fail(**kwargs):
+        raise RuntimeError("training error")
+
+    monkeypatch.setattr(module, "experiment_cli", fail)
+    with pytest.raises(RuntimeError, match="training error"):
+        backend.run_experiment(dataset, config, tmp_path / "seed43", 43)
+    assert backend._prediction_context is None
 
 
 def test_prepare_config_records_category_top_k():

@@ -472,7 +472,7 @@ def test_workflow_trains_members_and_averages_predictions(tmp_path, monkeypatch)
     # 2 folds x 2 seeds, every member trained with its own seed
     assert [seed for _, seed in backend.runs] == [42, 43, 42, 43]
     assert [name for name, _ in backend.runs] == [
-        "fold1_seed42.csv", "fold1_seed43.csv", "fold2_seed42.csv", "fold2_seed43.csv"
+        "fold1.csv", "fold1.csv", "fold2.csv", "fold2.csv"
     ]
 
     exp_dir = args.output_dir / "experiment_run"
@@ -637,7 +637,7 @@ def test_workflow_continues_when_a_member_fails(tmp_path, monkeypatch):
 
     class FlakyBackend(FakeBackend):
         def run_experiment(self, dataset_path, config_path, output_dir, random_seed=42):
-            if Path(dataset_path).name == "fold2_seed42.csv":
+            if Path(dataset_path).name == "fold2.csv" and random_seed == 42:
                 raise RuntimeError("CUDA out of memory")
             super().run_experiment(dataset_path, config_path, output_dir, random_seed)
 

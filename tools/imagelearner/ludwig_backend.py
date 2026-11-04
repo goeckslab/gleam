@@ -1,3 +1,4 @@
+import hashlib
 import inspect
 import json
 import logging
@@ -107,6 +108,11 @@ class LudwigDirectBackend:
     """Backend for running Ludwig experiments directly via the internal experiment_cli function."""
 
     _torchvision_patched = False
+
+    def __init__(self):
+        self._prediction_context = None
+        self._batch_size_key = None
+        self._batch_sizes = {}
 
     def _detect_image_dimensions(self, image_zip_path: str) -> Tuple[int, int]:
         """Detect image dimensions from the first image in the dataset."""
@@ -889,14 +895,65 @@ class LudwigDirectBackend:
             raise RuntimeError("Ludwig import failed.") from e
 
         output_dir.mkdir(parents=True, exist_ok=True)
+        self._prediction_context = None
+        config_text = config_path.read_text()
+        config = yaml.safe_load(config_text)
+        cache_key = (
+            dataset_path.resolve(),
+            hashlib.sha256(dataset_path.read_bytes()).digest(),
+            config_text,
+        )
+        cached_sizes = self._batch_sizes if cache_key == self._batch_size_key else {}
+        trainer = config.setdefault("trainer", {})
+        used_cached_sizes = False
+        for name, size in cached_sizes.items():
+            if trainer.get(name, "auto") in (None, "auto"):
+                trainer[name] = size
+                used_cached_sizes = True
 
         try:
-            experiment_cli(
-                dataset=str(dataset_path),
-                config=str(config_path),
-                output_directory=str(output_dir),
-                random_seed=random_seed,
-                skip_preprocessing=True,
+            result = None
+            retry_without_cache = False
+            try:
+                result = experiment_cli(
+                    dataset=str(dataset_path),
+                    config=config,
+                    output_directory=str(output_dir),
+                    random_seed=random_seed,
+                )
+            except RuntimeError as exc:
+                if not used_cached_sizes or "out of memory" not in str(exc).lower():
+                    raise
+                retry_without_cache = True
+
+            if retry_without_cache:
+                # Available GPU memory can change between members; probe again on OOM.
+                import gc
+
+                import torch
+
+                self._batch_size_key = None
+                self._batch_sizes = {}
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                logger.warning("Cached batch sizes no longer fit; retrying with automatic tuning.")
+                result = experiment_cli(
+                    dataset=str(dataset_path),
+                    config=str(config_path),
+                    output_directory=str(output_dir),
+                    random_seed=random_seed,
+                )
+
+            model, _, _, prepared_data, _ = result
+            self._batch_size_key = cache_key
+            self._batch_sizes = {
+                name: size
+                for name in ("batch_size", "eval_batch_size")
+                if isinstance(size := getattr(model.config_obj.trainer, name, None), int) and size > 0
+            }
+            self._prediction_context = (
+                output_dir.resolve(), dataset_path.resolve(), model, prepared_data,
             )
             logger.info(
                 f"LudwigDirectBackend: Experiment completed. Results in {output_dir}"
@@ -981,6 +1038,8 @@ class LudwigDirectBackend:
         """Save model predictions for a specific prepared-data split."""
         output_dir = Path(output_dir)
         dataset_path = Path(dataset_path)
+        context = self._prediction_context
+        self._prediction_context = None
         exp_dir = self._get_latest_experiment_dir(output_dir)
         if not exp_dir:
             logger.warning("No experiment run directory found; skipping split predictions.")
@@ -1016,17 +1075,19 @@ class LudwigDirectBackend:
             logger.warning("No rows found for split %s; skipping split predictions.", split_value)
             return None
 
-        try:
-            from ludwig.api import LudwigModel
-        except Exception as exc:
-            logger.warning("Unable to import LudwigModel for split predictions: %s", exc)
-            return None
+        prepared_split = None
+        if context is not None and context[:2] == (output_dir.resolve(), dataset_path.resolve()):
+            ludwig_model = context[2]
+            if int(split_value) in (0, 1, 2):
+                prepared_split = context[3][int(split_value)]
+        else:
+            try:
+                from ludwig.api import LudwigModel
 
-        try:
-            ludwig_model = LudwigModel.load(str(model_dir))
-        except Exception as exc:
-            logger.warning("Unable to load LudwigModel for split predictions: %s", exc)
-            return None
+                ludwig_model = LudwigModel.load(str(model_dir))
+            except Exception as exc:
+                logger.warning("Unable to load LudwigModel for split predictions: %s", exc)
+                return None
 
         prediction_input_df = df_split.copy()
         if IMAGE_PATH_COLUMN_NAME in prediction_input_df.columns:
@@ -1051,6 +1112,8 @@ class LudwigDirectBackend:
         candidate_datasets = [prediction_input_df]
         if list(feature_df.columns) != list(prediction_input_df.columns):
             candidate_datasets.append(feature_df)
+        if prepared_split is not None and len(prepared_split) == len(df_split):
+            candidate_datasets.insert(0, prepared_split)
 
         last_exc: Optional[Exception] = None
         prediction_result: Any = None
