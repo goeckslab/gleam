@@ -57,6 +57,10 @@ def argument_checker(args, parser):
         parser.error(f"ZIP or directory not found: {args.image_zip}")
     if args.threshold is not None and not 0.0 <= args.threshold <= 1.0:
         parser.error("threshold must be between 0.0 and 1.0")
+    if getattr(args, "cross_validation", False) and getattr(args, "num_folds", 5) < 2:
+        parser.error("num-folds must be at least 2 when cross-validation is enabled")
+    if getattr(args, "num_seeds", 1) < 1:
+        parser.error("num-seeds must be at least 1")
     if args.augmentation is not None:
         try:
             augmentation_setup = aug_parse(args.augmentation)
@@ -133,49 +137,54 @@ def extract_metrics_from_json(
                 "hits_at_k": get_last_value(label_stats, "hits_at_k"),
             }
 
-    # Test metrics: dynamic extraction according to exclusions
+    metrics["test"] = extract_test_metrics(test_stats, output_type)
+    return metrics
+
+
+def extract_test_metrics(test_stats: dict, output_type: str) -> dict:
+    """Flatten the scalar test metrics of Ludwig-shaped test statistics."""
     test_label_stats = test_stats.get("label", {})
     if not test_label_stats:
         logger.warning("No label statistics found for test split")
+        return {}
+
+    combined_stats = test_stats.get("combined", {})
+    overall_stats = test_label_stats.get("overall_stats", {})
+
+    # Define exclusions
+    if output_type == "binary":
+        exclude = {"per_class_stats", "precision_recall_curve", "roc_curve"}
     else:
-        combined_stats = test_stats.get("combined", {})
-        overall_stats = test_label_stats.get("overall_stats", {})
+        exclude = {"per_class_stats", "confusion_matrix"}
+        # Ludwig 0.10.1 bug (ludwig/utils/eval_utils.py::ConfusionMatrix.stats):
+        # "avg_precision_weighted" and "avg_recall_weighted" are computed with
+        # average="micro", so they silently duplicate the micro values instead of
+        # being support-weighted. "token_accuracy" (sklearn accuracy_score) is an
+        # exact duplicate of accuracy_micro under a name that is meaningless for
+        # image classification. Drop all three from the report.
+        exclude |= {
+            "avg_precision_weighted",
+            "avg_recall_weighted",
+            "token_accuracy",
+        }
 
-        # Define exclusions
-        if output_type == "binary":
-            exclude = {"per_class_stats", "precision_recall_curve", "roc_curve"}
-        else:
-            exclude = {"per_class_stats", "confusion_matrix"}
-            # Ludwig 0.10.1 bug (ludwig/utils/eval_utils.py::ConfusionMatrix.stats):
-            # "avg_precision_weighted" and "avg_recall_weighted" are computed with
-            # average="micro", so they silently duplicate the micro values instead of
-            # being support-weighted. "token_accuracy" (sklearn accuracy_score) is an
-            # exact duplicate of accuracy_micro under a name that is meaningless for
-            # image classification. Drop all three from the report.
-            exclude |= {
-                "avg_precision_weighted",
-                "avg_recall_weighted",
-                "token_accuracy",
-            }
-
-        # 1. Get all scalar test_label_stats not excluded
-        test_metrics = {}
-        for k, v in test_label_stats.items():
-            if k in exclude:
-                continue
-            if k == "overall_stats":
-                continue
-            if isinstance(v, (int, float, str, bool)):
-                test_metrics[k] = v
-
-        # 2. Add overall_stats (flattened), applying the same exclusions
-        for k, v in overall_stats.items():
-            if k in exclude:
-                continue
+    # 1. Get all scalar test_label_stats not excluded
+    test_metrics = {}
+    for k, v in test_label_stats.items():
+        if k in exclude:
+            continue
+        if k == "overall_stats":
+            continue
+        if isinstance(v, (int, float, str, bool)):
             test_metrics[k] = v
 
-        # 3. Optionally include combined/loss if present and not already
-        if "loss" in combined_stats and "loss" not in test_metrics:
-            test_metrics["loss"] = combined_stats["loss"]
-        metrics["test"] = test_metrics
-    return metrics
+    # 2. Add overall_stats (flattened), applying the same exclusions
+    for k, v in overall_stats.items():
+        if k in exclude:
+            continue
+        test_metrics[k] = v
+
+    # 3. Optionally include combined/loss if present and not already
+    if "loss" in combined_stats and "loss" not in test_metrics:
+        test_metrics["loss"] = combined_stats["loss"]
+    return test_metrics

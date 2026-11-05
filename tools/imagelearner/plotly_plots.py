@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 import plotly.io as pio
 from calibration_plot import expected_calibration_error
 from constants import (
+    DECISION_THRESHOLD_COLUMN,
     DEFAULT_HITS_AT_K,
     LABEL_COLUMN_NAME,
     MULTICLASS_METRIC_DISPLAY_NAME_OVERRIDES,
@@ -1487,13 +1488,42 @@ def load_binary_threshold_data(
     negative_labels = [label for label in pd.unique(finite_labels) if label != positive_label]
     negative_label = negative_labels[0] if negative_labels else None
 
+    # Ensemble runs with test folds decide each row at its own fold's threshold
+    # and record it next to the prediction; keep it so plots and metrics agree.
+    row_thresholds: Optional[np.ndarray] = None
+    if DECISION_THRESHOLD_COLUMN in df_pred.columns:
+        values = pd.to_numeric(df_pred[DECISION_THRESHOLD_COLUMN].iloc[:min_len], errors="coerce")
+        candidate = np.asarray(values, dtype=float)[finite_mask]
+        if np.isfinite(candidate).all():
+            row_thresholds = candidate
+
     return {
         "y_true_bin": y_true_bin[finite_mask],
         "y_score": y_score[finite_mask],
         "positive_label": positive_label,
         "negative_label": negative_label,
         "positive_probability_column": pos_prob_col,
+        "row_thresholds": row_thresholds,
     }
+
+
+def binary_predictions_from_threshold_data(
+    data: Dict[str, np.ndarray],
+    threshold: float,
+) -> Tuple[np.ndarray, bool]:
+    """0/1 predictions for loaded binary data.
+
+    Uses the per-row thresholds recorded in the predictions file when present
+    (ensemble runs with test folds), otherwise the single ``threshold``.
+    Returns the predictions and whether per-row thresholds that differ from
+    ``threshold`` were applied.
+    """
+    y_score = np.asarray(data["y_score"], dtype=float)
+    row_thresholds = data.get("row_thresholds")
+    if row_thresholds is not None and len(row_thresholds) == len(y_score):
+        per_row = not np.allclose(row_thresholds, float(threshold))
+        return (y_score >= np.asarray(row_thresholds, dtype=float)).astype(int), per_row
+    return (y_score >= float(threshold)).astype(int), False
 
 
 def optimize_binary_threshold_values(
@@ -1663,7 +1693,7 @@ def compute_binary_threshold_metrics_from_predictions(
         return None
 
     y_true_bin = data["y_true_bin"]
-    y_pred = (data["y_score"] >= float(threshold)).astype(int)
+    y_pred, _ = binary_predictions_from_threshold_data(data, threshold)
     tn = int(((y_true_bin == 0) & (y_pred == 0)).sum())
     fp = int(((y_true_bin == 0) & (y_pred == 1)).sum())
     specificity = tn / (tn + fp) if (tn + fp) else 0.0
@@ -1694,7 +1724,7 @@ def build_binary_threshold_classification_plots_from_predictions(
 
     y_true_bin = data["y_true_bin"]
     y_score = data["y_score"]
-    y_pred = (y_score >= float(threshold)).astype(int)
+    y_pred, per_row_thresholds = binary_predictions_from_threshold_data(data, threshold)
     if len(y_true_bin) == 0:
         return []
 
@@ -1705,6 +1735,13 @@ def build_binary_threshold_classification_plots_from_predictions(
         str(positive_label),
     ]
     threshold_text = f"{float(threshold):.3f}"
+    if per_row_thresholds:
+        threshold_label = f"Per-Fold Thresholds, Mean: {threshold_text}"
+        marker_name = "Operating point (per-fold thresholds)"
+    else:
+        threshold_label = f"Selected Threshold: {threshold_text}"
+        marker_name = f"Selected threshold={threshold_text}"
+    cm_title = f"Confusion Matrix ({threshold_label})"
     common_cfg = {"displayModeBar": True, "scrollZoom": True}
     plots: List[Dict[str, str]] = []
 
@@ -1723,7 +1760,7 @@ def build_binary_threshold_classification_plots_from_predictions(
     fig_cm.update_traces(xgap=2, ygap=2)
     fig_cm.update_layout(
         title=dict(
-            text=f"Confusion Matrix (Selected Threshold: {threshold_text})",
+            text=cm_title,
             x=0.5,
         ),
         xaxis_title="Predicted",
@@ -1777,7 +1814,20 @@ def build_binary_threshold_classification_plots_from_predictions(
                 line=dict(color="gray", width=2, dash="dash"),
             )
         )
-        if len(roc_thresholds) == len(fpr):
+        if per_row_thresholds:
+            # No single threshold places the marker on the curve: show the
+            # operating point that the per-fold decisions actually reach.
+            cm_tn, cm_fp, cm_fn, cm_tp = [int(v) for v in cm.ravel()]
+            fig_roc.add_trace(
+                go.Scatter(
+                    x=[cm_fp / (cm_fp + cm_tn) if (cm_fp + cm_tn) else 0.0],
+                    y=[cm_tp / (cm_tp + cm_fn) if (cm_tp + cm_fn) else 0.0],
+                    mode="markers",
+                    marker=dict(color="black", size=10, symbol="x"),
+                    name=marker_name,
+                )
+            )
+        elif len(roc_thresholds) == len(fpr):
             marker_idx = int(np.argmin(np.abs(np.asarray(roc_thresholds) - float(threshold))))
             fig_roc.add_trace(
                 go.Scatter(
@@ -1785,7 +1835,7 @@ def build_binary_threshold_classification_plots_from_predictions(
                     y=[tpr[marker_idx]],
                     mode="markers",
                     marker=dict(color="black", size=10, symbol="x"),
-                    name=f"Selected threshold={threshold_text}",
+                    name=marker_name,
                 )
             )
         fig_roc.update_layout(
@@ -1813,7 +1863,18 @@ def build_binary_threshold_classification_plots_from_predictions(
                 line=dict(color="#d62728", width=4),
             )
         )
-        if len(pr_thresholds) > 0:
+        if per_row_thresholds:
+            cm_tn, cm_fp, cm_fn, cm_tp = [int(v) for v in cm.ravel()]
+            fig_pr.add_trace(
+                go.Scatter(
+                    x=[cm_tp / (cm_tp + cm_fn) if (cm_tp + cm_fn) else 0.0],
+                    y=[cm_tp / (cm_tp + cm_fp) if (cm_tp + cm_fp) else 0.0],
+                    mode="markers",
+                    marker=dict(color="black", size=10, symbol="x"),
+                    name=marker_name,
+                )
+            )
+        elif len(pr_thresholds) > 0:
             marker_idx = int(np.argmin(np.abs(np.asarray(pr_thresholds) - float(threshold))))
             point_idx = min(marker_idx + 1, len(precision) - 1)
             fig_pr.add_trace(
@@ -1822,7 +1883,7 @@ def build_binary_threshold_classification_plots_from_predictions(
                     y=[precision[point_idx]],
                     mode="markers",
                     marker=dict(color="black", size=10, symbol="x"),
-                    name=f"Selected threshold={threshold_text}",
+                    name=marker_name,
                 )
             )
         fig_pr.update_layout(
@@ -1886,7 +1947,7 @@ def build_binary_threshold_classification_plots_from_predictions(
         )
     )
     fig_cr.update_layout(
-        title=dict(text=f"Per-Class Metrics (Selected Threshold: {threshold_text})", x=0.5),
+        title=dict(text=f"Per-Class Metrics ({threshold_label})", x=0.5),
         xaxis_title="",
         yaxis_title="Class",
         width=700,

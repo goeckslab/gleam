@@ -271,6 +271,53 @@ def test_binary_threshold_plots_are_recomputed_from_predictions(tmp_path):
     assert "Selected Threshold: 0.500" in plots[0]["html"]
 
 
+def test_binary_threshold_plots_and_metrics_use_recorded_per_row_thresholds(tmp_path):
+    predictions_path = tmp_path / "predictions.csv"
+    pd.DataFrame(
+        {
+            "split": [2, 2, 2, 2],
+            "label": [1, 0, 1, 0],
+            "label_probabilities_0": [0.1, 0.8, 0.45, 0.7],
+            "label_probabilities_1": [0.9, 0.2, 0.55, 0.3],
+            # fold 1 rows decide at 0.4, fold 2 rows at 0.6
+            "decision_threshold": [0.4, 0.4, 0.6, 0.6],
+        }
+    ).to_csv(predictions_path, index=False)
+
+    plots = build_binary_threshold_classification_plots_from_predictions(
+        str(predictions_path), threshold=0.5, split_value=2
+    )
+    assert "Per-Fold Thresholds, Mean: 0.500" in plots[0]["html"]
+    assert "Operating point (per-fold thresholds)" in plots[1]["html"]
+    assert "Operating point (per-fold thresholds)" in plots[2]["html"]
+
+    # row 3 is positive at the mean threshold but negative at its own fold's 0.6
+    metrics = compute_binary_threshold_metrics_from_predictions(
+        str(predictions_path), threshold=0.5, split_value=2
+    )
+    assert metrics["accuracy"] == pytest.approx(0.75)
+    assert metrics["recall"] == pytest.approx(0.5)
+
+
+def test_binary_threshold_plots_keep_single_threshold_when_rows_agree(tmp_path):
+    predictions_path = tmp_path / "predictions.csv"
+    pd.DataFrame(
+        {
+            "split": [2, 2, 2, 2],
+            "label": [1, 0, 1, 0],
+            "label_probabilities_0": [0.1, 0.8, 0.4, 0.7],
+            "label_probabilities_1": [0.9, 0.2, 0.6, 0.3],
+            "decision_threshold": [0.5, 0.5, 0.5, 0.5],
+        }
+    ).to_csv(predictions_path, index=False)
+
+    plots = build_binary_threshold_classification_plots_from_predictions(
+        str(predictions_path), threshold=0.5, split_value=2
+    )
+    assert "Selected Threshold: 0.500" in plots[0]["html"]
+    assert "Selected threshold=0.500" in plots[1]["html"]
+
+
 def test_binary_prediction_diagnostics_put_calibration_before_confidence(tmp_path):
     predictions_path = tmp_path / "predictions.csv"
     pd.DataFrame(

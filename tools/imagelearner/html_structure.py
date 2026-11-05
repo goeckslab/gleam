@@ -138,6 +138,10 @@ def format_config_table_html(
         "compute_resource": "Compute Resource",
         "preprocessing_worker_count": "Preprocessing Worker Count",
     }
+    if config.get("ensemble"):
+        label_map["evaluation_threshold"] = "Evaluation Threshold (Member Models)"
+        if config["ensemble"].get("fold_thresholds"):
+            label_map["threshold"] = "Mean of Per-Fold Test Thresholds"
 
     for key in display_keys:
         val_str = "N/A"
@@ -1065,4 +1069,256 @@ def format_test_merged_stats_table_html(
             "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;",
         )
     html += "</tbody></table></div><br>"
+    return html
+
+
+# -----------------------------------------
+# ENSEMBLE (CROSS-VALIDATION / MULTI-SEED) TABLES
+# -----------------------------------------
+
+ENSEMBLE_TABLE_METRICS = {
+    "binary": ["accuracy", "roc_auc"],
+    "category": ["accuracy", "accuracy_micro", "roc_auc"],
+    "regression": ["mean_absolute_error", "root_mean_squared_error", "r2"],
+}
+
+
+def _ensemble_metric_keys(
+    ensemble: Dict[str, Any],
+    output_type: Optional[str],
+    split: str,
+) -> List[str]:
+    """Metric columns for the member table: the task defaults that at least one row provides."""
+    wanted = ENSEMBLE_TABLE_METRICS.get(output_type or "", [])
+    available = set(((ensemble.get("member_summary") or {}).get(split) or {}).keys())
+    available |= set((ensemble.get(f"ensemble_{split}_metrics") or {}).keys())
+    keys = [key for key in wanted if key in available]
+    if not keys:
+        keys = sorted(available)[:3]
+    return keys
+
+
+def _format_ensemble_metric(value: Any) -> str:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{float(value):.4f}"
+    return "N/A"
+
+
+def format_ensemble_summary_html(
+    ensemble: Dict[str, Any],
+    output_type: Optional[str] = None,
+    top_k: int = DEFAULT_HITS_AT_K,
+) -> str:
+    """Settings table plus member/ensemble metrics for a cross-validation or multi-seed run."""
+    label_style = "padding: 6px 12px; border: 1px solid #ccc; text-align: left;"
+    value_style = "padding: 6px 12px; border: 1px solid #ccc; text-align: center;"
+
+    rows = []
+    if ensemble.get("cross_validation"):
+        role = str(ensemble.get("fold_role") or "validation")
+        if role == "test":
+            role_text = "each fold takes a turn as the test set; every sample is scored out-of-fold"
+        else:
+            role_text = "each fold takes a turn as the validation set; the test split stays fixed"
+        rows.append(("Cross-validation", f"{ensemble.get('num_folds')} folds ({role_text})"))
+    else:
+        rows.append(("Cross-validation", "No (single split)"))
+    seeds = ensemble.get("seeds") or []
+    rows.append(("Random seeds", ", ".join(str(seed) for seed in seeds) if seeds else "N/A"))
+    rows.append(
+        ("Members trained", f"{ensemble.get('members_trained')} of {ensemble.get('members_planned')}")
+    )
+    rows.append(("Prediction averaging", str(ensemble.get("aggregation") or "mean")))
+    if output_type == "binary" and ensemble.get("threshold") is not None:
+        rows.append(("Decision threshold (ensemble)", f"{float(ensemble['threshold']):.3f}"))
+    if ensemble.get("exported_model"):
+        rows.append(
+            (
+                "Exported single model",
+                f"{ensemble['exported_model']} (first trained member; "
+                "the averaged predictions use all members)",
+            )
+        )
+
+    settings_rows = "".join(
+        f"<tr><td style='{label_style}'>{escape(str(key))}</td>"
+        f"<td style='{value_style}'>{escape(str(value))}</td></tr>"
+        for key, value in rows
+    )
+    html = (
+        "<h2 style='text-align: center;'>Ensemble Summary</h2>"
+        "<div style='display: flex; justify-content: center;'>"
+        "<table style='border-collapse: collapse;'>"
+        "<thead><tr>"
+        "<th style='padding: 10px; border: 1px solid #ccc; text-align: left; white-space: nowrap;'>Setting</th>"
+        "<th style='padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;'>Value</th>"
+        "</tr></thead>"
+        f"<tbody>{settings_rows}</tbody></table></div><br>"
+    )
+    html += format_ensemble_members_table_html(ensemble, output_type, top_k=top_k)
+    return html
+
+
+def format_ensemble_members_table_html(
+    ensemble: Dict[str, Any],
+    output_type: Optional[str] = None,
+    top_k: int = DEFAULT_HITS_AT_K,
+    title: str = "Member Models and Averaged Ensemble",
+) -> str:
+    """One row per member, their mean ± SD, and the metrics of the averaged predictions."""
+    members = ensemble.get("members") or []
+    if not members:
+        return ""
+    val_keys = _ensemble_metric_keys(ensemble, output_type, "validation")
+    test_keys = _ensemble_metric_keys(ensemble, output_type, "test")
+
+    body_rows: List[List[str]] = []
+    for member in members:
+        cells = [
+            escape(str(member.get("name", ""))),
+            str(member.get("fold")) if member.get("fold") is not None else "-",
+            str(member.get("seed", "")),
+            "trained" if member.get("status") == "ok" else "failed",
+        ]
+        cells += [_format_ensemble_metric((member.get("validation") or {}).get(k)) for k in val_keys]
+        cells += [_format_ensemble_metric((member.get("test") or {}).get(k)) for k in test_keys]
+        body_rows.append(cells)
+
+    summary = ensemble.get("member_summary") or {}
+
+    def _mean_sd(split: str, key: str) -> str:
+        stats = (summary.get(split) or {}).get(key)
+        if not stats:
+            return "N/A"
+        return f"{stats['mean']:.4f} ± {stats['std']:.4f}"
+
+    body_rows.append(
+        ["Members mean ± SD", "-", "-", "-"]
+        + [_mean_sd("validation", k) for k in val_keys]
+        + [_mean_sd("test", k) for k in test_keys]
+    )
+    ensemble_val = ensemble.get("ensemble_validation_metrics") or {}
+    ensemble_test = ensemble.get("ensemble_test_metrics") or {}
+    body_rows.append(
+        ["Ensemble (averaged)", "-", "-", "-"]
+        + [_format_ensemble_metric(ensemble_val.get(k)) for k in val_keys]
+        + [_format_ensemble_metric(ensemble_test.get(k)) for k in test_keys]
+    )
+
+    # Two header rows (split group above metric names) keep the table narrow
+    # enough to read; the summary rows must stay at the bottom, so the columns
+    # are not sortable.
+    th_style = (
+        "padding: 8px 10px; border: 1px solid #ccc; text-align: center; vertical-align: middle; "
+        "word-break: normal; overflow-wrap: normal;"
+    )
+    cell_style = "padding: 8px 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;"
+    header_top = "".join(
+        f"<th rowspan='2' style='{th_style} white-space: nowrap;'>{col}</th>"
+        for col in ("Member", "Fold", "Seed", "Status")
+    )
+    if val_keys:
+        header_top += f"<th colspan='{len(val_keys)}' style='{th_style}'>Validation</th>"
+    if test_keys:
+        header_top += f"<th colspan='{len(test_keys)}' style='{th_style}'>Test</th>"
+    header_bottom = "".join(
+        f"<th style='{th_style}'>{escape(format_metric_display_name(k, top_k, output_type))}</th>"
+        for k in val_keys + test_keys
+    )
+    html = (
+        f"<h2 style='text-align: center;'>{escape(title)}</h2>"
+        "<div style='width: 100%; overflow-x: auto;'>"
+        "<table class='performance-summary' "
+        "style='border-collapse: collapse; table-layout: auto; width: auto; margin: 0 auto;'>"
+        f"<thead><tr>{header_top}</tr><tr>{header_bottom}</tr></thead><tbody>"
+    )
+    for row in body_rows:
+        html += generate_table_row(row, cell_style)
+    html += "</tbody></table></div>"
+
+    if ensemble.get("cross_validation") and str(ensemble.get("fold_role") or "") == "test":
+        scope = (
+            "validation = each fold's validation rows, averaged across that fold's seeds; "
+            "test = every row, scored out-of-fold by the fold that held it out"
+        )
+    elif ensemble.get("cross_validation"):
+        scope = (
+            "validation = out-of-fold rows, each averaged across the seeds of the fold that held it out; "
+            "test = the fixed test split, averaged across all members"
+        )
+    else:
+        scope = "validation and test = the shared validation and test splits, averaged across all members"
+    html += (
+        "<p style='text-align: center; font-size: 0.9em; color: #666;'>"
+        "Member rows: each member at its last training epoch on its own validation split, "
+        "and on its own test split. "
+        f"Ensemble row: metrics of the averaged predictions ({scope}).</p><br>"
+    )
+    return html
+
+
+def format_cross_validation_overview_table(ensemble: Dict[str, Any]) -> str:
+    """Dataset Overview for a cross-validated run.
+
+    A single train/validation/test split describes none of the members, so
+    show the rows of each label that take part and, per fold, how many rows a
+    member trains, validates and tests on.
+    """
+    heading = "<h2 style='text-align: center;'>Dataset Overview</h2>"
+    fold_rows = ensemble.get("fold_layout") or []
+    if not fold_rows:
+        return heading + "<p style='text-align: center; color: #666;'>Dataset overview unavailable.</p><br>"
+    label_rows = ensemble.get("label_counts") or []
+    test_fixed = str(ensemble.get("fold_role") or "validation") != "test"
+    th_style = "padding: 10px; border: 1px solid #ccc; text-align: center;"
+    cell_style = "padding: 10px; border: 1px solid #ccc; text-align: center; white-space: nowrap;"
+    table_style = "border-collapse: collapse; table-layout: auto; width: auto; margin: 0 auto;"
+
+    def _table(headers: List[str], rows: List[List[Any]]) -> str:
+        out = (
+            "<div style='width: 100%; overflow-x: auto;'>"
+            f"<table class='performance-summary' style='{table_style}'><thead><tr>"
+            + "".join(f"<th style='{th_style}'>{escape(str(h))}</th>" for h in headers)
+            + "</tr></thead><tbody>"
+        )
+        for row in rows:
+            out += generate_table_row([escape(str(cell)) for cell in row], cell_style)
+        return out + "</tbody></table></div>"
+
+    html = heading
+    if label_rows:
+        headers = ["Label", "Rows in folds"] + (["Test (fixed)"] if test_fixed else [])
+        rows = [
+            [row.get("label", "N/A"), int(row.get("rows", 0))]
+            + ([int(row.get("test", 0))] if test_fixed else [])
+            for row in label_rows
+        ]
+        html += _table(headers, rows)
+    else:
+        first = fold_rows[0]
+        total = sum(int(first.get(key, 0)) for key in ("train", "validation", "test"))
+        html += f"<p style='text-align: center;'>{total} rows take part in the folds.</p>"
+
+    html += (
+        "<p style='text-align: center; margin-top: 12px;'><b>Rows per fold</b> "
+        "(every member of a fold uses this split)</p>"
+    )
+    html += _table(
+        ["Fold", "Train", "Validation", "Test"],
+        [
+            [row.get("fold"), int(row.get("train", 0)), int(row.get("validation", 0)), int(row.get("test", 0))]
+            for row in fold_rows
+        ],
+    )
+    if test_fixed:
+        note = (
+            "Each fold validates on its own rows and trains on the other folds; "
+            "the test split is the same for every member."
+        )
+    else:
+        note = (
+            "Each fold is held out as the test set and the remaining rows are split into "
+            "training and validation rows, so every row is tested exactly once (out-of-fold)."
+        )
+    html += f"<p style='text-align: center; font-size: 0.9em; color: #666;'>{note}</p><br>"
     return html

@@ -107,6 +107,36 @@ def main():
         help="Random seed used for dataset splitting (default: 42)",
     )
     parser.add_argument(
+        "--cross-validation",
+        action="store_true",
+        help="Train one model per fold (k-fold cross-validation) and average their predictions.",
+    )
+    parser.add_argument(
+        "--num-folds",
+        type=int,
+        default=5,
+        help="Number of cross-validation folds (default: 5).",
+    )
+    parser.add_argument(
+        "--fold-role",
+        choices=["validation", "test"],
+        default="validation",
+        help=(
+            "'validation' keeps the test split fixed and rotates folds through the "
+            "validation set; 'test' rotates folds of all rows through the test set "
+            "(default: validation)."
+        ),
+    )
+    parser.add_argument(
+        "--num-seeds",
+        type=int,
+        default=1,
+        help=(
+            "Train this many models per split with seeds random_seed, random_seed+1, ... "
+            "and average their predictions (default: 1)."
+        ),
+    )
+    parser.add_argument(
         "--learning-rate",
         type=parse_learning_rate,
         default=None,
