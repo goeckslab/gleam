@@ -304,6 +304,31 @@ def _parse_vector(value: Any) -> Optional[List[float]]:
         return None
 
 
+def boolean_probability_labels(label_values: Sequence[Any]) -> Optional[Dict[str, str]]:
+    """Which dataset label Ludwig's ``False``/``True`` probability columns stand for.
+
+    Ludwig casts a numeric binary target to bool, so zero becomes False and any
+    nonzero value True (for example labels 0/2 or 0/-1). Returns
+    ``{"False": <zero label>, "True": <nonzero label>}`` as canonical strings,
+    or None when the labels are not two numbers with exactly one zero.
+    """
+    numbers: Dict[str, float] = {}
+    for value in label_values:
+        if isinstance(value, (bool, np.bool_)):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        if np.isfinite(number):
+            numbers[canonical_label(value)] = number
+    zeros = [name for name, number in numbers.items() if number == 0]
+    if len(numbers) != 2 or len(zeros) != 1:
+        return None
+    nonzero = next(name for name in numbers if name != zeros[0])
+    return {"False": zeros[0], "True": nonzero}
+
+
 def normalize_prediction_frame(
     df_pred: pd.DataFrame,
     label_values: Sequence[Any],
@@ -312,8 +337,9 @@ def normalize_prediction_frame(
 
     Per-class probability columns are kept (``label_probabilities_<class>``);
     a single vector column is expanded when Ludwig did not expand it. For
-    binary outputs Ludwig names the columns after booleans, so they are
-    renamed to the dataset's own label values when those are 0/1.
+    numeric binary targets Ludwig names the columns after booleans, so they
+    are renamed to the dataset's own label values (see
+    ``boolean_probability_labels``).
     """
     out = df_pred.reset_index(drop=True).copy()
     prob_cols = probability_columns(out.columns)
@@ -332,11 +358,12 @@ def normalize_prediction_frame(
             prob_cols = probability_columns(out.columns)
 
     suffixes = {class_name_from_column(c) for c in prob_cols}
-    if suffixes == {"False", "True"} and set(labels_as_str) == {"0", "1"}:
+    bool_labels = boolean_probability_labels(label_values) if suffixes == {"False", "True"} else None
+    if bool_labels:
         out = out.rename(
             columns={
-                f"{PROBABILITIES_PREFIX}False": f"{PROBABILITIES_PREFIX}0",
-                f"{PROBABILITIES_PREFIX}True": f"{PROBABILITIES_PREFIX}1",
+                f"{PROBABILITIES_PREFIX}{flag}": f"{PROBABILITIES_PREFIX}{label}"
+                for flag, label in bool_labels.items()
             }
         )
         prob_cols = probability_columns(out.columns)

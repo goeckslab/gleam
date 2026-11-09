@@ -169,6 +169,51 @@ def test_normalize_prediction_frame_maps_boolean_columns_to_numeric_labels():
     assert "label_probabilities" not in out.columns
 
 
+@pytest.mark.parametrize(
+    "labels, false_label, true_label",
+    [([0, 2], "0", "2"), ([0, -1], "0", "-1"), ([2.5, 0.0], "0", "2.5")],
+)
+def test_normalize_prediction_frame_maps_boolean_columns_zero_nonzero(labels, false_label, true_label):
+    # Ludwig casts numeric binary targets to bool: zero -> False, nonzero -> True.
+    df_pred = pd.DataFrame(
+        {"label_probabilities_False": [0.3, 0.8], "label_probabilities_True": [0.7, 0.2]}
+    )
+    out = ensemble.normalize_prediction_frame(df_pred, labels)
+    assert out[f"label_probabilities_{false_label}"].tolist() == [0.3, 0.8]
+    assert out[f"label_probabilities_{true_label}"].tolist() == [0.7, 0.2]
+    assert "label_probabilities_False" not in out.columns
+
+
+def test_boolean_probability_labels_rejects_unmappable_labels():
+    assert ensemble.boolean_probability_labels([1, 2]) is None
+    assert ensemble.boolean_probability_labels([0, 0.0]) is None
+    assert ensemble.boolean_probability_labels(["cat", "dog"]) is None
+    assert ensemble.boolean_probability_labels([True, False]) is None
+    assert ensemble.boolean_probability_labels([0, np.nan, 3]) == {"False": "0", "True": "3"}
+
+
+def test_ensemble_statistics_for_zero_two_binary_labels():
+    members = [
+        ensemble.normalize_prediction_frame(
+            pd.DataFrame(
+                {
+                    "label_probabilities_False": false_probs,
+                    "label_probabilities_True": [1 - p for p in false_probs],
+                }
+            ),
+            [0, 2],
+        )
+        for false_probs in ([0.9, 0.2, 0.6, 0.3], [0.7, 0.4, 0.8, 0.1])
+    ]
+    agg = ensemble.aggregate_member_predictions(members, "binary")
+    names = [ensemble.class_name_from_column(c) for c in ensemble.probability_columns(agg.columns)]
+    assert sorted(names) == ["0", "2"]
+    probs = agg[[f"label_probabilities_{name}" for name in names]].to_numpy(dtype=float)
+    stats = ensemble.compute_classification_statistics([0, 2, 0, 2], probs, names, threshold=0.5)
+    assert stats["accuracy"] == pytest.approx(1.0)
+    assert ensemble.positive_class_index(names) == names.index("2")
+
+
 def test_canonical_label_matches_probability_column_names():
     assert ensemble.canonical_label(1.0) == "1"
     assert ensemble.canonical_label(np.float64(0.0)) == "0"
