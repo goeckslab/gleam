@@ -1,5 +1,7 @@
 import logging
+import math
 from pathlib import Path
+from typing import Iterable, Optional
 
 import pandas as pd
 
@@ -10,6 +12,25 @@ def load_metadata_table(file_path: Path) -> pd.DataFrame:
     """Load image metadata allowing either CSV or TSV delimiters."""
     logger.info("Loading metadata table from %s", file_path)
     return pd.read_csv(file_path, sep=None, engine="python")
+
+
+def nonzero_binary_label(labels: Iterable[object]) -> Optional[str]:
+    """Ludwig's positive class among two numeric labels, as the given string.
+
+    Ludwig casts a numeric binary target to bool (zero -> False, nonzero ->
+    True), so when the labels are two finite numbers and exactly one is zero,
+    the nonzero one is the positive class. Returns None for anything else.
+    """
+    numbers = {}
+    for label in labels:
+        try:
+            numbers[str(label)] = float(label)
+        except (TypeError, ValueError):
+            return None
+    zeros = [name for name, number in numbers.items() if number == 0]
+    if len(numbers) != 2 or len(zeros) != 1 or not all(map(math.isfinite, numbers.values())):
+        return None
+    return next(name for name in numbers if name != zeros[0])
 
 
 def detect_output_type(test_stats):

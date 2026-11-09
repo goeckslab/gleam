@@ -29,6 +29,7 @@ from sklearn.metrics import (
     roc_curve,
 )
 from sklearn.preprocessing import label_binarize
+from utils import nonzero_binary_label
 
 
 def _style_fig(fig: go.Figure, font_size: int = 12) -> go.Figure:
@@ -81,6 +82,11 @@ def _select_positive_probability_column(
     if not prob_cols:
         return None, None
     prob_cols_sorted = sorted(prob_cols)
+    suffixes = [_strip_prob_prefix(col) for col in prob_cols_sorted]
+    nonzero = nonzero_binary_label(suffixes)
+    if nonzero is not None:
+        # Numeric 0/x targets: Ludwig's positive (True) class is the nonzero label.
+        return prob_cols_sorted[suffixes.index(nonzero)], nonzero
     preferred_keys = ("event", "true", "positive", "pos", "1")
     for col in prob_cols_sorted:
         suffix = _strip_prob_prefix(col)
@@ -102,6 +108,18 @@ def _resolve_positive_label_from_probability(
         for label in unique_labels:
             if str(label) == hint:
                 return label
+        # Column suffixes drop the decimal point of integral labels ("2" for 2.0).
+        try:
+            hint_number = float(hint)
+        except ValueError:
+            hint_number = None
+        if hint_number is not None:
+            for label in unique_labels:
+                try:
+                    if float(label) == hint_number:
+                        return label
+                except (TypeError, ValueError):
+                    continue
 
     # Ludwig exports True/False probabilities for numeric targets, converting
     # zero to False and nonzero to True. Encounter order cannot determine this.

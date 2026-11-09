@@ -40,7 +40,7 @@ from sklearn.model_selection import (
     StratifiedKFold,
 )
 from split_data import create_stratified_random_split
-from utils import detect_output_type, extract_metrics_from_json, extract_test_metrics
+from utils import detect_output_type, extract_metrics_from_json, extract_test_metrics, nonzero_binary_label
 
 logger = logging.getLogger("ImageLearner")
 
@@ -468,7 +468,15 @@ def attach_row_metadata(
 
 
 def positive_class_index(class_names: Sequence[str]) -> int:
-    """Pick the positive class the same way the report picks its probability column."""
+    """Pick the positive class the same way the report picks its probability column.
+
+    Two numeric classes with exactly one zero follow Ludwig (the nonzero label
+    is positive); otherwise a name hint such as "true" or "1" decides, then the
+    last name in sorted order.
+    """
+    nonzero = nonzero_binary_label(str(c) for c in class_names)
+    if nonzero is not None:
+        return [str(c) for c in class_names].index(nonzero)
     ordered = sorted(str(c) for c in class_names)
     chosen = ordered[-1]
     for name in ordered:

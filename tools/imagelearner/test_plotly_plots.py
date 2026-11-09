@@ -4,6 +4,7 @@ import pytest
 from plotly_plots import (
     _resolve_display_labels,
     _resolve_positive_label_from_probability,
+    _select_positive_probability_column,
     build_binary_threshold_classification_plots_from_predictions,
     build_prediction_diagnostics,
     build_train_validation_plots,
@@ -538,3 +539,17 @@ def test_statistics_confusion_matrix_keeps_numeric_class_axes_categorical(tmp_pa
         assert axis.categoryorder == "array"
         assert list(axis.categoryarray) == list(fig.data[0].x)
     assert fig.layout.yaxis.autorange == "reversed"
+
+
+@pytest.mark.parametrize(
+    "suffixes, expected",
+    [(["0", "-2"], "-2"), (["0", "2"], "2"), (["0", "-1"], "-1"), (["False", "True"], "True")],
+)
+def test_positive_probability_column_keeps_ludwig_nonzero_class(suffixes, expected):
+    columns = [f"label_probabilities_{suffix}" for suffix in suffixes]
+    assert _select_positive_probability_column(columns) == (f"label_probabilities_{expected}", expected)
+
+
+def test_positive_label_matches_numeric_hint_against_float_labels():
+    assert _resolve_positive_label_from_probability(np.array([0.0, -2.0]), "-2") == -2.0
+    assert _resolve_positive_label_from_probability(np.array([2.0, 0.0]), "2") == 2.0

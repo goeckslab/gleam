@@ -214,6 +214,34 @@ def test_ensemble_statistics_for_zero_two_binary_labels():
     assert ensemble.positive_class_index(names) == names.index("2")
 
 
+@pytest.mark.parametrize(
+    "labels, expected",
+    [(["0", "2"], "2"), (["-2", "0"], "-2"), (["0.0", "2.5"], "2.5"), (["1", "2"], None),
+     (["0", "0.0"], None), (["False", "True"], None), (["0", "nan"], None), (["0", "1", "2"], None)],
+)
+def test_nonzero_binary_label(labels, expected):
+    assert utils.nonzero_binary_label(labels) == expected
+
+
+@pytest.mark.parametrize(
+    "names, positive",
+    [(["0", "-2"], "-2"), (["-2", "0"], "-2"), (["0", "2"], "2"), (["0", "1"], "1"),
+     (["False", "True"], "True"), (["cat", "dog"], "dog")],
+)
+def test_positive_class_index_keeps_ludwig_nonzero_class(names, positive):
+    assert names[ensemble.positive_class_index(names)] == positive
+
+
+def test_apply_binary_threshold_thresholds_nonzero_class_like_ludwig():
+    # Ludwig thresholds P(True) = P(nonzero label): P(-2) = 0.7 below 0.8 predicts 0.
+    agg = pd.DataFrame(
+        {"label_probabilities_0": [0.3], "label_probabilities_-2": [0.7], "n_models": [2]},
+        index=[0],
+    )
+    assert ensemble.apply_binary_threshold(agg, 0.8)["label_predictions"].tolist() == ["0"]
+    assert ensemble.apply_binary_threshold(agg, 0.5)["label_predictions"].tolist() == ["-2"]
+
+
 def test_canonical_label_matches_probability_column_names():
     assert ensemble.canonical_label(1.0) == "1"
     assert ensemble.canonical_label(np.float64(0.0)) == "0"
