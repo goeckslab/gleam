@@ -280,12 +280,42 @@ def _class_index(raw_label) -> Optional[int]:
     return None
 
 
+def _equivalent_label(raw_label: str, friendly_labels: List[str]) -> Optional[str]:
+    """The friendly label naming the same class as ``raw_label`` ("1" and "1.0", or padded text)."""
+    raw_label = str(raw_label).strip()
+    matches = [label for label in friendly_labels if label.strip() == raw_label]
+    if not matches:
+        try:
+            number = float(raw_label)
+        except ValueError:
+            return None
+        if not np.isfinite(number):
+            return None
+        for label in friendly_labels:
+            try:
+                if float(label) == number:
+                    matches.append(label)
+            except ValueError:
+                continue
+    return matches[0] if len(matches) == 1 else None
+
+
 def _resolve_display_labels(raw_labels: List, friendly_labels: Optional[List[str]]) -> List[str]:
-    """Map encoded class ids like 0/1 back to friendly labels when available."""
+    """Map per-class keys to friendly labels, decoding encoded class ids like 0/1 only as a fallback."""
     if not friendly_labels:
         return [str(label) for label in raw_labels]
 
     friendly_labels = [str(label) for label in friendly_labels]
+    raw_strs = [str(label) for label in raw_labels]
+    # Ludwig keys per-class statistics by the class names themselves, which for integer
+    # labels look like indices (keys 0/1/2 while idx2str is ['2', '0', '1']). Keep them.
+    if raw_strs and set(raw_strs) <= set(friendly_labels):
+        return raw_strs
+    # Ensembles write canonical names, e.g. "1" for Ludwig's "1.0".
+    equivalent = [_equivalent_label(raw, friendly_labels) for raw in raw_strs]
+    if raw_strs and None not in equivalent and len(set(equivalent)) == len(equivalent):
+        return equivalent
+
     raw_indices = [_class_index(raw_label) for raw_label in raw_labels]
     if (
         raw_indices

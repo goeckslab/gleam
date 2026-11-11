@@ -26,6 +26,7 @@ from ludwig.experiment import experiment_cli
 from ludwig.trainers.trainer import Trainer
 from ludwig_backend import configure_binary_metrics, LudwigDirectBackend
 from PIL import Image
+from plotly_plots import _resolve_display_labels
 
 
 class SmallImageBackend(LudwigDirectBackend):
@@ -354,7 +355,36 @@ class EnsembleRowAlignmentTest(unittest.TestCase):
                 image_dir, run_dir = self.run_ensemble(root, [labels[index % 3] for index in range(30)])
                 statistics = json.loads((run_dir / "test_statistics.json").read_text())["label"]
                 self.assertEqual(int(np.sum(statistics["confusion_matrix"])), 6, labels)
+                self.assert_report_labels_name_the_right_classes(run_dir, statistics)
                 self.assert_rows_match_member_models(run_dir, image_dir)
+
+    def assert_report_labels_name_the_right_classes(self, run_dir, statistics):
+        """The per-class plots label each statistics key with the class it belongs to."""
+        meta = json.loads((run_dir / "model" / "training_set_metadata.json").read_text())
+        keys = list(statistics["per_class_stats"])
+        shown = _resolve_display_labels(keys, meta["label"]["idx2str"])
+
+        def same(value):
+            return self.class_name(f"label_probabilities_{value}")
+
+        self.assertEqual([same(label) for label in shown], [same(key) for key in keys])
+
+    def test_single_model_report_labels_integer_classes_correctly(self):
+        # idx2str is frequency-ordered ('2', '0', '1'); the statistics are keyed by class name.
+        with tempfile.TemporaryDirectory(prefix="imagelearner_intlabels_") as tmp:
+            root = Path(tmp).resolve()
+            csv_path, image_zip, _ = write_dataset(root, [2] * 14 + [0] * 10 + [1] * 6)
+            output = root / "out"
+            output.mkdir()
+            run_cli(make_args(csv_path, image_zip, output, cross_validation=False, num_seeds=1), SmallImageBackend())
+            run_dir = output / "experiment_run"
+            statistics = json.loads((run_dir / "test_statistics.json").read_text())["label"]
+            support = {
+                key: stats["true_positives"] + stats["false_negatives"]
+                for key, stats in statistics["per_class_stats"].items()
+            }
+            self.assertEqual(support["1"], 6)  # every test row is label 1
+            self.assert_report_labels_name_the_right_classes(run_dir, statistics)
 
 
 if __name__ == "__main__":

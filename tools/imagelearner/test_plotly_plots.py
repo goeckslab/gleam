@@ -553,3 +553,15 @@ def test_positive_probability_column_keeps_ludwig_nonzero_class(suffixes, expect
 def test_positive_label_matches_numeric_hint_against_float_labels():
     assert _resolve_positive_label_from_probability(np.array([0.0, -2.0]), "-2") == -2.0
     assert _resolve_positive_label_from_probability(np.array([2.0, 0.0]), "2") == 2.0
+
+
+def test_resolve_display_labels_keeps_integer_class_names_in_ludwig_order():
+    # Ludwig keys per-class stats by class name; idx2str is frequency-ordered.
+    assert _resolve_display_labels(["0", "1", "2"], ["2", "0", "1"]) == ["0", "1", "2"]
+
+
+def test_resolve_display_labels_matches_canonical_ensemble_names():
+    # Ensemble statistics use "1" where Ludwig's metadata says "1.0".
+    assert _resolve_display_labels(["1", "2", "3"], ["1.0", "2.0", "3.0"]) == ["1.0", "2.0", "3.0"]
+    assert _resolve_display_labels(["3", "1", "2"], ["1.0", "2.0", "3.0"]) == ["3.0", "1.0", "2.0"]
+    assert _resolve_display_labels(["cat", "dog"], [" cat", "dog "]) == [" cat", "dog "]
