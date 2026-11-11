@@ -242,6 +242,51 @@ def test_apply_binary_threshold_thresholds_nonzero_class_like_ludwig():
     assert ensemble.apply_binary_threshold(agg, 0.5)["label_predictions"].tolist() == ["-2"]
 
 
+def test_normalize_prediction_frame_maps_ludwig_float_and_spaced_class_names():
+    # Ludwig names category classes with str(value): a float label 1.0 becomes "1.0".
+    df_pred = pd.DataFrame(
+        {
+            "label_probabilities_1.0": [0.7, 0.1],
+            "label_probabilities_2.0": [0.2, 0.8],
+            "label_probabilities_3.5": [0.1, 0.1],
+        }
+    )
+    out = ensemble.normalize_prediction_frame(df_pred, [1.0, 2.0, 3.5])
+    assert ensemble.probability_columns(out.columns) == [
+        "label_probabilities_1",
+        "label_probabilities_2",
+        "label_probabilities_3.5",
+    ]
+    assert out["label_probabilities_2"].tolist() == [0.2, 0.8]
+    spaced = ensemble.normalize_prediction_frame(
+        pd.DataFrame({"label_probabilities_cat": [0.6], "label_probabilities_dog": [0.4]}), [" cat ", "dog "]
+    )
+    assert ensemble.probability_columns(spaced.columns) == ["label_probabilities_cat", "label_probabilities_dog"]
+
+
+def test_normalize_prediction_frame_expands_vector_in_ludwig_class_order():
+    df_pred = pd.DataFrame({"label_probabilities": ["[0.6, 0.3, 0.1]"]})
+    # idx2str is frequency-ordered, not alphabetical.
+    out = ensemble.normalize_prediction_frame(df_pred, ["a", "b", "c"], class_order=["b", "c", "a"])
+    assert out["label_probabilities_b"].tolist() == [0.6]
+    assert out["label_probabilities_c"].tolist() == [0.3]
+    assert out["label_probabilities_a"].tolist() == [0.1]
+
+
+def test_canonical_class_names_keeps_ambiguous_names():
+    assert ensemble.canonical_class_names(["1.0", "2.0"], [1, 2]) == ["1", "2"]
+    assert ensemble.canonical_class_names(["1", "1.0"], [1]) == ["1", "1.0"]
+    assert ensemble.canonical_class_names(["False", "True"], [1, 2]) == ["False", "True"]
+
+
+def test_classification_statistics_refuse_labels_that_match_no_class():
+    # Labels 1/2: Ludwig's False/True columns cannot be mapped back, so fail loudly.
+    with pytest.raises(ValueError, match="matches a predicted class"):
+        ensemble.compute_classification_statistics(
+            [1, 2, 1], np.array([[0.4, 0.6], [0.3, 0.7], [0.5, 0.5]]), ["False", "True"]
+        )
+
+
 def test_canonical_label_matches_probability_column_names():
     assert ensemble.canonical_label(1.0) == "1"
     assert ensemble.canonical_label(np.float64(0.0)) == "0"
@@ -723,6 +768,51 @@ def test_workflow_continues_when_a_member_fails(tmp_path, monkeypatch):
     assert [m["status"] for m in summary["members"]] == ["ok", "failed"]
     preds = pd.read_csv(exp_dir / "predictions.csv")
     assert (preds[ensemble.N_MODELS_COLUMN] == 1).all()
+
+
+def test_workflow_falls_back_when_no_member_predictions_can_be_matched(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    image_workflow = importlib.import_module("image_workflow")
+    csv_path, zip_path, _ = _make_dataset(tmp_path)
+    args = _make_args(tmp_path, csv_path, zip_path, num_seeds=1)
+
+    class MisalignedBackend(FakeBackend):
+        def run_experiment(self, dataset_path, config_path, output_dir, random_seed=42):
+            super().run_experiment(dataset_path, config_path, output_dir, random_seed)
+            preds = Path(output_dir) / "experiment_run" / "predictions.csv"
+            pd.read_csv(preds).iloc[:1].to_csv(preds, index=False)
+
+        def generate_split_predictions(self, output_dir, dataset_path, split_value, output_filename):
+            return None
+
+    backend = MisalignedBackend()
+    image_workflow.ImageLearnerCLI(args, backend).run()
+
+    assert not (args.output_dir / "experiment_run" / ensemble.ENSEMBLE_SUMMARY_FILE_NAME).exists()
+    config, _, _ = backend.report_configs[-1]
+    assert "ensemble" not in config
+
+
+@pytest.mark.parametrize("ensemble_options", [{"num_seeds": 1}, {"cross_validation": False, "num_seeds": 1}])
+def test_workflow_releases_cached_backend_data_before_the_report(tmp_path, monkeypatch, ensemble_options):
+    monkeypatch.chdir(tmp_path)
+    image_workflow = importlib.import_module("image_workflow")
+    csv_path, zip_path, _ = _make_dataset(tmp_path)
+    args = _make_args(tmp_path, csv_path, zip_path, **ensemble_options)
+    events = []
+
+    class TrackingBackend(FakeBackend):
+        def release_cached_data(self):
+            events.append("release")
+
+        def generate_html_report(self, *args, **kwargs):
+            events.append("report")
+            return super().generate_html_report(*args, **kwargs)
+
+    image_workflow.ImageLearnerCLI(args, TrackingBackend()).run()
+
+    assert "release" in events
+    assert events.index("release") < events.index("report")
 
 
 def test_single_model_path_is_unchanged_without_ensemble_options(tmp_path, monkeypatch):

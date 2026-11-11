@@ -20,6 +20,7 @@ import pandas as pd
 import torch
 import yaml
 from image_workflow import ImageLearnerCLI
+from ludwig.api import LudwigModel
 from ludwig.data.cache.manager import DatasetCache
 from ludwig.experiment import experiment_cli
 from ludwig.trainers.trainer import Trainer
@@ -200,6 +201,119 @@ class RuntimeEquivalenceTest(unittest.TestCase):
 
     def test_regression_seeds_only(self):
         self.compare_ensemble(task="regression", cross_validation=False)
+
+
+class EnsembleRowAlignmentTest(unittest.TestCase):
+    """Averaged predictions must belong to the image and label of their row.
+
+    Member predictions are matched to dataset rows by position. Each member
+    model is reloaded and scores the raw images directly, so a reordered split
+    would show up as probabilities attached to the wrong image.
+    """
+
+    def run_ensemble(self, root, labels, fold_role="validation", num_seeds=1):
+        image_dir = root / "input_images"
+        image_dir.mkdir()
+        rng = np.random.RandomState(7)
+        rows = []
+        for index, label in enumerate(labels):
+            name = f"image{index}.png"
+            Image.fromarray(rng.randint(0, 256, (12, 12, 3), dtype=np.uint8)).save(image_dir / name)
+            rows.append({"image_path": name, "label": label, "split": 2 if index >= len(labels) - 8 else index % 2})
+        csv_path = root / "metadata.csv"
+        pd.DataFrame(rows).to_csv(csv_path, index=False)
+        image_zip = root / "images.zip"
+        with zipfile.ZipFile(image_zip, "w") as archive:
+            for image in image_dir.iterdir():
+                archive.write(image, image.name)
+        output = root / "out"
+        output.mkdir()
+        args = argparse.Namespace(
+            csv_file=csv_path, image_zip=image_zip, model_name="resnet18",
+            use_pretrained=False, fine_tune=False, epochs=2, early_stop=5,
+            batch_size=None, output_dir=output, validation_size=0.15,
+            preprocessing_num_processes=1, split_probabilities=[0.7, 0.1, 0.2],
+            random_seed=42, learning_rate=0.001, augmentation=None,
+            image_resize="original", threshold=None, threshold_mode="auto",
+            threshold_metric="f1", validation_metric=None,
+            target_column=None, image_column=None, sample_id_column=None,
+            torch_home=None, cross_validation=True,
+            num_folds=2, fold_role=fold_role, num_seeds=num_seeds,
+        )
+        previous_dir = Path.cwd()
+        try:
+            os.chdir(output)
+            ImageLearnerCLI(args, SmallImageBackend()).run()
+        finally:
+            os.chdir(previous_dir)
+        report = (output / "image_classification_results_report.html").read_text()
+        self.assertTrue("Ensemble Summary" in report, "the ensemble fell back to the minimal report")
+        return image_dir, output / "experiment_run"
+
+    def direct_probabilities(self, run_dir, image_dir):
+        """Each member's class probabilities for every image, scored image by image order."""
+        summary = json.loads((run_dir / "ensemble_summary.json").read_text())
+        frame = pd.DataFrame({"image_path": sorted(str(p) for p in image_dir.iterdir())})
+        scored = {}
+        for member in summary["members"]:
+            model = LudwigModel.load(str(run_dir / "members" / member["name"] / "model"))
+            predictions, _ = model.predict(dataset=frame)
+            columns = [c for c in predictions.columns if c.startswith("label_probabilities_")]
+            scored[member["name"]] = predictions[columns].set_axis(
+                [Path(p).name for p in frame["image_path"]], axis=0
+            )
+        return summary, scored
+
+    @staticmethod
+    def class_name(column):
+        """A probability column's class, normalized independently of the code under test."""
+        name = column[len("label_probabilities_"):].strip()
+        name = {"False": "0", "True": "1"}.get(name, name)
+        try:
+            number = float(name)
+        except ValueError:
+            return name
+        return str(int(number)) if number.is_integer() else str(number)
+
+    def assert_rows_match_member_models(self, run_dir, image_dir):
+        summary, scored = self.direct_probabilities(run_dir, image_dir)
+        scored = {name: frame.rename(columns=self.class_name) for name, frame in scored.items()}
+        classes = sorted(next(iter(scored.values())).columns)
+        # Without image-specific scores a reordered split could not be detected.
+        self.assertGreater(float(next(iter(scored.values()))[classes[0]].std()), 1e-4)
+        mean = sum(frame[classes] for frame in scored.values()) / len(scored)
+        for filename, split in (("predictions.csv", "test"), ("validation_predictions.csv", "validation")):
+            reported = pd.read_csv(run_dir / filename)
+            self.assertEqual(len(reported), summary["rows"][split])
+            columns = {self.class_name(c): c for c in reported.columns if c.startswith("label_probabilities_")}
+            self.assertEqual(sorted(columns), classes, filename)
+            for _, row in reported.iterrows():
+                name = Path(row["image_path"]).name
+                values = row[[columns[c] for c in classes]].to_numpy(dtype=float)
+                if split == "test":
+                    # Every member scores the fixed test split; the ensemble is their mean.
+                    expected = [mean.loc[name].to_numpy(dtype=float)]
+                else:
+                    # A validation row is scored by the member of its own fold only.
+                    expected = [frame.loc[name, classes].to_numpy(dtype=float) for frame in scored.values()]
+                gap = min(float(np.abs(values - candidate).max()) for candidate in expected)
+                self.assertLess(gap, 1e-5, f"{filename}: row {name} does not carry its own image's scores")
+
+    def test_binary_rows_keep_their_own_predictions(self):
+        with tempfile.TemporaryDirectory(prefix="imagelearner_alignment_") as tmp:
+            root = Path(tmp).resolve()
+            image_dir, run_dir = self.run_ensemble(root, [index % 2 for index in range(30)])
+            self.assert_rows_match_member_models(run_dir, image_dir)
+
+    def test_float_and_spaced_category_labels_are_scored(self):
+        # Ludwig names float classes "1.0" and strips spaces; every test row must still count.
+        for labels in ([1.0, 2.0, 3.0], [" cat ", "dog", " bird"]):
+            with tempfile.TemporaryDirectory(prefix="imagelearner_labels_") as tmp:
+                root = Path(tmp).resolve()
+                image_dir, run_dir = self.run_ensemble(root, [labels[index % 3] for index in range(30)])
+                statistics = json.loads((run_dir / "test_statistics.json").read_text())["label"]
+                self.assertEqual(int(np.sum(statistics["confusion_matrix"])), 8, labels)
+                self.assert_rows_match_member_models(run_dir, image_dir)
 
 
 if __name__ == "__main__":

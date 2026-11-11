@@ -339,7 +339,8 @@ jobs:
       uses: SimenB/github-actions-cpu-cores@v2
       id: cpu-cores
     - name: Verify Image Learner runtime optimizations with real Ludwig
-      if: contains(needs.setup.outputs.repository-list, 'tools/imagelearner')
+      if: ${{ matrix.chunk == 0 && contains(needs.setup.outputs.repository-list, 'tools/imagelearner') }}
+      timeout-minutes: 30
       run: |
         set -euo pipefail
         mkdir -p upload

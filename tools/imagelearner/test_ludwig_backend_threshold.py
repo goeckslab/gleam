@@ -556,3 +556,17 @@ def test_report_labels_each_metrics_table_with_its_actual_threshold(
         )
         for assertion in manual_test.findall("./output[@name='output_report']/assert_contents/has_text"):
             assert assertion.get("text") in report_path.read_text()
+
+
+def test_release_cached_data_drops_prepared_datasets_and_model():
+    backend = importlib.import_module("ludwig_backend").LudwigDirectBackend()
+    backend._prepared_context = ("key", ("train", "validation", "test", {}))
+    backend._prediction_context = ("out", "data.csv", object(), ("train", "validation", "test", {}))
+    backend._batch_sizes = {"batch_size": 8}
+
+    backend.release_cached_data()
+
+    assert backend._prepared_context is None
+    assert backend._prediction_context is None
+    # Probed batch sizes are tiny and still useful for later runs.
+    assert backend._batch_sizes == {"batch_size": 8}

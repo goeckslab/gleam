@@ -30,6 +30,7 @@ from ensemble import (
     apply_binary_threshold,
     attach_row_metadata,
     build_member_plan,
+    canonical_class_names,
     canonical_label,
     class_name_from_column,
     compute_classification_statistics,
@@ -613,6 +614,7 @@ class ImageLearnerCLI:
                         split_value=1,
                         output_filename=VALIDATION_PREDICTIONS_FILE_NAME,
                     )
+                    self._release_backend_cache()
                     # Generate a very small set of plots to conserve disk space
                     self.backend.generate_plots(self.args.output_dir)
                 self._write_image_size_details_artifact(
@@ -635,6 +637,7 @@ class ImageLearnerCLI:
             else:
                 # Fallback: create minimal outputs so downstream steps can proceed
                 logger.warning("Falling back to minimal outputs due to runtime failure.")
+                self._release_backend_cache()
                 try:
                     self._reset_output_dir(self.args.output_dir)
                 except Exception as reset_err:
@@ -757,6 +760,7 @@ class ImageLearnerCLI:
                     self._trim_member_run(exp_dir)
                     record["exp_dir"] = exp_dir
             records.append(record)
+        self._release_backend_cache()
 
         trained = [record for record in records if record["status"] == "ok"]
         if not trained:
@@ -782,6 +786,13 @@ class ImageLearnerCLI:
             len(test_agg),
             len(val_agg),
         )
+        if test_agg.empty and val_agg.empty:
+            logger.error(
+                "None of the %d trained member(s) produced predictions that could be matched to "
+                "dataset rows; there is nothing to evaluate.",
+                len(trained),
+            )
+            return False
 
         # The report reads ground truth by split from this CSV: rows scored as
         # test by the ensemble are 2, rows scored out-of-fold as validation are 1.
@@ -817,7 +828,7 @@ class ImageLearnerCLI:
                 val_agg = apply_binary_threshold(val_agg, threshold)
 
         reference = test_agg if not test_agg.empty else val_agg
-        class_order = self._ensemble_class_order(trained, reference)
+        class_order = self._ensemble_class_order(trained, reference, label_values)
         test_label_stats: Dict[str, Any] = {}
         ensemble_test_metrics: Dict[str, float] = {}
         if not test_agg.empty:
@@ -906,6 +917,15 @@ class ImageLearnerCLI:
         logger.info("Ensemble assembled under %s", top_dir)
         return True
 
+    def _release_backend_cache(self) -> None:
+        """Let the backend free datasets and models it kept in memory for reuse between runs."""
+        release = getattr(self.backend, "release_cached_data", None)
+        if callable(release):
+            try:
+                release()
+            except Exception as exc:
+                logger.warning("Could not release cached backend data: %s", exc)
+
     @staticmethod
     def _latest_experiment_dir(output_dir: Path) -> Optional[Path]:
         exp_dirs = sorted(
@@ -943,6 +963,7 @@ class ImageLearnerCLI:
         path: Path,
         rows: pd.Index,
         label_values: List[Any],
+        class_order: Optional[List[str]] = None,
     ) -> Optional[pd.DataFrame]:
         """Member predictions for one split, indexed by base row; None when they cannot be aligned."""
         if len(rows) == 0 or not Path(path).exists():
@@ -960,7 +981,7 @@ class ImageLearnerCLI:
                 len(rows),
             )
             return None
-        frame = normalize_prediction_frame(df_pred, label_values)
+        frame = normalize_prediction_frame(df_pred, label_values, class_order)
         frame.index = rows
         return frame
 
@@ -974,7 +995,10 @@ class ImageLearnerCLI:
     ) -> Dict[str, Any]:
         """Read one member's test/validation predictions and its metrics."""
         test_rows = member_df.index[member_df[SPLIT_COLUMN_NAME] == 2]
-        test_frame = self._load_member_split_frame(exp_dir / "predictions.csv", test_rows, label_values)
+        class_order = self._ludwig_label_classes(exp_dir)
+        test_frame = self._load_member_split_frame(
+            exp_dir / "predictions.csv", test_rows, label_values, class_order
+        )
         if test_frame is None and len(test_rows):
             # Ludwig's test predictions could not be aligned by order; score the test rows directly.
             scored = self.backend.generate_split_predictions(
@@ -984,10 +1008,10 @@ class ImageLearnerCLI:
                 output_filename="test_predictions.csv",
             )
             if scored:
-                test_frame = self._load_member_split_frame(Path(scored), test_rows, label_values)
+                test_frame = self._load_member_split_frame(Path(scored), test_rows, label_values, class_order)
         val_rows = member_df.index[member_df[SPLIT_COLUMN_NAME] == 1]
         val_frame = self._load_member_split_frame(
-            exp_dir / VALIDATION_PREDICTIONS_FILE_NAME, val_rows, label_values
+            exp_dir / VALIDATION_PREDICTIONS_FILE_NAME, val_rows, label_values, class_order
         )
         train_stats = self._read_json(exp_dir / TRAINING_STATISTICS_FILE_NAME)
         test_stats = self._read_json(exp_dir / TEST_STATISTICS_FILE_NAME)
@@ -1020,21 +1044,30 @@ class ImageLearnerCLI:
             return stats_type or "regression"
         return "binary" if n_prob == 2 else "category"
 
+    def _ludwig_label_classes(self, exp_dir: Optional[Path]) -> Optional[List[str]]:
+        """Ludwig's class names for the label, in its index order (``idx2str``), if recorded."""
+        if not exp_dir:
+            return None
+        for meta_name in ("training_set_metadata.json", "train_set_metadata.json"):
+            meta = self._read_json(Path(exp_dir) / "model" / meta_name)
+            idx2str = ((meta or {}).get(LABEL_COLUMN_NAME) or {}).get("idx2str")
+            if isinstance(idx2str, list):
+                return [str(v) for v in idx2str]
+        return None
+
     def _ensemble_class_order(
         self,
         trained: List[Dict[str, Any]],
         aggregated: pd.DataFrame,
+        label_values: List[Any],
     ) -> List[str]:
         """Class order for confusion matrices: Ludwig's own order when available."""
         names = [class_name_from_column(col) for col in probability_columns(aggregated.columns)]
-        exp_dir = trained[0].get("exp_dir")
-        if exp_dir:
-            for meta_name in ("training_set_metadata.json", "train_set_metadata.json"):
-                meta = self._read_json(Path(exp_dir) / "model" / meta_name)
-                label_meta = (meta or {}).get(LABEL_COLUMN_NAME) or {}
-                idx2str = label_meta.get("idx2str")
-                if isinstance(idx2str, list) and {str(v) for v in idx2str} == set(names):
-                    return [str(v) for v in idx2str]
+        idx2str = self._ludwig_label_classes(trained[0].get("exp_dir"))
+        if idx2str:
+            ordered = canonical_class_names(idx2str, label_values)
+            if set(ordered) == set(names):
+                return ordered
         return sorted(names)
 
     def _ensemble_thresholds(

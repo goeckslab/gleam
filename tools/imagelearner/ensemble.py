@@ -304,6 +304,37 @@ def _parse_vector(value: Any) -> Optional[List[float]]:
         return None
 
 
+def _label_number(value: Any) -> Optional[float]:
+    if isinstance(value, (bool, np.bool_)):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if np.isfinite(number) else None
+
+
+def label_for_class_name(name: str, label_values: Sequence[Any]) -> Optional[str]:
+    """The dataset label (canonical form) a Ludwig class name stands for, or None.
+
+    Ludwig names category classes with ``str(value)`` and strips surrounding
+    spaces, so a float label 1.0 appears as "1.0" while the ensemble uses "1".
+    """
+    name = str(name)
+    matches = {canonical_label(v) for v in label_values if str(v).strip() == name.strip()}
+    if not matches:
+        number = _label_number(name)
+        if number is not None:
+            matches = {canonical_label(v) for v in label_values if _label_number(v) == number}
+    return matches.pop() if len(matches) == 1 else None
+
+
+def canonical_class_names(names: Sequence[str], label_values: Sequence[Any]) -> List[str]:
+    """Ludwig class names mapped to dataset labels; unmatched or ambiguous names stay as they are."""
+    mapped = [label_for_class_name(name, label_values) or str(name) for name in names]
+    return mapped if len(set(mapped)) == len(mapped) else [str(name) for name in names]
+
+
 def boolean_probability_labels(label_values: Sequence[Any]) -> Optional[Dict[str, str]]:
     """Which dataset label Ludwig's ``False``/``True`` probability columns stand for.
 
@@ -332,14 +363,15 @@ def boolean_probability_labels(label_values: Sequence[Any]) -> Optional[Dict[str
 def normalize_prediction_frame(
     df_pred: pd.DataFrame,
     label_values: Sequence[Any],
+    class_order: Optional[Sequence[str]] = None,
 ) -> pd.DataFrame:
     """Reduce a Ludwig prediction table to the columns the ensemble averages.
 
-    Per-class probability columns are kept (``label_probabilities_<class>``);
-    a single vector column is expanded when Ludwig did not expand it. For
-    numeric binary targets Ludwig names the columns after booleans, so they
-    are renamed to the dataset's own label values (see
-    ``boolean_probability_labels``).
+    Per-class probability columns are kept (``label_probabilities_<class>``)
+    and renamed to the dataset's own labels in canonical form. A single vector
+    column is expanded when Ludwig did not expand it, in ``class_order``
+    (Ludwig's ``idx2str``) when given. For numeric binary targets Ludwig names
+    the columns after booleans (see ``boolean_probability_labels``).
     """
     out = df_pred.reset_index(drop=True).copy()
     prob_cols = probability_columns(out.columns)
@@ -350,7 +382,12 @@ def normalize_prediction_frame(
         widths = {len(v) for v in vectors if v is not None}
         if len(widths) == 1:
             width = widths.pop()
-            names = labels_as_str if len(labels_as_str) == width else [str(i) for i in range(width)]
+            if class_order is not None and len(class_order) == width:
+                names = [str(name) for name in class_order]
+            elif len(labels_as_str) == width:
+                names = labels_as_str
+            else:
+                names = [str(i) for i in range(width)]
             for idx, name in enumerate(names):
                 out[f"{PROBABILITIES_PREFIX}{name}"] = vectors.map(
                     lambda v, i=idx: v[i] if v is not None else np.nan
@@ -364,6 +401,17 @@ def normalize_prediction_frame(
             columns={
                 f"{PROBABILITIES_PREFIX}{flag}": f"{PROBABILITIES_PREFIX}{label}"
                 for flag, label in bool_labels.items()
+            }
+        )
+        prob_cols = probability_columns(out.columns)
+
+    names = [class_name_from_column(c) for c in prob_cols]
+    mapped = canonical_class_names(names, label_values)
+    if mapped != names:
+        out = out.rename(
+            columns={
+                f"{PROBABILITIES_PREFIX}{name}": f"{PROBABILITIES_PREFIX}{label}"
+                for name, label in zip(names, mapped)
             }
         )
         prob_cols = probability_columns(out.columns)
@@ -516,6 +564,19 @@ def compute_classification_statistics(
     class_names = [str(c) for c in class_names]
     y_true = np.asarray([canonical_label(v) for v in y_true])
     probabilities = np.asarray(probabilities, dtype=float)
+    known = np.isin(y_true, class_names)
+    if len(y_true) and not known.any():
+        raise ValueError(
+            f"No true label {sorted(set(y_true.tolist()))[:10]} matches a predicted class {class_names}; "
+            "the probability columns could not be mapped to the dataset's labels."
+        )
+    if not known.all():
+        logger.warning(
+            "%d of %d row(s) have a true label outside the predicted classes %s and are not counted.",
+            int((~known).sum()),
+            len(y_true),
+            class_names,
+        )
     n_classes = len(class_names)
     binary = n_classes == 2
 

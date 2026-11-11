@@ -120,6 +120,10 @@ class Backend(Protocol):
     ) -> Path:
         ...
 
+    def release_cached_data(self) -> None:
+        """Free datasets and models kept in memory for reuse between runs (optional)."""
+        ...
+
 
 class LudwigDirectBackend:
     """Backend for running Ludwig experiments directly via the internal experiment_cli function."""
@@ -1026,6 +1030,18 @@ class LudwigDirectBackend:
                 exc_info=True,
             )
             raise
+
+    def release_cached_data(self) -> None:
+        """Drop the prepared datasets and in-memory model kept for reuse between runs.
+
+        Called once no further run can reuse them, so report generation and
+        Grad-CAM do not hold the training data in memory.
+        """
+        import gc
+
+        self._prepared_context = None
+        self._prediction_context = None
+        gc.collect()
 
     def get_training_process(self, output_dir) -> Optional[Dict[str, Any]]:
         """Retrieve the learning rate used in the most recent Ludwig run."""
