@@ -34,7 +34,6 @@ from sklearn.metrics import (
     top_k_accuracy_score,
 )
 from sklearn.model_selection import (
-    GroupKFold,
     KFold,
     StratifiedGroupKFold,
     StratifiedKFold,
@@ -58,6 +57,10 @@ ENSEMBLE_SUMMARY_FILE_NAME = "ensemble_summary.json"
 MEMBERS_DIR_NAME = "members"
 
 _POSITIVE_CLASS_HINTS = ("event", "true", "positive", "pos", "1")
+
+
+class EnsembleSetupError(ValueError):
+    """The requested ensemble cannot be built from this data; raised before any training."""
 
 
 @dataclass
@@ -91,9 +94,9 @@ def assign_folds(
     num_folds = int(num_folds)
     n_rows = len(df)
     if num_folds < 2:
-        raise ValueError("num_folds must be at least 2 for cross-validation.")
+        raise EnsembleSetupError("num_folds must be at least 2 for cross-validation.")
     if n_rows < num_folds:
-        raise ValueError(f"Cannot create {num_folds} folds from {n_rows} rows.")
+        raise EnsembleSetupError(f"Cannot create {num_folds} folds from {n_rows} rows.")
 
     groups = None
     if group_column and group_column in df.columns:
@@ -106,9 +109,10 @@ def assign_folds(
         groups = group_series.astype(str).to_numpy()
         n_groups = len(set(groups))
         if n_groups < num_folds:
-            raise ValueError(
-                f"Cannot create {num_folds} folds from {n_groups} unique values "
-                f"of the sample ID column '{group_column}'."
+            raise EnsembleSetupError(
+                f"Cannot create {num_folds} folds from {n_groups} unique values of the sample ID "
+                f"column '{group_column}': every fold needs at least one sample ID. "
+                f"Use at most {n_groups} folds."
             )
 
     y = None
@@ -144,11 +148,78 @@ def assign_folds(
             )
 
     if groups is not None:
-        splitter = GroupKFold(n_splits=num_folds)
-    else:
-        splitter = KFold(n_splits=num_folds, shuffle=True, random_state=random_state)
+        return _seeded_group_folds(groups, num_folds, random_state)
+    splitter = KFold(n_splits=num_folds, shuffle=True, random_state=random_state)
     _fill(splitter, None, groups)
     return folds
+
+
+def _seeded_group_folds(groups: np.ndarray, num_folds: int, random_state: int) -> np.ndarray:
+    """Group k-fold that follows the seed: whole groups, folds balanced by row count.
+
+    Groups are visited largest first (a random order breaks ties) and each goes
+    to the fold with the fewest rows so far. scikit-learn's GroupKFold before
+    1.6 cannot shuffle, so changing the seed would not change its folds.
+    """
+    unique, inverse, counts = np.unique(groups, return_inverse=True, return_counts=True)
+    order = np.random.RandomState(random_state).permutation(len(unique))
+    order = order[np.argsort(-counts[order], kind="stable")]
+    fold_rows = np.zeros(num_folds, dtype=int)
+    group_fold = np.empty(len(unique), dtype=int)
+    for group in order:
+        fold = int(np.argmin(fold_rows))
+        group_fold[group] = fold
+        fold_rows[fold] += counts[group]
+    return group_fold[inverse]
+
+
+def _check_class_counts(pool: pd.DataFrame, label_column: Optional[str], num_folds: int) -> None:
+    """Every class needs at least one row per fold; otherwise some folds never see it."""
+    if not label_column or label_column not in pool.columns:
+        return
+    counts = pool[label_column].dropna().astype(str).value_counts()
+    rare = counts[counts < int(num_folds)]
+    if not rare.empty:
+        listed = ", ".join(f"'{label}' ({int(n)} row(s))" for label, n in rare.items())
+        smallest = int(counts.min())
+        advice = (
+            f"Use at most {smallest} folds or add data"
+            if smallest >= 2
+            else "Add rows for these classes or remove them; cross-validation needs at least 2 folds"
+        )
+        raise EnsembleSetupError(
+            f"{len(rare)} class(es) have fewer rows taking part in the folds than the {int(num_folds)} folds, "
+            f"so some folds would contain none of them: {listed}. {advice}."
+        )
+
+
+def plan_warnings(
+    df: pd.DataFrame,
+    members: Sequence[MemberSpec],
+    label_column: str = LABEL_COLUMN_NAME,
+) -> List[str]:
+    """Folds whose validation rows miss a class (thresholds and early stopping see no examples of it)."""
+    if label_column not in df.columns:
+        return []
+    labels = df[label_column].map(lambda v: canonical_label(v) if pd.notna(v) else None)
+    all_classes = set(labels.dropna())
+    warnings: List[str] = []
+    seen = set()
+    for member in members:
+        if member.fold is None or member.fold in seen:
+            continue
+        seen.add(member.fold)
+        val_classes = set(labels[member.split == 1].dropna())
+        missing = sorted(all_classes - val_classes)
+        if val_classes and missing:
+            warnings.append(
+                f"Fold {member.fold}: the validation rows contain no "
+                + ", ".join(f"'{label}'" for label in missing)
+                + "."
+            )
+        elif not val_classes:
+            warnings.append(f"Fold {member.fold}: no validation rows.")
+    return warnings
 
 
 def build_member_plan(
@@ -164,6 +235,7 @@ def build_member_plan(
     group_column: Optional[str] = None,
     stratify: bool = True,
     split_column: str = SPLIT_COLUMN_NAME,
+    user_test_split: bool = False,
 ) -> List[MemberSpec]:
     """Plan the members of an ensemble from a prepared dataframe.
 
@@ -176,9 +248,13 @@ def build_member_plan(
     the remaining rows through the validation set. fold_role "test" rotates
     the folds of *all* rows through the test set and draws a validation set
     of ``validation_size`` from each fold's training rows.
+
+    Raises EnsembleSetupError before any training when the folds cannot be
+    built: a class with fewer rows than folds, too few sample IDs, or test
+    folds requested over a test split the user supplied.
     """
     if split_column not in df.columns:
-        raise ValueError(f"Prepared data has no '{split_column}' column.")
+        raise EnsembleSetupError(f"Prepared data has no '{split_column}' column.")
     base_split = pd.to_numeric(df[split_column], errors="coerce").fillna(0).astype(int)
     seeds = [int(random_seed) + offset for offset in range(max(1, int(num_seeds)))]
     strat_column = label_column if stratify and label_column in df.columns else None
@@ -190,15 +266,23 @@ def build_member_plan(
         ]
 
     if fold_role not in FOLD_ROLES:
-        raise ValueError(f"fold_role must be one of {FOLD_ROLES}; got '{fold_role}'.")
+        raise EnsembleSetupError(f"fold_role must be one of {FOLD_ROLES}; got '{fold_role}'.")
     num_folds = int(num_folds)
     members: List[MemberSpec] = []
+
+    if fold_role == FOLD_ROLE_TEST and user_test_split and (base_split == 2).any():
+        raise EnsembleSetupError(
+            f"The input CSV assigns {int((base_split == 2).sum())} row(s) to the test split, but test folds "
+            "would fold them back into cross-validation. Use validation folds to keep that test set "
+            "fixed, or remove the test rows from the split column to test every row out-of-fold."
+        )
+    _check_class_counts(df if fold_role == FOLD_ROLE_TEST else df.loc[base_split != 2], strat_column, num_folds)
 
     if fold_role == FOLD_ROLE_VALIDATION:
         pool_mask = base_split != 2
         pool = df.loc[pool_mask]
         if pool.empty:
-            raise ValueError(
+            raise EnsembleSetupError(
                 "No training rows available for cross-validation: every row is in the test split."
             )
         fold_ids = pd.Series(
@@ -222,7 +306,7 @@ def build_member_plan(
 
     if (base_split == 2).any():
         logger.info(
-            "Fold role 'test': existing test rows are folded back into the cross-validation pool."
+            "Fold role 'test': the generated test split is folded back into the cross-validation pool."
         )
     fold_ids = pd.Series(
         assign_folds(df, num_folds, random_seed, strat_column, group_column),
@@ -692,11 +776,14 @@ def compute_regression_statistics(
         "mean_absolute_error": float(mean_absolute_error(y_true, y_pred)),
         "r2": _safe(r2_score, y_true, y_pred),
     }
-    nonzero = y_true != 0
-    if nonzero.any():
-        rel = (y_true[nonzero] - y_pred[nonzero]) / y_true[nonzero]
-        stats["mean_absolute_percentage_error"] = float(np.mean(np.abs(rel)))
-        stats["root_mean_squared_percentage_error"] = float(np.sqrt(np.mean(rel ** 2)))
+    # Ludwig 0.10.1's formulas, so zero targets count instead of being skipped: MAPE as torchmetrics
+    # computes it, and ludwig.utils.loss_utils.rmspe_loss over all rows at once (Ludwig averages
+    # RMSPE per evaluation batch, so the two agree when evaluation fits in one batch).
+    stats["mean_absolute_percentage_error"] = float(
+        np.mean(np.abs(y_pred - y_true) / np.maximum(np.abs(y_true), 1.17e-06))
+    )
+    denominator = y_true + 1e-4 * (y_true == 0)
+    stats["root_mean_squared_percentage_error"] = float(np.sqrt(np.mean(((y_true - y_pred) / denominator) ** 2)))
     return {k: v for k, v in stats.items() if v is not None}
 
 

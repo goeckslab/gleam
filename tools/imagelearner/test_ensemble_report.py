@@ -113,7 +113,12 @@ def test_report_renders_binary_ensemble(tmp_path, monkeypatch):
     assert "Rows per fold" in html
     assert "test = the fixed test split, averaged across all members" in html
     assert "Test Performance Summary" in html
-    assert "Evaluation Threshold (Member Models)" in html
+    assert "fold1_seed42 (first trained member). It is one member, not the averaged ensemble" in html
+    assert "Its own test metrics:" in html
+    assert "Test rows scored" in html
+    assert "scored the same way as the ensemble row" in html
+    assert "Check before relying on these numbers" not in html
+    assert "Ludwig Evaluation Threshold (Member Statistics Files)" in html
     assert "Selected Threshold (Test Summary)" in html
     assert "Source: Optimized on averaged validation split." in html
     assert "selected-threshold test metrics unavailable" not in html
@@ -126,7 +131,7 @@ def test_report_renders_binary_ensemble(tmp_path, monkeypatch):
 
 def test_report_renders_test_fold_ensemble_with_per_fold_thresholds(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    csv_path, zip_path, base_df = test_ensemble._make_dataset(tmp_path, n_per_class=16)
+    csv_path, zip_path, base_df = test_ensemble._make_dataset(tmp_path, n_per_class=16, with_split=False)
     args = test_ensemble._make_args(
         tmp_path, csv_path, zip_path, fold_role="test", num_folds=2, num_seeds=1
     )
@@ -205,3 +210,50 @@ def test_report_renders_regression_ensemble(tmp_path, monkeypatch):
     assert "Ensemble Summary" in html
     assert "Ground Truth vs. Predictions" in html
     assert "seed44" in html
+
+
+def test_ensemble_summary_flags_gaps_and_default_fold_thresholds():
+    html_structure = importlib.import_module("html_structure")
+    summary = {
+        "cross_validation": True,
+        "num_folds": 2,
+        "fold_role": "test",
+        "seeds": [42],
+        "members_trained": 2,
+        "members_planned": 2,
+        "threshold": 0.45,
+        "fold_thresholds": {"1": 0.4, "2": 0.5},
+        "fold_threshold_defaults": ["2"],
+        "plan_warnings": ["Fold 2: the validation rows contain no '1'."],
+        "coverage": {
+            "test": {"planned": 20, "scored": 18},
+            "validation": {"planned": 6, "scored": 6},
+            "warnings": ["18 of 20 test rows were scored; the test metrics cover the scored rows only."],
+        },
+        "exported_model": "fold1_seed42",
+        "exported_model_threshold": 0.41,
+        "exported_model_threshold_source": "validation",
+        "exported_model_test_metrics": {"accuracy": 0.8, "roc_auc": 0.9},
+        "members": [
+            {"name": "fold1_seed42", "fold": 1, "seed": 42, "status": "ok",
+             "predictions_unmatched": [], "validation": {}, "test": {}},
+            {"name": "fold2_seed42", "fold": 2, "seed": 42, "status": "ok",
+             "predictions_unmatched": ["test"], "validation": {}, "test": {}},
+        ],
+    }
+    html = html_structure.format_ensemble_summary_html(summary, "binary")
+    assert "Check before relying on these numbers" in html
+    assert "Fold 2: the validation rows contain no &#x27;1&#x27;." in html
+    assert "18 of 20 test rows were scored" in html
+    assert "fold 1: 0.400; fold 2: 0.500 (default 0.5: could not be tuned)" in html
+    assert "Test rows scored</td><td style='padding: 6px 12px; border: 1px solid #ccc; text-align: center;'>18 of 20" in html
+    assert "and it trained on one fold&#x27;s training rows" in html
+    assert "Its own test metrics (its own fold&#x27;s test rows only):" in html
+    assert "at its own validation-tuned threshold 0.410" in html
+    summary["exported_model_threshold_source"] = "manual"
+    assert "at the manual threshold 0.410" in html_structure.format_ensemble_summary_html(summary, "binary")
+    summary["exported_model_threshold_source"] = "default"
+    assert "(its validation rows could not tune one)" in html_structure.format_ensemble_summary_html(
+        summary, "binary"
+    )
+    assert "trained (test predictions unmatched)" in html

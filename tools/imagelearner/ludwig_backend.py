@@ -1381,6 +1381,10 @@ class LudwigDirectBackend:
             result["reason"] = "Image resize/height not found in Ludwig preprocessing."
             return result
 
+        gradcam_path = config.get("gradcam_label_path")
+        if gradcam_path and Path(gradcam_path).exists():
+            # Ensembles: sample the exported member's own test rows, not the ensemble's view.
+            label_path = Path(gradcam_path)
         label_csv = label_path if label_path and label_path.exists() else None
         if not label_csv:
             result["reason"] = "Prepared label CSV not available for Grad-CAM sampling."
@@ -2314,7 +2318,7 @@ class LudwigDirectBackend:
                     "<strong>Decision thresholds: per fold</strong>. "
                     "Each test row uses the threshold selected on that fold's validation data. "
                     f"Mean threshold: {float(config_for_summary['threshold']):.6f}. "
-                    "ROC-AUC and loss are independent of the decision threshold.</p>"
+                    "ROC-AUC does not depend on the decision threshold.</p>"
                 )
             elif test_metrics_at_selected_threshold:
                 test_notice = format_binary_threshold_notice(

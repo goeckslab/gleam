@@ -82,6 +82,65 @@ def test_assign_folds_rejects_too_few_rows():
         ensemble.assign_folds(df, 3, 0, label_column=LABEL)
 
 
+def test_assign_folds_rejects_fewer_sample_ids_than_folds():
+    df = pd.DataFrame({LABEL: [0, 1] * 4, "patient": ["a", "b"] * 4})
+    with pytest.raises(ensemble.EnsembleSetupError, match="Use at most 2 folds"):
+        ensemble.assign_folds(df, 3, 0, group_column="patient")
+
+
+def test_grouped_fallback_folds_follow_the_seed_and_keep_groups_together():
+    df = pd.DataFrame({"patient": [f"p{i // 2}" for i in range(40)]})
+    by_seed = {
+        seed: ensemble.assign_folds(df, 4, seed, group_column="patient") for seed in (1, 2)
+    }
+    for folds in by_seed.values():
+        assert (pd.Series(folds).groupby(df["patient"]).nunique() == 1).all()
+        assert sorted(np.bincount(folds)) == [10, 10, 10, 10]
+    assert not np.array_equal(by_seed[1], by_seed[2])
+
+
+def test_member_plan_refuses_classes_with_fewer_rows_than_folds():
+    df = _classification_df(n_per_class=12)
+    df.loc[df[LABEL] == 1, LABEL] = [1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
+    with pytest.raises(ensemble.EnsembleSetupError, match="than the 3 folds.*Use at most 2 folds"):
+        ensemble.build_member_plan(
+            df, cross_validation=True, num_folds=3, fold_role="validation",
+            num_seeds=1, random_seed=0, validation_size=0.15,
+        )
+
+
+def test_member_plan_advice_for_a_single_row_class():
+    df = _classification_df(n_per_class=12)
+    df.loc[0, LABEL] = 5
+    with pytest.raises(ensemble.EnsembleSetupError, match="Add rows for these classes or remove them"):
+        ensemble.build_member_plan(
+            df, cross_validation=True, num_folds=2, fold_role="test",
+            num_seeds=1, random_seed=0, validation_size=0.15,
+        )
+
+
+def test_test_folds_refuse_a_user_supplied_test_split():
+    df = _classification_df()
+    kwargs = dict(cross_validation=True, num_folds=2, fold_role="test", num_seeds=1, random_seed=0,
+                  validation_size=0.15)
+    with pytest.raises(ensemble.EnsembleSetupError, match="Use validation folds"):
+        ensemble.build_member_plan(df, user_test_split=True, **kwargs)
+    # a test split the tool generated itself may be folded back
+    assert len(ensemble.build_member_plan(df, user_test_split=False, **kwargs)) == 2
+
+
+def test_plan_warnings_name_folds_whose_validation_misses_a_class():
+    df = pd.DataFrame({LABEL: [0, 0, 1, 1, 0, 1]})
+    split_a = pd.Series([0, 1, 0, 1, 2, 2])
+    split_b = pd.Series([1, 0, 0, 0, 2, 2])
+    members = [
+        ensemble.MemberSpec("fold1_seed1", 1, 1, split_a),
+        ensemble.MemberSpec("fold1_seed2", 2, 1, split_a),
+        ensemble.MemberSpec("fold2_seed1", 1, 2, split_b),
+    ]
+    assert ensemble.plan_warnings(df, members) == ["Fold 2: the validation rows contain no '1'."]
+
+
 def test_validation_folds_keep_test_rows_and_rotate_validation():
     df = _classification_df()
     members = ensemble.build_member_plan(
@@ -285,6 +344,29 @@ def test_classification_statistics_refuse_labels_that_match_no_class():
         ensemble.compute_classification_statistics(
             [1, 2, 1], np.array([[0.4, 0.6], [0.3, 0.7], [0.5, 0.5]]), ["False", "True"]
         )
+
+
+def test_regression_percentage_errors_match_ludwig_definitions():
+    stats = ensemble.compute_regression_statistics([0.0, 2.0], [0.5, 1.0])
+    # torchmetrics MAPE clamps |y| at 1.17e-06; Ludwig's RMSPE adds 1e-4 to zero targets
+    assert stats["mean_absolute_percentage_error"] == pytest.approx((0.5 / 1.17e-06 + 0.5) / 2)
+    assert stats["root_mean_squared_percentage_error"] == pytest.approx(
+        np.sqrt(((0.5 / 1e-4) ** 2 + 0.5 ** 2) / 2)
+    )
+
+
+def test_argument_checker_caps_the_number_of_members(tmp_path):
+    csv_path = tmp_path / "meta.csv"
+    csv_path.write_text("image_path,label\n")
+    args = argparse.Namespace(
+        validation_size=0.15, csv_file=csv_path, image_zip=tmp_path, threshold=None,
+        cross_validation=True, num_folds=10, num_seeds=6, augmentation=None,
+    )
+    parser = argparse.ArgumentParser()
+    with pytest.raises(SystemExit):
+        utils.argument_checker(args, parser)
+    args.num_seeds = 5
+    utils.argument_checker(args, parser)
 
 
 def test_canonical_label_matches_probability_column_names():
@@ -530,12 +612,13 @@ class FakeBackend:
         return report
 
 
-def _make_dataset(tmp_path, n_per_class=12, label_dtype=None):
+def _make_dataset(tmp_path, n_per_class=12, label_dtype=None, with_split=True):
     df = _classification_df(n_per_class=n_per_class)
     if label_dtype is not None:
         df[LABEL] = df[LABEL].astype(label_dtype)
     csv_path = tmp_path / "metadata.csv"
-    df[[IMAGE, LABEL, "patient", SPLIT]].to_csv(csv_path, index=False)
+    columns = [IMAGE, LABEL, "patient"] + ([SPLIT] if with_split else [])
+    df[columns].to_csv(csv_path, index=False)
     zip_path = tmp_path / "images.zip"
     with zipfile.ZipFile(zip_path, "w") as zf:
         for name in df[IMAGE]:
@@ -602,8 +685,16 @@ def test_workflow_trains_members_and_averages_predictions(tmp_path, monkeypatch)
     assert [m["name"] for m in summary["members"]] == [
         "fold1_seed42", "fold1_seed43", "fold2_seed42", "fold2_seed43"
     ]
-    assert summary["members"][1]["validation"]["accuracy"] == pytest.approx(0.743)
+    # Ludwig's own (last-epoch, 0.5) numbers are kept apart from the like-for-like re-scoring.
+    assert summary["members"][1]["ludwig"]["validation"]["accuracy"] == pytest.approx(0.743)
+    assert summary["members"][1]["validation"]["accuracy"] == pytest.approx(1.0)
+    assert summary["members"][1]["predictions_unmatched"] == []
     assert summary["member_summary"]["test"]["accuracy"]["n"] == 4
+    assert summary["coverage"]["test"] == {"planned": int((base_df[SPLIT] == 2).sum()),
+                                           "scored": int((base_df[SPLIT] == 2).sum())}
+    assert summary["coverage"]["warnings"] == []
+    assert 0 < summary["exported_model_threshold"] < 1
+    assert "accuracy" in summary["exported_model_test_metrics"]
     assert 0 < summary["threshold"] < 1
     assert summary["threshold_source"] == "Optimized on averaged validation split"
     assert summary["threshold_metric"] == "F1"
@@ -611,11 +702,11 @@ def test_workflow_trains_members_and_averages_predictions(tmp_path, monkeypatch)
     assert "accuracy" in summary["ensemble_test_metrics"]
     assert "roc_auc" in summary["ensemble_validation_metrics"]
 
-    # layout: member runs kept, first member's model exported, no scratch dirs left
+    # layout: member runs kept, only the exported member keeps weights, no scratch dirs left
     for name in ("fold1_seed42", "fold2_seed43"):
         member_dir = exp_dir / ensemble.MEMBERS_DIR_NAME / name
         assert (member_dir / "predictions.csv").exists()
-        assert (member_dir / "model" / "model_weights").exists()
+        assert (member_dir / "model" / "model_weights").exists() == (name == "fold1_seed42")
         assert not (member_dir / "model" / "training_checkpoints").exists()
         assert not (member_dir / "predictions.parquet").exists()
     assert (exp_dir / "model" / "model_weights").exists()
@@ -673,7 +764,8 @@ def test_workflow_trains_members_and_averages_predictions(tmp_path, monkeypatch)
 def test_workflow_test_folds_score_every_row_out_of_fold(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     image_workflow = importlib.import_module("image_workflow")
-    csv_path, zip_path, base_df = _make_dataset(tmp_path)
+    # No split column: the generated test split may be folded back into cross-validation.
+    csv_path, zip_path, base_df = _make_dataset(tmp_path, with_split=False)
     args = _make_args(
         tmp_path, csv_path, zip_path, fold_role="test", num_folds=3, num_seeds=1
     )
@@ -696,7 +788,7 @@ def test_workflow_test_folds_score_every_row_out_of_fold(tmp_path, monkeypatch):
     assert applied <= {round(v, 6) for v in summary["fold_thresholds"].values()}
     config, split_info, view = backend.report_configs[-1]
     assert (view[SPLIT] == 2).all()
-    assert "original test split is ignored" in split_info
+    assert "the generated test split is folded back in" in split_info
     # dataset overview shows every row as test
     assert all(row["train"] == 0 and row["validation"] == 0 for row in config["label_split_counts"])
     # per-fold layout: each row is tested in exactly one fold
@@ -751,7 +843,7 @@ def test_workflow_continues_when_a_member_fails(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     image_workflow = importlib.import_module("image_workflow")
     csv_path, zip_path, _ = _make_dataset(tmp_path)
-    args = _make_args(tmp_path, csv_path, zip_path, num_seeds=1)
+    args = _make_args(tmp_path, csv_path, zip_path, num_seeds=2)
 
     class FlakyBackend(FakeBackend):
         def run_experiment(self, dataset_path, config_path, output_dir, random_seed=42):
@@ -764,10 +856,33 @@ def test_workflow_continues_when_a_member_fails(tmp_path, monkeypatch):
 
     exp_dir = args.output_dir / "experiment_run"
     summary = json.loads((exp_dir / ensemble.ENSEMBLE_SUMMARY_FILE_NAME).read_text())
-    assert summary["members_trained"] == 1
-    assert [m["status"] for m in summary["members"]] == ["ok", "failed"]
+    assert summary["members_trained"] == 3
+    assert [m["status"] for m in summary["members"]] == ["ok", "ok", "failed", "ok"]
     preds = pd.read_csv(exp_dir / "predictions.csv")
-    assert (preds[ensemble.N_MODELS_COLUMN] == 1).all()
+    assert (preds[ensemble.N_MODELS_COLUMN] == 3).all()
+    # every fold still has a trained member, so every validation row is scored
+    assert summary["coverage"]["validation"]["scored"] == summary["coverage"]["validation"]["planned"]
+
+
+def test_workflow_refuses_a_cross_validation_with_an_untrained_fold(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    image_workflow = importlib.import_module("image_workflow")
+    csv_path, zip_path, _ = _make_dataset(tmp_path)
+    args = _make_args(tmp_path, csv_path, zip_path, num_seeds=1)
+
+    class FoldFailureBackend(FakeBackend):
+        def run_experiment(self, dataset_path, config_path, output_dir, random_seed=42):
+            if Path(dataset_path).name == "fold2.csv":
+                raise RuntimeError("CUDA out of memory")
+            super().run_experiment(dataset_path, config_path, output_dir, random_seed)
+
+    backend = FoldFailureBackend()
+    image_workflow.ImageLearnerCLI(args, backend).run()
+
+    # fold 2 held out rows nobody scored: no partial ensemble, the run takes the failure path
+    assert not (args.output_dir / "experiment_run" / ensemble.ENSEMBLE_SUMMARY_FILE_NAME).exists()
+    config, _, _ = backend.report_configs[-1]
+    assert "ensemble" not in config
 
 
 def test_workflow_falls_back_when_no_member_predictions_can_be_matched(tmp_path, monkeypatch):
@@ -813,6 +928,125 @@ def test_workflow_releases_cached_backend_data_before_the_report(tmp_path, monke
 
     assert "release" in events
     assert events.index("release") < events.index("report")
+
+
+@pytest.mark.parametrize("labels, refused", [((1, 2), True), ((-1, 1), True), ((0, 1), False), ((0, 2), False)])
+def test_workflow_refuses_numeric_binary_labels_ludwig_cannot_tell_apart(tmp_path, monkeypatch, labels, refused):
+    monkeypatch.chdir(tmp_path)
+    image_workflow = importlib.import_module("image_workflow")
+    csv_path, zip_path, df = _make_dataset(tmp_path)
+    df[LABEL] = df[LABEL].map({0: labels[0], 1: labels[1]})
+    df[[IMAGE, LABEL, "patient", SPLIT]].to_csv(csv_path, index=False)
+    args = _make_args(tmp_path, csv_path, zip_path, cross_validation=False, num_seeds=1)
+    cli = image_workflow.ImageLearnerCLI(args, FakeBackend())
+    if refused:
+        with pytest.raises(ValueError, match="Recode the labels as 0 and 1"):
+            cli.run()
+    else:
+        cli.run()
+
+
+def test_workflow_fails_before_training_on_bad_ensemble_settings(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    image_workflow = importlib.import_module("image_workflow")
+    csv_path, zip_path, _ = _make_dataset(tmp_path)  # the CSV supplies a test split
+    args = _make_args(tmp_path, csv_path, zip_path, fold_role="test", num_folds=2, num_seeds=1)
+    backend = FakeBackend()
+    with pytest.raises(ensemble.EnsembleSetupError):
+        image_workflow.ImageLearnerCLI(args, backend).run()
+    assert backend.runs == []
+
+
+def test_workflow_cleans_fold_caches_and_member_weights(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    image_workflow = importlib.import_module("image_workflow")
+    csv_path, zip_path, _ = _make_dataset(tmp_path)
+    args = _make_args(tmp_path, csv_path, zip_path, num_folds=2, num_seeds=2)
+    leftovers = []
+
+    class CachingBackend(FakeBackend):
+        def run_experiment(self, dataset_path, config_path, output_dir, random_seed=42):
+            dataset_path = Path(dataset_path)
+            # what Ludwig leaves next to the CSV
+            dataset_path.with_suffix(".training.hdf5").write_text("cache")
+            if dataset_path.name == "fold2.csv":
+                leftovers.extend(p.name for p in dataset_path.parent.glob("fold1.*"))
+            super().run_experiment(dataset_path, config_path, output_dir, random_seed)
+
+        def generate_html_report(self, title, output_dir, config, split_info):
+            gradcam = pd.read_csv(config["gradcam_label_path"])
+            self.gradcam_test_rows = int((gradcam[SPLIT] == 2).sum())
+            return super().generate_html_report(title, output_dir, config, split_info)
+
+    backend = CachingBackend()
+    image_workflow.ImageLearnerCLI(args, backend).run()
+
+    assert leftovers == []
+    members_dir = args.output_dir / "experiment_run" / ensemble.MEMBERS_DIR_NAME
+    kept = sorted(p.parent.parent.name for p in members_dir.glob("*/model/model_weights"))
+    assert kept == ["fold1_seed42"]
+    # Grad-CAM samples the exported member's own test rows
+    assert backend.gradcam_test_rows > 0
+
+    args = _make_args(tmp_path, csv_path, zip_path, num_folds=2, num_seeds=1,
+                      output_dir=tmp_path / "keep", keep_member_weights=True)
+    image_workflow.ImageLearnerCLI(args, FakeBackend()).run()
+    kept = list((tmp_path / "keep" / "experiment_run" / ensemble.MEMBERS_DIR_NAME).glob("*/model/model_weights"))
+    assert len(kept) == 2
+
+
+def test_workflow_without_test_rows_reports_no_unmatched_predictions(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    image_workflow = importlib.import_module("image_workflow")
+    csv_path, zip_path, df = _make_dataset(tmp_path)
+    df[SPLIT] = df[SPLIT].replace(2, 0)  # train/validation only
+    df[[IMAGE, LABEL, "patient", SPLIT]].to_csv(csv_path, index=False)
+    args = _make_args(tmp_path, csv_path, zip_path, cross_validation=False, num_seeds=2)
+
+    image_workflow.ImageLearnerCLI(args, FakeBackend()).run()
+
+    summary = json.loads((args.output_dir / "experiment_run" / ensemble.ENSEMBLE_SUMMARY_FILE_NAME).read_text())
+    assert [m["predictions_unmatched"] for m in summary["members"]] == [[], []]
+    assert summary["coverage"]["test"] == {"planned": 0, "scored": 0}
+    assert summary["coverage"]["warnings"] == []
+
+
+def test_workflow_rescores_category_members_from_their_predictions(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    image_workflow = importlib.import_module("image_workflow")
+    df = _classification_df(n_per_class=12, n_classes=3)
+    csv_path = tmp_path / "metadata.csv"
+    df[[IMAGE, LABEL, "patient", SPLIT]].to_csv(csv_path, index=False)
+    zip_path = tmp_path / "images.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        for name in df[IMAGE]:
+            zf.writestr(name, b"not really a png")
+    args = _make_args(tmp_path, csv_path, zip_path, num_folds=2, num_seeds=1)
+
+    class CategoryBackend(FakeBackend):
+        @staticmethod
+        def _probabilities(frame, seed):
+            labels = frame[LABEL].to_numpy()
+            # the true class scores highest except for every fourth row, which goes to the next class
+            chosen = np.where(np.arange(len(frame)) % 4 == 0, (labels + 1) % 3, labels)
+            probs = np.full((len(frame), 3), 0.1)
+            probs[np.arange(len(frame)), chosen] = 0.8
+            out = pd.DataFrame({f"label_probabilities_{k}": probs[:, k] for k in range(3)})
+            out.insert(0, "label_predictions", chosen)
+            out["label_probability"] = 0.8
+            return out
+
+    image_workflow.ImageLearnerCLI(args, CategoryBackend()).run()
+
+    summary = json.loads((args.output_dir / "experiment_run" / ensemble.ENSEMBLE_SUMMARY_FILE_NAME).read_text())
+    assert summary["task_type"] == "category"
+    member = summary["members"][0]
+    n_test = int((df[SPLIT] == 2).sum())
+    expected = 1 - len(range(0, n_test, 4)) / n_test
+    # re-scored from the member's own predictions, not Ludwig's numbers
+    assert member["test"]["accuracy_micro"] == pytest.approx(expected)
+    assert member["ludwig"]["test"]["accuracy"] == pytest.approx(0.842)
+    assert "accuracy_micro" in summary["exported_model_test_metrics"]
 
 
 def test_single_model_path_is_unchanged_without_ensemble_options(tmp_path, monkeypatch):

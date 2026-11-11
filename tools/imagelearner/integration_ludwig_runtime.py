@@ -57,6 +57,58 @@ class OriginalBackend(SmallImageBackend):
         )
 
 
+def write_dataset(root, labels, with_split=True, seed=123):
+    """Random-noise images (each image scores differently) with the given labels."""
+    image_dir = root / "input_images"
+    image_dir.mkdir()
+    rng = np.random.RandomState(seed)
+    rows = []
+    for index, label in enumerate(labels):
+        name = f"image{index}.png"
+        Image.fromarray(rng.randint(0, 256, (12, 12, 3), dtype=np.uint8)).save(image_dir / name)
+        row = {"image_path": name, "label": label}
+        if with_split:
+            # Pairs of rows alternate between train and validation, so both see every class.
+            row["split"] = 2 if index >= len(labels) - 6 else (index // 2) % 2
+        rows.append(row)
+    csv_path = root / "metadata.csv"
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+    image_zip = root / "images.zip"
+    with zipfile.ZipFile(image_zip, "w") as archive:
+        for image in image_dir.iterdir():
+            archive.write(image, image.name)
+    return csv_path, image_zip, image_dir
+
+
+def make_args(csv_path, image_zip, output, **overrides):
+    values = dict(
+        csv_file=csv_path, image_zip=image_zip, model_name="resnet18",
+        use_pretrained=False, fine_tune=False, epochs=2, early_stop=5,
+        batch_size=None, output_dir=output, validation_size=0.15,
+        preprocessing_num_processes=1, split_probabilities=[0.7, 0.1, 0.2],
+        random_seed=42, learning_rate=0.001, augmentation=None,
+        image_resize="original", threshold=None, threshold_mode="auto",
+        threshold_metric="f1", validation_metric=None,
+        target_column=None, image_column=None, sample_id_column=None,
+        torch_home=None, cross_validation=True, num_folds=2,
+        fold_role="validation", num_seeds=2,
+        # The tests reload and compare every member's weights.
+        keep_member_weights=True,
+    )
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
+def run_cli(args, backend):
+    previous_dir = Path.cwd()
+    try:
+        os.chdir(args.output_dir)
+        ImageLearnerCLI(args, backend).run()
+    finally:
+        os.chdir(previous_dir)
+    return (args.output_dir / "image_classification_results_report.html").read_text()
+
+
 class RuntimeEquivalenceTest(unittest.TestCase):
     def assert_values_equal(self, expected, actual, path="root"):
         if isinstance(expected, dict):
@@ -76,26 +128,16 @@ class RuntimeEquivalenceTest(unittest.TestCase):
         torch.set_num_threads(1)
         with tempfile.TemporaryDirectory(prefix="imagelearner_runtime_") as tmp:
             root = Path(tmp).resolve()
-            image_dir = root / "input_images"
-            image_dir.mkdir()
-            rows = []
-            rng = np.random.RandomState(123)
+            labels = []
             for index in range(30):
-                name = f"image{index}.png"
-                pixels = rng.randint(0, 256, (12, 12, 3), dtype=np.uint8)
-                Image.fromarray(pixels).save(image_dir / name)
                 label = index % 2
                 if task == "category":
                     label = f"class{index % 3}"
                 elif task == "regression":
                     label = index / 3.0
-                rows.append({"image_path": name, "label": label, "split": 2 if index >= 24 else index % 2})
-            csv_path = root / "metadata.csv"
-            pd.DataFrame(rows).to_csv(csv_path, index=False)
-            image_zip = root / "images.zip"
-            with zipfile.ZipFile(image_zip, "w") as archive:
-                for image in image_dir.iterdir():
-                    archive.write(image, image.name)
+                labels.append(label)
+            # Test folds refuse a test split the user supplied; let the tool generate one.
+            csv_path, image_zip, _ = write_dataset(root, labels, with_split=fold_role != "test")
 
             outputs = []
             counts = []
@@ -103,18 +145,11 @@ class RuntimeEquivalenceTest(unittest.TestCase):
             for backend_class in (OriginalBackend, SmallImageBackend):
                 output = root / backend_class.__name__
                 output.mkdir()
-                args = argparse.Namespace(
-                    csv_file=csv_path, image_zip=image_zip, model_name="resnet18",
-                    use_pretrained=False, fine_tune=False, epochs=2, early_stop=5,
-                    batch_size=None, output_dir=output, validation_size=0.15,
-                    preprocessing_num_processes=1, split_probabilities=[0.7, 0.1, 0.2],
-                    random_seed=42, learning_rate=0.001, augmentation=None,
-                    image_resize="original", threshold=0.6 if fold_role == "test" else None,
+                args = make_args(
+                    csv_path, image_zip, output,
+                    threshold=0.6 if fold_role == "test" else None,
                     threshold_mode="manual" if fold_role == "test" else "auto",
-                    threshold_metric="f1", validation_metric=None,
-                    target_column=None, image_column=None, sample_id_column=None,
-                    torch_home=None, cross_validation=cross_validation,
-                    num_folds=2, fold_role=fold_role, num_seeds=num_seeds,
+                    cross_validation=cross_validation, fold_role=fold_role, num_seeds=num_seeds,
                 )
                 counter = Counter()
                 original_put = DatasetCache.put
@@ -187,6 +222,42 @@ class RuntimeEquivalenceTest(unittest.TestCase):
                 "seconds_before": durations[0], "seconds_after": durations[1],
             }), flush=True)
 
+    def test_single_model_run_matches_the_original_path(self):
+        """Without ensemble options the cached backend must match one that calls Ludwig the way main does.
+
+        Same predictions, statistics and weights as OriginalBackend, which runs Ludwig from the config file
+        with skip_preprocessing and reloads the saved model for validation predictions.
+        """
+        torch.set_num_threads(1)
+        with tempfile.TemporaryDirectory(prefix="imagelearner_single_") as tmp:
+            root = Path(tmp).resolve()
+            csv_path, image_zip, _ = write_dataset(root, [index % 2 for index in range(30)])
+            runs = []
+            for backend_class in (OriginalBackend, SmallImageBackend):
+                output = root / backend_class.__name__
+                output.mkdir()
+                args = make_args(csv_path, image_zip, output, cross_validation=False, num_seeds=1)
+                report = run_cli(args, backend_class())
+                self.assertTrue("Ensemble Summary" not in report, "single-model run rendered an ensemble")
+                self.assertTrue("Test Performance Summary" in report, "single-model report is incomplete")
+                runs.append(output / "experiment_run")
+            before, after = runs
+            self.assertFalse((after / "ensemble_summary.json").exists())
+            for filename in ("predictions.csv", "validation_predictions.csv"):
+                pd.testing.assert_frame_equal(
+                    pd.read_csv(before / filename), pd.read_csv(after / filename),
+                    check_exact=False, rtol=1e-6, atol=1e-7, obj=filename,
+                )
+            for filename in ("training_statistics.json", "test_statistics.json"):
+                self.assert_values_equal(
+                    json.loads((before / filename).read_text()), json.loads((after / filename).read_text()), filename,
+                )
+            weights_before = torch.load(before / "model/model_weights", map_location="cpu")
+            weights_after = torch.load(after / "model/model_weights", map_location="cpu")
+            self.assertEqual(weights_before.keys(), weights_after.keys())
+            for name in weights_before:
+                self.assertTrue(torch.equal(weights_before[name], weights_after[name]), name)
+
     def test_binary_validation_folds(self):
         self.compare_ensemble()
 
@@ -212,41 +283,11 @@ class EnsembleRowAlignmentTest(unittest.TestCase):
     """
 
     def run_ensemble(self, root, labels, fold_role="validation", num_seeds=1):
-        image_dir = root / "input_images"
-        image_dir.mkdir()
-        rng = np.random.RandomState(7)
-        rows = []
-        for index, label in enumerate(labels):
-            name = f"image{index}.png"
-            Image.fromarray(rng.randint(0, 256, (12, 12, 3), dtype=np.uint8)).save(image_dir / name)
-            rows.append({"image_path": name, "label": label, "split": 2 if index >= len(labels) - 8 else index % 2})
-        csv_path = root / "metadata.csv"
-        pd.DataFrame(rows).to_csv(csv_path, index=False)
-        image_zip = root / "images.zip"
-        with zipfile.ZipFile(image_zip, "w") as archive:
-            for image in image_dir.iterdir():
-                archive.write(image, image.name)
+        csv_path, image_zip, image_dir = write_dataset(root, labels, seed=7)
         output = root / "out"
         output.mkdir()
-        args = argparse.Namespace(
-            csv_file=csv_path, image_zip=image_zip, model_name="resnet18",
-            use_pretrained=False, fine_tune=False, epochs=2, early_stop=5,
-            batch_size=None, output_dir=output, validation_size=0.15,
-            preprocessing_num_processes=1, split_probabilities=[0.7, 0.1, 0.2],
-            random_seed=42, learning_rate=0.001, augmentation=None,
-            image_resize="original", threshold=None, threshold_mode="auto",
-            threshold_metric="f1", validation_metric=None,
-            target_column=None, image_column=None, sample_id_column=None,
-            torch_home=None, cross_validation=True,
-            num_folds=2, fold_role=fold_role, num_seeds=num_seeds,
-        )
-        previous_dir = Path.cwd()
-        try:
-            os.chdir(output)
-            ImageLearnerCLI(args, SmallImageBackend()).run()
-        finally:
-            os.chdir(previous_dir)
-        report = (output / "image_classification_results_report.html").read_text()
+        args = make_args(csv_path, image_zip, output, fold_role=fold_role, num_seeds=num_seeds)
+        report = run_cli(args, SmallImageBackend())
         self.assertTrue("Ensemble Summary" in report, "the ensemble fell back to the minimal report")
         return image_dir, output / "experiment_run"
 
@@ -312,7 +353,7 @@ class EnsembleRowAlignmentTest(unittest.TestCase):
                 root = Path(tmp).resolve()
                 image_dir, run_dir = self.run_ensemble(root, [labels[index % 3] for index in range(30)])
                 statistics = json.loads((run_dir / "test_statistics.json").read_text())["label"]
-                self.assertEqual(int(np.sum(statistics["confusion_matrix"])), 8, labels)
+                self.assertEqual(int(np.sum(statistics["confusion_matrix"])), 6, labels)
                 self.assert_rows_match_member_models(run_dir, image_dir)
 
 

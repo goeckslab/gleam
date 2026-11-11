@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Iterable, Optional
 
 import pandas as pd
+from constants import MAX_ENSEMBLE_MEMBERS
 
 logger = logging.getLogger("ImageLearner")
 
@@ -82,6 +83,13 @@ def argument_checker(args, parser):
         parser.error("num-folds must be at least 2 when cross-validation is enabled")
     if getattr(args, "num_seeds", 1) < 1:
         parser.error("num-seeds must be at least 1")
+    folds = getattr(args, "num_folds", 5) if getattr(args, "cross_validation", False) else 1
+    members = folds * getattr(args, "num_seeds", 1)
+    if members > MAX_ENSEMBLE_MEMBERS:
+        parser.error(
+            f"folds x seeds = {members} models; at most {MAX_ENSEMBLE_MEMBERS} are allowed because members "
+            "train one after another. Lower the number of folds or seeds."
+        )
     if args.augmentation is not None:
         try:
             augmentation_setup = aug_parse(args.augmentation)

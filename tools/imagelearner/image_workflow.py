@@ -37,12 +37,14 @@ from ensemble import (
     compute_regression_statistics,
     ensemble_enabled,
     ENSEMBLE_SUMMARY_FILE_NAME,
+    EnsembleSetupError,
     flatten_label_statistics,
     FOLD_ROLE_TEST,
     FOLD_ROLE_VALIDATION,
     member_metrics,
     MEMBERS_DIR_NAME,
     normalize_prediction_frame,
+    plan_warnings,
     positive_class_index,
     PREDICTIONS_COLUMN,
     PROBABILITIES_PREFIX,
@@ -52,7 +54,7 @@ from ensemble import (
 from ludwig.globals import PREDICTIONS_PARQUET_FILE_NAME
 from ludwig_backend import Backend
 from split_data import create_stratified_random_split, split_data_0_2
-from utils import detect_output_type, load_metadata_table
+from utils import detect_output_type, load_metadata_table, nonzero_binary_label
 
 logger = logging.getLogger("ImageLearner")
 
@@ -70,6 +72,7 @@ class ImageLearnerCLI:
         self.label_split_counts: List[Dict[str, int]] = []
         self.split_counts: Dict[int, int] = {}
         self.image_match_summary: Dict[str, int] = {}
+        self.user_split_supplied = False
         logger.info(f"Orchestrator initialized with backend: {type(backend).__name__}")
 
     @staticmethod
@@ -280,6 +283,7 @@ class ImageLearnerCLI:
             raise
 
         if SPLIT_COLUMN_NAME in df.columns:
+            self.user_split_supplied = True
             df, split_config, split_info = self._process_fixed_split(df)
         else:
             logger.info("No split column; creating stratified random split")
@@ -317,8 +321,29 @@ class ImageLearnerCLI:
 
         self._capture_split_counts(df)
         self._capture_label_metadata(df)
+        self._check_numeric_binary_labels(df)
 
         return final_csv, split_config, split_info
+
+    @staticmethod
+    def _check_numeric_binary_labels(df: pd.DataFrame) -> None:
+        """Refuse two numeric labels without exactly one zero (for example 1/2).
+
+        Ludwig casts numeric binary targets to bool, zero to False and anything
+        else to True, so both classes of 1/2 or -1/1 would become True and the
+        model could not learn them.
+        """
+        series = df[LABEL_COLUMN_NAME]
+        values = series.dropna().unique().tolist()
+        if len(values) != 2 or ptypes.is_bool_dtype(series.dtype) or not ptypes.is_numeric_dtype(series.dtype):
+            return
+        if nonzero_binary_label(values) is None:
+            shown = " and ".join(canonical_label(v) for v in sorted(values))
+            raise ValueError(
+                f"The label column has two numeric values, {shown}, and neither or both are 0. "
+                "Ludwig reads every nonzero number as True, so both classes would look the same to the "
+                "model. Recode the labels as 0 and 1 (1 = the positive class) or use text labels."
+            )
 
     def _capture_split_counts(self, df: pd.DataFrame) -> None:
         """Capture actual split counts for downstream reporting (avoids heuristic 70/10/20 tables)."""
@@ -584,6 +609,9 @@ class ImageLearnerCLI:
             if ensemble_run:
                 try:
                     ran_ok = self._run_ensemble(csv_path, config_file, backend_args)
+                except EnsembleSetupError:
+                    # Bad settings for this data: fail the job with the reason, before any training.
+                    raise
                 except Exception:
                     logger.error("Ensemble workflow failed", exc_info=True)
                     ran_ok = False
@@ -702,7 +730,11 @@ class ImageLearnerCLI:
             label_column=LABEL_COLUMN_NAME,
             group_column=self.args.sample_id_column,
             stratify=not likely_regression,
+            user_test_split=self.user_split_supplied,
         )
+        warnings_for_plan = [] if likely_regression else plan_warnings(df, members)
+        for message in warnings_for_plan:
+            logger.warning("Ensemble plan: %s", message)
         logger.info(
             "Ensemble plan: %d member(s): %s",
             len(members),
@@ -711,6 +743,9 @@ class ImageLearnerCLI:
 
         members_root = self.args.output_dir / "ensemble_members"
         label_values = df[LABEL_COLUMN_NAME].dropna().unique().tolist()
+        # Only the exported member's weights leave the job; the others would only fill the disk.
+        keep_member_weights = bool(getattr(self.args, "keep_member_weights", False))
+        exported_name: Optional[str] = None
         records: List[Dict[str, Any]] = []
         for position, member in enumerate(members, start=1):
             logger.info("Training ensemble member %d/%d: %s", position, len(members), member.name)
@@ -751,15 +786,28 @@ class ImageLearnerCLI:
                     )
                 )
                 record["status"] = "ok"
+                # A split only counts as unmatched when the member had rows in it.
+                record["predictions_unmatched"] = [
+                    split
+                    for split, value in (("validation", 1), ("test", 2))
+                    if record.get(f"{split}_frame") is None and bool((member.split == value).any())
+                ]
+                if exported_name is None:
+                    exported_name = member.name
             except Exception:
                 logger.error("Ensemble member %s failed.", member.name, exc_info=True)
             finally:
                 if exp_dir is None:
                     exp_dir = self._latest_experiment_dir(member_out)
                 if exp_dir is not None:
-                    self._trim_member_run(exp_dir)
+                    drop_weights = not keep_member_weights and member.name != exported_name
+                    self._trim_member_run(exp_dir, drop_weights=drop_weights)
                     record["exp_dir"] = exp_dir
             records.append(record)
+            next_member = members[position] if position < len(members) else None
+            if next_member is None or next_member.fold != member.fold:
+                # Every seed of this split is done; its Ludwig preprocessing cache is not needed again.
+                self._remove_split_cache(member_csv)
         self._release_backend_cache()
 
         trained = [record for record in records if record["status"] == "ok"]
@@ -773,6 +821,17 @@ class ImageLearnerCLI:
                 len(records),
                 len(trained),
             )
+        if cross_validation:
+            untrained_folds = sorted(
+                {member.fold for member in members} - {record["fold"] for record in trained}
+            )
+            if untrained_folds:
+                logger.error(
+                    "No member of fold(s) %s trained, so the rows those folds hold out cannot be "
+                    "scored; refusing to report metrics for a partial cross-validation.",
+                    ", ".join(str(fold) for fold in untrained_folds),
+                )
+                return False
 
         task_type = self._ensemble_task_type(trained)
         test_agg = aggregate_member_predictions(
@@ -793,6 +852,9 @@ class ImageLearnerCLI:
                 len(trained),
             )
             return False
+        coverage = self._ensemble_coverage(members, trained, test_agg, val_agg)
+        for warning in coverage.get("warnings", []):
+            logger.warning("Ensemble coverage: %s", warning)
 
         # The report reads ground truth by split from this CSV: rows scored as
         # test by the ensemble are 2, rows scored out-of-fold as validation are 1.
@@ -846,6 +908,28 @@ class ImageLearnerCLI:
                 self._ensemble_label_statistics(val_agg, df, task_type, class_order, threshold)
             )
 
+        # Score every member the way the ensemble row is scored: from its own predictions
+        # (the saved model, not the last epoch) and, for binary tasks, at the threshold the
+        # ensemble applies to the same rows. Ludwig's own numbers are kept under "ludwig".
+        fold_thresholds = threshold_info.get("fold_thresholds") or {}
+        for record in trained:
+            record["ludwig"] = {"validation": record["validation"], "test": record["test"]}
+            member_test_threshold = fold_thresholds.get(str(record.get("fold")), threshold)
+            record["validation"] = self._member_split_metrics(
+                record.get("validation_frame"), df, task_type, class_order, threshold
+            )
+            record["test"] = self._member_split_metrics(
+                record.get("test_frame"), df, task_type, class_order, member_test_threshold
+            )
+        exported_info = self._exported_member_details(trained[0], df, task_type, class_order)
+        exported_spec = next(member for member in members if member.name == trained[0]["name"])
+        gradcam_df = df.copy()
+        gradcam_df[SPLIT_COLUMN_NAME] = exported_spec.split.to_numpy()
+        gradcam_csv = self.temp_dir / "exported_member_split.csv"
+        gradcam_df.to_csv(gradcam_csv, index=False)
+        # Grad-CAM uses the exported model, so it samples that model's own test rows.
+        backend_args["gradcam_label_path"] = gradcam_csv
+
         summary: Dict[str, Any] = {
             "cross_validation": cross_validation,
             "num_folds": num_folds if cross_validation else None,
@@ -862,9 +946,18 @@ class ImageLearnerCLI:
             "members_planned": len(members),
             "members_trained": len(trained),
             "exported_model": trained[0]["name"],
+            **exported_info,
+            "plan_warnings": warnings_for_plan,
+            "coverage": coverage,
             **self._ensemble_dataset_layout(df, members, cross_validation, fold_role, task_type),
             "members": [
-                {key: record.get(key) for key in ("name", "fold", "seed", "status", "training", "validation", "test")}
+                {
+                    key: record.get(key)
+                    for key in (
+                        "name", "fold", "seed", "status", "predictions_unmatched",
+                        "training", "validation", "test", "ludwig",
+                    )
+                }
                 for record in records
             ],
             "member_summary": {
@@ -917,6 +1010,95 @@ class ImageLearnerCLI:
         logger.info("Ensemble assembled under %s", top_dir)
         return True
 
+    @staticmethod
+    def _ensemble_coverage(
+        members: List[Any],
+        trained: List[Dict[str, Any]],
+        test_agg: pd.DataFrame,
+        val_agg: pd.DataFrame,
+    ) -> Dict[str, Any]:
+        """Planned versus scored rows per split, and warnings for anything left out."""
+        coverage: Dict[str, Any] = {}
+        warnings: List[str] = []
+        for split, value, aggregated in (("test", 2, test_agg), ("validation", 1, val_agg)):
+            planned = set()
+            for member in members:
+                planned |= set(member.split.index[member.split == value])
+            scored = len(planned & set(aggregated.index))
+            coverage[split] = {"planned": len(planned), "scored": scored}
+            if scored < len(planned):
+                warnings.append(
+                    f"{scored} of {len(planned)} {split} rows were scored; the {split} metrics "
+                    "cover the scored rows only."
+                )
+        for record in trained:
+            unmatched = record.get("predictions_unmatched") or []
+            if unmatched:
+                warnings.append(
+                    f"Member {record['name']}: {' and '.join(unmatched)} predictions could not be matched "
+                    "to dataset rows and were left out."
+                )
+        coverage["warnings"] = warnings
+        return coverage
+
+    def _member_split_metrics(
+        self,
+        frame: Optional[pd.DataFrame],
+        df: pd.DataFrame,
+        task_type: str,
+        class_order: List[str],
+        threshold: Any,
+    ) -> Dict[str, float]:
+        """One member's metrics on one split, computed like the ensemble row."""
+        if frame is None or frame.empty:
+            return {}
+        try:
+            return flatten_label_statistics(
+                self._ensemble_label_statistics(frame, df, task_type, class_order, threshold)
+            )
+        except Exception as exc:
+            logger.warning("Could not score member predictions: %s", exc)
+            return {}
+
+    def _exported_member_details(
+        self,
+        record: Dict[str, Any],
+        df: pd.DataFrame,
+        task_type: str,
+        class_order: List[str],
+    ) -> Dict[str, Any]:
+        """Test metrics of the exported model on its own, at its own validation-tuned threshold."""
+        if task_type != "binary":
+            return {"exported_model_test_metrics": dict(record.get("test") or {})}
+        metric = str(getattr(self.args, "threshold_metric", "f1") or "f1")
+        if str(getattr(self.args, "threshold_mode", "auto")).lower() == "manual":
+            own = float(self.args.threshold) if self.args.threshold is not None else 0.5
+            source = "manual"
+        else:
+            own = self._optimize_threshold(record.get("validation_frame"), df, metric)
+            source = "validation"
+            if own is None:
+                own, source = 0.5, "default"
+        return {
+            "exported_model_threshold": float(own),
+            "exported_model_threshold_source": source,
+            "exported_model_test_metrics": self._member_split_metrics(
+                record.get("test_frame"), df, task_type, class_order, own
+            ),
+        }
+
+    @staticmethod
+    def _remove_split_cache(member_csv: Path) -> None:
+        """Delete one split's CSV and the preprocessing cache Ludwig wrote next to it."""
+        for path in Path(member_csv).parent.glob(f"{Path(member_csv).stem}.*"):
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink()
+            except OSError as exc:
+                logger.warning("Could not remove %s: %s", path, exc)
+
     def _release_backend_cache(self) -> None:
         """Let the backend free datasets and models it kept in memory for reuse between runs."""
         release = getattr(self.backend, "release_cached_data", None)
@@ -935,11 +1117,20 @@ class ImageLearnerCLI:
         return exp_dirs[-1] if exp_dirs else None
 
     @staticmethod
-    def _trim_member_run(exp_dir: Path) -> None:
-        """Drop the checkpoints and parquet of a finished member to bound disk usage."""
+    def _trim_member_run(exp_dir: Path, drop_weights: bool = False) -> None:
+        """Drop the checkpoints and parquet of a finished member (and its weights) to bound disk usage."""
         ckpt_dir = exp_dir / "model" / "training_checkpoints"
         if ckpt_dir.exists():
             shutil.rmtree(ckpt_dir, ignore_errors=True)
+        weights = exp_dir / "model" / "model_weights"
+        if drop_weights and weights.exists():
+            if weights.is_dir():
+                shutil.rmtree(weights, ignore_errors=True)
+            else:
+                try:
+                    weights.unlink()
+                except OSError:
+                    pass
         parquet_path = exp_dir / PREDICTIONS_PARQUET_FILE_NAME
         if parquet_path.exists():
             try:
@@ -1111,6 +1302,7 @@ class ImageLearnerCLI:
             }
 
         fold_thresholds: Dict[str, float] = {}
+        default_folds: List[str] = []
         per_row = pd.Series(np.nan, index=test_agg.index, dtype=float)
         for fold in sorted({record["fold"] for record in trained if record.get("fold") is not None}):
             fold_members = [record for record in trained if record.get("fold") == fold]
@@ -1121,6 +1313,7 @@ class ImageLearnerCLI:
             if fold_threshold is None:
                 logger.warning("Fold %d: threshold optimization unavailable; using 0.5.", fold)
                 fold_threshold = 0.5
+                default_folds.append(str(fold))
             fold_thresholds[str(fold)] = fold_threshold
             fold_test_rows = next(
                 member.split.index[member.split == 2] for member in members if member.fold == fold
@@ -1136,6 +1329,7 @@ class ImageLearnerCLI:
             ),
             "threshold_metric": metric_label,
             "fold_thresholds": fold_thresholds,
+            "fold_threshold_defaults": default_folds,
         }
 
     @staticmethod
@@ -1258,7 +1452,7 @@ class ImageLearnerCLI:
             role = summary.get("fold_role")
             layout = f"{summary.get('num_folds')}-fold cross-validation ({role} folds)"
             if role == FOLD_ROLE_TEST:
-                layout += "; every row is scored out-of-fold, so any original test split is ignored"
+                layout += "; every row is scored out-of-fold, and the generated test split is folded back in"
         else:
             layout = "single split"
         if num_seeds > 1:

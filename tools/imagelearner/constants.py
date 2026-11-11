@@ -234,3 +234,6 @@ MULTICLASS_METRIC_DISPLAY_NAME_OVERRIDES = {
     "accuracy_micro": "Accuracy",
     "roc_auc": "Macro ROC-AUC",
 }
+
+# Upper bound on ensemble members (folds x seeds); members train one after another.
+MAX_ENSEMBLE_MEMBERS = 50
