@@ -39,7 +39,7 @@ from sklearn.model_selection import (
     StratifiedKFold,
 )
 from split_data import create_stratified_random_split
-from utils import detect_output_type, extract_metrics_from_json, extract_test_metrics, nonzero_binary_label
+from utils import detect_output_type, extract_metrics_from_json, extract_test_metrics, positive_class_name
 
 logger = logging.getLogger("ImageLearner")
 
@@ -55,8 +55,8 @@ N_MODELS_COLUMN = "n_models"
 
 ENSEMBLE_SUMMARY_FILE_NAME = "ensemble_summary.json"
 MEMBERS_DIR_NAME = "members"
-
-_POSITIVE_CLASS_HINTS = ("event", "true", "positive", "pos", "1")
+# Scratch directory members train in before their runs move under experiment_run/members.
+MEMBERS_WORK_DIR_NAME = "ensemble_members"
 
 
 class EnsembleSetupError(ValueError):
@@ -198,7 +198,12 @@ def plan_warnings(
     members: Sequence[MemberSpec],
     label_column: str = LABEL_COLUMN_NAME,
 ) -> List[str]:
-    """Folds whose validation rows miss a class (thresholds and early stopping see no examples of it)."""
+    """Folds whose training or validation rows miss a class.
+
+    Without training rows the fold's models never learn the class (typical when
+    all of its rows share one sample ID, so they are held out together); without
+    validation rows thresholds and early stopping see no examples of it.
+    """
     if label_column not in df.columns:
         return []
     labels = df[label_column].map(lambda v: canonical_label(v) if pd.notna(v) else None)
@@ -209,6 +214,15 @@ def plan_warnings(
         if member.fold is None or member.fold in seen:
             continue
         seen.add(member.fold)
+        untrained = sorted(all_classes - set(labels[member.split == 0].dropna()))
+        if untrained:
+            warnings.append(
+                f"Fold {member.fold}: the training rows contain no "
+                + ", ".join(f"'{label}'" for label in untrained)
+                + ", so this fold's models cannot predict "
+                + ("it" if len(untrained) == 1 else "them")
+                + "."
+            )
         val_classes = set(labels[member.split == 1].dropna())
         missing = sorted(all_classes - val_classes)
         if val_classes and missing:
@@ -600,22 +614,9 @@ def attach_row_metadata(
 
 
 def positive_class_index(class_names: Sequence[str]) -> int:
-    """Pick the positive class the same way the report picks its probability column.
-
-    Two numeric classes with exactly one zero follow Ludwig (the nonzero label
-    is positive); otherwise a name hint such as "true" or "1" decides, then the
-    last name in sorted order.
-    """
-    nonzero = nonzero_binary_label(str(c) for c in class_names)
-    if nonzero is not None:
-        return [str(c) for c in class_names].index(nonzero)
-    ordered = sorted(str(c) for c in class_names)
-    chosen = ordered[-1]
-    for name in ordered:
-        if any(hint in name.lower() for hint in _POSITIVE_CLASS_HINTS):
-            chosen = name
-            break
-    return [str(c) for c in class_names].index(chosen)
+    """Index of the positive class, chosen by the rule the report uses (``utils.positive_class_name``)."""
+    names = [str(c) for c in class_names]
+    return names.index(positive_class_name(names))
 
 
 def _safe(fn, *args, **kwargs) -> Optional[float]:
@@ -661,6 +662,10 @@ def compute_classification_statistics(
             len(y_true),
             class_names,
         )
+        # Drop them everywhere, so the scalar metrics and the confusion matrix cover the same rows.
+        if threshold is not None and np.size(threshold) == len(y_true):
+            threshold = np.asarray(threshold, dtype=float).reshape(-1)[known]
+        y_true, probabilities = y_true[known], probabilities[known]
     n_classes = len(class_names)
     binary = n_classes == 2
 

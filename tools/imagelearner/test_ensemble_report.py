@@ -120,9 +120,9 @@ def test_report_renders_binary_ensemble(tmp_path, monkeypatch):
     assert "Check before relying on these numbers" not in html
     assert "Ludwig Evaluation Threshold (Member Statistics Files)" in html
     assert "Selected Threshold (Test Summary)" in html
-    assert "Source: Optimized on averaged validation split." in html
+    assert "Source: Optimized on out-of-fold validation predictions (each row scored by its own fold&#x27;s models only" in html
     assert "selected-threshold test metrics unavailable" not in html
-    assert "Optimized on averaged validation split" in html
+    assert "test rows are averaged across all members" in html
     assert "2-fold cross-validation (validation folds) x 2 random seeds" in html
     # binary plots are built from the averaged prediction CSVs
     assert "Threshold plot" in html

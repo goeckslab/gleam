@@ -550,6 +550,21 @@ def test_positive_probability_column_keeps_ludwig_nonzero_class(suffixes, expect
     assert _select_positive_probability_column(columns) == (f"label_probabilities_{expected}", expected)
 
 
+@pytest.mark.parametrize(
+    "names",
+    [
+        ["0", "2"], ["False", "True"], ["event", "no_event"], ["negative", "positive"],
+        ["benign", "malignant"], ["class1", "class2"], ["HER2-", "HER2+"], ["no", "yes"],
+    ],
+)
+def test_report_and_ensemble_pick_the_same_positive_class(names):
+    from ensemble import positive_class_index
+
+    for ordered in (names, names[::-1]):
+        columns = [f"label_probabilities_{name}" for name in ordered]
+        assert _select_positive_probability_column(columns)[1] == ordered[positive_class_index(ordered)]
+
+
 def test_positive_label_matches_numeric_hint_against_float_labels():
     assert _resolve_positive_label_from_probability(np.array([0.0, -2.0]), "-2") == -2.0
     assert _resolve_positive_label_from_probability(np.array([2.0, 0.0]), "2") == 2.0

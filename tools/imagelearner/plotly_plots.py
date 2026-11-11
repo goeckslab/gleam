@@ -29,7 +29,7 @@ from sklearn.metrics import (
     roc_curve,
 )
 from sklearn.preprocessing import label_binarize
-from utils import nonzero_binary_label
+from utils import positive_class_name
 
 
 def _style_fig(fig: go.Figure, font_size: int = 12) -> go.Figure:
@@ -83,16 +83,9 @@ def _select_positive_probability_column(
         return None, None
     prob_cols_sorted = sorted(prob_cols)
     suffixes = [_strip_prob_prefix(col) for col in prob_cols_sorted]
-    nonzero = nonzero_binary_label(suffixes)
-    if nonzero is not None:
-        # Numeric 0/x targets: Ludwig's positive (True) class is the nonzero label.
-        return prob_cols_sorted[suffixes.index(nonzero)], nonzero
-    preferred_keys = ("event", "true", "positive", "pos", "1")
-    for col in prob_cols_sorted:
-        suffix = _strip_prob_prefix(col)
-        if any(k in suffix.lower() for k in preferred_keys):
-            return col, suffix
-    return prob_cols_sorted[-1], _strip_prob_prefix(prob_cols_sorted[-1])
+    # Shared with the ensemble, which thresholds the same class before the report plots it.
+    positive = positive_class_name(suffixes)
+    return prob_cols_sorted[suffixes.index(positive)], positive
 
 
 def _resolve_positive_label_from_probability(

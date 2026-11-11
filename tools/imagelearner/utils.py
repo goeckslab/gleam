@@ -34,6 +34,29 @@ def nonzero_binary_label(labels: Iterable[object]) -> Optional[str]:
     return next(name for name in numbers if name != zeros[0])
 
 
+_POSITIVE_CLASS_HINTS = ("event", "true", "positive", "pos", "1")
+
+
+def positive_class_name(class_names: Iterable[object]) -> Optional[str]:
+    """The positive class of a binary task; the report and the ensemble must agree on it.
+
+    Two numeric classes with exactly one zero follow Ludwig (the nonzero label
+    is positive); otherwise the first name in sorted order holding a hint such
+    as "true" or "1" decides, then the last name in sorted order.
+    """
+    names = [str(name) for name in class_names]
+    if not names:
+        return None
+    nonzero = nonzero_binary_label(names)
+    if nonzero is not None:
+        return nonzero
+    ordered = sorted(names)
+    for name in ordered:
+        if any(hint in name.lower() for hint in _POSITIVE_CLASS_HINTS):
+            return name
+    return ordered[-1]
+
+
 def detect_output_type(test_stats):
     """Detects if the output type is 'binary' or 'category' based on test statistics."""
     label_stats = test_stats.get("label", {})

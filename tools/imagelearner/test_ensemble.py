@@ -141,6 +141,28 @@ def test_plan_warnings_name_folds_whose_validation_misses_a_class():
     assert ensemble.plan_warnings(df, members) == ["Fold 2: the validation rows contain no '1'."]
 
 
+def test_plan_warnings_name_folds_that_train_without_a_class():
+    # every 'c' row shares one sample ID, so one fold holds the whole class out
+    df = pd.DataFrame(
+        {
+            LABEL: ["a"] * 20 + ["b"] * 20 + ["c"] * 5,
+            "patient": list(range(40)) + [99] * 5,
+            SPLIT: 0,
+        }
+    )
+    for fold_role in ensemble.FOLD_ROLES:
+        members = ensemble.build_member_plan(
+            df, cross_validation=True, num_folds=5, fold_role=fold_role, num_seeds=1,
+            random_seed=42, validation_size=0.15, group_column="patient",
+        )
+        untrained = [m.fold for m in members if "c" not in set(df[LABEL][m.split == 0])]
+        assert len(untrained) == 1
+        warnings = ensemble.plan_warnings(df, members)
+        expected = f"Fold {untrained[0]}: the training rows contain no 'c', so this fold's models cannot predict it."
+        assert expected in warnings
+        assert sum("training rows" in message for message in warnings) == 1
+
+
 def test_validation_folds_keep_test_rows_and_rotate_validation():
     df = _classification_df()
     members = ensemble.build_member_plan(
@@ -458,6 +480,23 @@ def test_aggregate_member_predictions_averages_regression_values():
 # Ensemble statistics
 # ---------------------------------------------------------------------------
 
+def test_statistics_leave_out_rows_whose_label_matches_no_class():
+    probs = np.array([[0.9, 0.1], [0.2, 0.8], [0.3, 0.7], [0.6, 0.4], [0.1, 0.9], [0.9, 0.1]])
+    known = ["0", "1", "1", "0"]
+    # the two extra rows would count as a false positive and a true negative if kept as negatives
+    with_unknown = ensemble.compute_classification_statistics(
+        known + [float("nan"), "other"], probs, ["0", "1"], threshold=[0.5, 0.5, 0.5, 0.5, 0.2, 0.2]
+    )
+    only_known = ensemble.compute_classification_statistics(known, probs[:4], ["0", "1"], threshold=0.5)
+    assert with_unknown == only_known
+    assert int(np.sum(with_unknown["confusion_matrix"])) == 4
+    assert with_unknown["accuracy"] == 1.0
+
+    multi = np.array([[0.8, 0.1, 0.1], [0.1, 0.8, 0.1], [0.1, 0.1, 0.8], [0.8, 0.1, 0.1]])
+    with_unknown = ensemble.compute_classification_statistics(["a", "b", "c", "zzz"], multi, ["a", "b", "c"])
+    assert with_unknown == ensemble.compute_classification_statistics(["a", "b", "c"], multi[:3], ["a", "b", "c"])
+
+
 def test_binary_statistics_look_like_ludwig_test_statistics():
     y_true = ["0", "1", "1", "0", "1"]
     probs = np.array([[0.9, 0.1], [0.2, 0.8], [0.4, 0.6], [0.3, 0.7], [0.1, 0.9]])
@@ -696,7 +735,7 @@ def test_workflow_trains_members_and_averages_predictions(tmp_path, monkeypatch)
     assert 0 < summary["exported_model_threshold"] < 1
     assert "accuracy" in summary["exported_model_test_metrics"]
     assert 0 < summary["threshold"] < 1
-    assert summary["threshold_source"] == "Optimized on averaged validation split"
+    assert summary["threshold_source"].startswith("Optimized on out-of-fold validation predictions")
     assert summary["threshold_metric"] == "F1"
     assert "fold_thresholds" not in summary
     assert "accuracy" in summary["ensemble_test_metrics"]
@@ -881,6 +920,8 @@ def test_workflow_refuses_a_cross_validation_with_an_untrained_fold(tmp_path, mo
 
     # fold 2 held out rows nobody scored: no partial ensemble, the run takes the failure path
     assert not (args.output_dir / "experiment_run" / ensemble.ENSEMBLE_SUMMARY_FILE_NAME).exists()
+    # the member that did train is not left behind in the scratch directory
+    assert not (args.output_dir / ensemble.MEMBERS_WORK_DIR_NAME).exists()
     config, _, _ = backend.report_configs[-1]
     assert "ensemble" not in config
 
@@ -906,6 +947,7 @@ def test_workflow_falls_back_when_no_member_predictions_can_be_matched(tmp_path,
     assert not (args.output_dir / "experiment_run" / ensemble.ENSEMBLE_SUMMARY_FILE_NAME).exists()
     config, _, _ = backend.report_configs[-1]
     assert "ensemble" not in config
+    assert not (args.output_dir / ensemble.MEMBERS_WORK_DIR_NAME).exists()
 
 
 @pytest.mark.parametrize("ensemble_options", [{"num_seeds": 1}, {"cross_validation": False, "num_seeds": 1}])

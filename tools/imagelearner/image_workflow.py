@@ -43,6 +43,7 @@ from ensemble import (
     FOLD_ROLE_VALIDATION,
     member_metrics,
     MEMBERS_DIR_NAME,
+    MEMBERS_WORK_DIR_NAME,
     normalize_prediction_frame,
     plan_warnings,
     positive_class_index,
@@ -615,6 +616,9 @@ class ImageLearnerCLI:
                 except Exception:
                     logger.error("Ensemble workflow failed", exc_info=True)
                     ran_ok = False
+                finally:
+                    # A run that fails after training must not leave every member's run behind.
+                    shutil.rmtree(self.args.output_dir / MEMBERS_WORK_DIR_NAME, ignore_errors=True)
                 if ran_ok:
                     split_info = self._ensemble_split_info(split_info, backend_args["ensemble"])
             else:
@@ -741,9 +745,10 @@ class ImageLearnerCLI:
             ", ".join(member.name for member in members),
         )
 
-        members_root = self.args.output_dir / "ensemble_members"
+        members_root = self.args.output_dir / MEMBERS_WORK_DIR_NAME
         label_values = df[LABEL_COLUMN_NAME].dropna().unique().tolist()
         # Only the exported member's weights leave the job; the others would only fill the disk.
+        # keep_member_weights has no CLI flag on purpose: tests set it to compare members' weights.
         keep_member_weights = bool(getattr(self.args, "keep_member_weights", False))
         exported_name: Optional[str] = None
         records: List[Dict[str, Any]] = []
@@ -1296,8 +1301,16 @@ class ImageLearnerCLI:
                     "threshold_source": "Default 0.5 (automatic optimization unavailable)",
                     "threshold_metric": metric_label,
                 }
+            source = "Optimized on averaged validation split"
+            if cross_validation:
+                # No model outside a row's own fold may score it, so the tuning scores average
+                # fewer models than the test scores the threshold is applied to. Say so.
+                source = (
+                    "Optimized on out-of-fold validation predictions (each row scored by its own "
+                    "fold's models only; test rows are averaged across all members)"
+                )
             return optimized, None, {
-                "threshold_source": "Optimized on averaged validation split",
+                "threshold_source": source,
                 "threshold_metric": metric_label,
             }
 
