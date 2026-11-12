@@ -21,12 +21,15 @@ import torch
 import yaml
 from image_workflow import ImageLearnerCLI
 from ludwig.api import LudwigModel
+from ludwig.backend import LOCAL_BACKEND
 from ludwig.data.cache.manager import DatasetCache
 from ludwig.experiment import experiment_cli
+from ludwig.features.binary_feature import BinaryFeatureMixin
 from ludwig.trainers.trainer import Trainer
 from ludwig_backend import configure_binary_metrics, LudwigDirectBackend
 from PIL import Image
 from plotly_plots import _resolve_display_labels
+from utils import ludwig_text_binary_truth
 
 
 class SmallImageBackend(LudwigDirectBackend):
@@ -125,7 +128,29 @@ class RuntimeEquivalenceTest(unittest.TestCase):
         else:
             self.assertEqual(expected, actual)
 
-    def compare_ensemble(self, task="binary", fold_role="validation", num_seeds=2, cross_validation=True, stateful=False):
+    def assert_config_matches(self, written, rebuilt, path="config"):
+        """Ludwig writes its description before training, the rebuilt one after: settings Ludwig
+        resolves during training (null or "auto" before it, such as image size or batch size) may be
+        filled in, and it may add saved_weights_in_checkpoint. Everything else must be equal."""
+        if isinstance(written, dict):
+            for key in written:
+                self.assertIn(key, rebuilt, f"{path}.{key}")
+                self.assert_config_matches(written[key], rebuilt[key], f"{path}.{key}")
+            extra = set(rebuilt) - set(written)
+            self.assertTrue(extra <= {"saved_weights_in_checkpoint"}, f"{path}: unexpected keys {extra}")
+        elif isinstance(written, list):
+            self.assertEqual(len(written), len(rebuilt), path)
+            for index, (left, right) in enumerate(zip(written, rebuilt)):
+                self.assert_config_matches(left, right, f"{path}[{index}]")
+        elif written is not None and written != "auto":
+            self.assertEqual(written, rebuilt, path)
+
+    def compare_ensemble(
+        self, task="binary", fold_role="validation", num_seeds=2, cross_validation=True, stateful=False,
+        threshold_mode=None,
+    ):
+        if threshold_mode is None:
+            threshold_mode = "manual" if fold_role == "test" else "auto"
         torch.set_num_threads(1)
         with tempfile.TemporaryDirectory(prefix="imagelearner_runtime_") as tmp:
             root = Path(tmp).resolve()
@@ -148,8 +173,8 @@ class RuntimeEquivalenceTest(unittest.TestCase):
                 output.mkdir()
                 args = make_args(
                     csv_path, image_zip, output,
-                    threshold=0.6 if fold_role == "test" else None,
-                    threshold_mode="manual" if fold_role == "test" else "auto",
+                    threshold=0.6 if threshold_mode == "manual" else None,
+                    threshold_mode=threshold_mode,
                     cross_validation=cross_validation, fold_role=fold_role, num_seeds=num_seeds,
                 )
                 counter = Counter()
@@ -212,6 +237,23 @@ class RuntimeEquivalenceTest(unittest.TestCase):
                 for name in weights_before:
                     self.assertTrue(torch.equal(weights_before[name], weights_after[name]), f"{relative}: {name}")
             self.assert_values_equal(before_summary, after_summary)
+            if num_seeds > 1:
+                # Ludwig skips description.json for a seed that reuses prepared data, so it is rebuilt
+                # from the trained model's public config: it must match the file Ludwig wrote itself.
+                prefix = "fold1_" if cross_validation else ""
+                written, rebuilt = (
+                    json.loads((after / "members" / f"{prefix}seed{seed}" / "description.json").read_text())
+                    for seed in (42, 43)
+                )
+                self.assertEqual(written.keys(), rebuilt.keys())
+                self.assertEqual(rebuilt["random_seed"], 43)
+                self.assert_config_matches(written["config"], rebuilt["config"])
+            if task == "binary" and threshold_mode == "auto" and fold_role == "test":
+                # each fold tunes its own threshold; every test row carries its fold's value
+                thresholds = after_summary["fold_thresholds"]
+                self.assertEqual(sorted(thresholds), ["1", "2"])
+                applied = set(np.round(pd.read_csv(after / "predictions.csv")["decision_threshold"], 6))
+                self.assertTrue(applied <= {round(value, 6) for value in thresholds.values()}, applied)
             folds = 2 if cross_validation else 1
             self.assertEqual(counts[0]["preprocessing"], folds * num_seeds)
             self.assertEqual(counts[1]["preprocessing"], folds)
@@ -264,6 +306,9 @@ class RuntimeEquivalenceTest(unittest.TestCase):
 
     def test_binary_test_folds_manual_threshold(self):
         self.compare_ensemble(fold_role="test")
+
+    def test_binary_test_folds_automatic_threshold(self):
+        self.compare_ensemble(fold_role="test", threshold_mode="auto")
 
     def test_category_validation_folds(self):
         self.compare_ensemble(task="category")
@@ -358,6 +403,19 @@ class EnsembleRowAlignmentTest(unittest.TestCase):
                 self.assert_report_labels_name_the_right_classes(run_dir, statistics)
                 self.assert_rows_match_member_models(run_dir, image_dir)
 
+    def test_text_binary_labels_follow_ludwigs_bool2str(self):
+        # Ludwig makes the alphabetically first text label True: bool2str = [False label, True label].
+        with tempfile.TemporaryDirectory(prefix="imagelearner_textbinary_") as tmp:
+            root = Path(tmp).resolve()
+            image_dir, run_dir = self.run_ensemble(root, [("case", "control")[index % 2] for index in range(30)])
+            summary = json.loads((run_dir / "ensemble_summary.json").read_text())
+            for member in summary["members"]:
+                meta = json.loads(
+                    (run_dir / "members" / member["name"] / "model" / "training_set_metadata.json").read_text()
+                )
+                self.assertEqual(meta["label"]["bool2str"], ["control", "case"])
+            self.assert_rows_match_member_models(run_dir, image_dir)
+
     def assert_report_labels_name_the_right_classes(self, run_dir, statistics):
         """The per-class plots label each statistics key with the class it belongs to."""
         meta = json.loads((run_dir / "model" / "training_set_metadata.json").read_text())
@@ -385,6 +443,21 @@ class EnsembleRowAlignmentTest(unittest.TestCase):
             }
             self.assertEqual(support["1"], 6)  # every test row is label 1
             self.assert_report_labels_name_the_right_classes(run_dir, statistics)
+
+
+class LudwigBinaryLabelTest(unittest.TestCase):
+    """The text-label polarity check must map labels exactly as Ludwig does."""
+
+    def test_text_binary_truth_matches_ludwig(self):
+        pairs = [
+            ("yes", "true"), ("No", "FALSE"), ("maybe", "yes"), ("no", "other"), ("yes", "no"),
+            ("benign", "malignant"), ("case", "control"), ("negative", "positive"), ("T", "f"),
+        ]
+        for pair in pairs:
+            meta = BinaryFeatureMixin.get_feature_meta(
+                {}, pd.Series(list(pair), dtype=object), {"fallback_true_label": None}, LOCAL_BACKEND, False
+            )
+            self.assertEqual(ludwig_text_binary_truth(pair), meta["str2bool"], pair)
 
 
 if __name__ == "__main__":

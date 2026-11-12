@@ -14,6 +14,7 @@ import pandas as pd
 from constants import (
     DECISION_THRESHOLD_COLUMN,
     LABEL_COLUMN_NAME,
+    MIN_THRESHOLD_ROWS_PER_CLASS,
     SPLIT_COLUMN_NAME,
 )
 from sklearn.metrics import (
@@ -61,6 +62,10 @@ MEMBERS_WORK_DIR_NAME = "ensemble_members"
 
 class EnsembleSetupError(ValueError):
     """The requested ensemble cannot be built from this data; raised before any training."""
+
+
+class EnsembleRunError(RuntimeError):
+    """Members were trained, but the ensemble cannot be evaluated; the job must fail."""
 
 
 @dataclass
@@ -157,17 +162,22 @@ def assign_folds(
 def _seeded_group_folds(groups: np.ndarray, num_folds: int, random_state: int) -> np.ndarray:
     """Group k-fold that follows the seed: whole groups, folds balanced by row count.
 
-    Groups are visited largest first (a random order breaks ties) and each goes
-    to the fold with the fewest rows so far. scikit-learn's GroupKFold before
-    1.6 cannot shuffle, so changing the seed would not change its folds.
+    Groups larger than half a fold's mean size are placed first, largest first,
+    so they cannot unbalance the folds; the remaining groups are visited in an
+    order the seed shuffles. Each group goes to the fold with the fewest rows
+    so far, the seed breaking ties. scikit-learn's GroupKFold before 1.6
+    cannot shuffle, so changing the seed would not change its folds.
     """
     unique, inverse, counts = np.unique(groups, return_inverse=True, return_counts=True)
-    order = np.random.RandomState(random_state).permutation(len(unique))
-    order = order[np.argsort(-counts[order], kind="stable")]
+    rng = np.random.RandomState(random_state)
+    order = rng.permutation(len(unique))
+    large = counts[order] > len(groups) / num_folds / 2
+    order = np.concatenate([order[large][np.argsort(-counts[order[large]], kind="stable")], order[~large]])
     fold_rows = np.zeros(num_folds, dtype=int)
     group_fold = np.empty(len(unique), dtype=int)
     for group in order:
-        fold = int(np.argmin(fold_rows))
+        lightest = np.flatnonzero(fold_rows == fold_rows.min())
+        fold = int(rng.choice(lightest))
         group_fold[group] = fold
         fold_rows[fold] += counts[group]
     return group_fold[inverse]
@@ -193,22 +203,50 @@ def _check_class_counts(pool: pd.DataFrame, label_column: Optional[str], num_fol
         )
 
 
+def _few_rows_text(counts: pd.Series, min_rows: int) -> Optional[str]:
+    """"2 'malignant' rows and 1 'benign' row" for classes present with fewer than min_rows rows."""
+    few = [(label, int(n)) for label, n in sorted(counts.items()) if 0 < int(n) < min_rows]
+    if not few:
+        return None
+    return " and ".join(f"{n} '{label}' row{'s' if n != 1 else ''}" for label, n in few)
+
+
 def plan_warnings(
     df: pd.DataFrame,
     members: Sequence[MemberSpec],
     label_column: str = LABEL_COLUMN_NAME,
+    *,
+    fold_role: Optional[str] = None,
+    tunes_threshold: bool = False,
+    min_threshold_rows: int = MIN_THRESHOLD_ROWS_PER_CLASS,
 ) -> List[str]:
-    """Folds whose training or validation rows miss a class.
+    """Folds whose training or validation rows miss a class, and thin threshold-tuning sets.
 
     Without training rows the fold's models never learn the class (typical when
     all of its rows share one sample ID, so they are held out together); without
     validation rows thresholds and early stopping see no examples of it.
+
+    With ``tunes_threshold`` (binary, automatic threshold) a class with fewer
+    than ``min_threshold_rows`` rows in the set the threshold is tuned on is
+    flagged: each fold's validation rows with test folds (one threshold per
+    fold), otherwise all members' validation rows together (one threshold).
     """
     if label_column not in df.columns:
         return []
     labels = df[label_column].map(lambda v: canonical_label(v) if pd.notna(v) else None)
     all_classes = set(labels.dropna())
     warnings: List[str] = []
+    per_fold_threshold = tunes_threshold and fold_role == FOLD_ROLE_TEST
+    if tunes_threshold and not per_fold_threshold and members:
+        tuning_rows = np.zeros(len(df), dtype=bool)
+        for member in members:
+            tuning_rows |= (member.split == 1).to_numpy()
+        few = _few_rows_text(labels[tuning_rows].dropna().value_counts(), min_threshold_rows)
+        if few:
+            warnings.append(
+                f"The validation rows the decision threshold is tuned on hold only {few}; "
+                "the threshold rests on very few examples."
+            )
     seen = set()
     for member in members:
         if member.fold is None or member.fold in seen:
@@ -233,6 +271,13 @@ def plan_warnings(
             )
         elif not val_classes:
             warnings.append(f"Fold {member.fold}: no validation rows.")
+        if per_fold_threshold:
+            few = _few_rows_text(labels[member.split == 1].dropna().value_counts(), min_threshold_rows)
+            if few:
+                warnings.append(
+                    f"Fold {member.fold}: the validation rows hold only {few}; "
+                    "this fold's decision threshold rests on very few examples."
+                )
     return warnings
 
 
@@ -468,8 +513,10 @@ def normalize_prediction_frame(
     Per-class probability columns are kept (``label_probabilities_<class>``)
     and renamed to the dataset's own labels in canonical form. A single vector
     column is expanded when Ludwig did not expand it, in ``class_order``
-    (Ludwig's ``idx2str``) when given. For numeric binary targets Ludwig names
-    the columns after booleans (see ``boolean_probability_labels``).
+    (Ludwig's ``idx2str``, or ``bool2str`` for text binary labels) when given.
+    A binary vector is ``[P(False), P(True)]``, so for numeric binary targets
+    its entries are named after booleans, which Ludwig also uses for named
+    columns (see ``boolean_probability_labels``).
     """
     out = df_pred.reset_index(drop=True).copy()
     prob_cols = probability_columns(out.columns)
@@ -482,6 +529,8 @@ def normalize_prediction_frame(
             width = widths.pop()
             if class_order is not None and len(class_order) == width:
                 names = [str(name) for name in class_order]
+            elif width == 2 and boolean_probability_labels(label_values):
+                names = ["False", "True"]
             elif len(labels_as_str) == width:
                 names = labels_as_str
             else:

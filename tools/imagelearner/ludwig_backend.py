@@ -6,6 +6,7 @@ import os
 import zipfile
 from collections import Counter
 from copy import deepcopy
+from html import escape as html_escape
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
@@ -989,14 +990,19 @@ class LudwigDirectBackend:
             self._prepared_context = (cache_key, prepared_data)
             description_path = Path(run_dir) / DESCRIPTION_FILE_NAME
             if not description_path.exists():
-                from ludwig.api import get_experiment_description
+                # Ludwig omits this artifact when already-prepared datasets are supplied. Rebuild it
+                # from the public, fully rendered config, which Ludwig itself writes; the run has
+                # finished, so a failure here must not fail a trained member.
+                try:
+                    from ludwig.api import get_experiment_description
 
-                # Ludwig omits this artifact when already-prepared datasets are supplied.
-                description = get_experiment_description(
-                    model._user_config, dataset=str(dataset_path),
-                    backend=model.backend, random_seed=random_seed,
-                )
-                description_path.write_text(json.dumps(description, indent=2))
+                    description = get_experiment_description(
+                        model.config, dataset=str(dataset_path),
+                        backend=model.backend, random_seed=random_seed,
+                    )
+                    description_path.write_text(json.dumps(description, indent=2))
+                except Exception as exc:
+                    logger.warning("Could not write %s: %s", DESCRIPTION_FILE_NAME, exc)
             self._batch_size_key = cache_key
             parameter_names = dict(model.model.named_parameters())
             stateful = any(
@@ -1342,6 +1348,30 @@ class LudwigDirectBackend:
                 return module
         return None
 
+    @staticmethod
+    def _gradcam_sample_rows(
+        df_all: pd.DataFrame, held_out_only: bool = False
+    ) -> Tuple[pd.DataFrame, Optional[str]]:
+        """Rows Grad-CAM samples, and which split they come from ("test", "validation" or "all").
+
+        Test rows come first. A single model falls back to every row. An
+        ensemble's exported member (``held_out_only``) falls back to its
+        validation rows and never shows its training images; with neither it
+        returns no rows and None.
+        """
+        if SPLIT_COLUMN_NAME not in df_all.columns:
+            return df_all, "all"
+        split_values = pd.to_numeric(df_all[SPLIT_COLUMN_NAME], errors="coerce")
+        test_rows = df_all[split_values == 2]
+        if not test_rows.empty:
+            return test_rows, "test"
+        if not held_out_only:
+            return df_all, "all"
+        validation_rows = df_all[split_values == 1]
+        if not validation_rows.empty:
+            return validation_rows, "validation"
+        return df_all.iloc[0:0], None
+
     def _generate_gradcam_heatmaps(
         self,
         exp_dir: Path,
@@ -1382,8 +1412,9 @@ class LudwigDirectBackend:
             return result
 
         gradcam_path = config.get("gradcam_label_path")
-        if gradcam_path and Path(gradcam_path).exists():
-            # Ensembles: sample the exported member's own test rows, not the ensemble's view.
+        member_rows = bool(gradcam_path and Path(gradcam_path).exists())
+        if member_rows:
+            # Ensembles: sample the exported member's own held-out rows, not the ensemble's view.
             label_path = Path(gradcam_path)
         label_csv = label_path if label_path and label_path.exists() else None
         if not label_csv:
@@ -1400,15 +1431,11 @@ class LudwigDirectBackend:
             result["reason"] = "Image column missing from prepared CSV; cannot build Grad-CAM inputs."
             return result
 
-        # Prefer test split; otherwise fall back to the full dataset
-        df_candidates = df_all
-        if SPLIT_COLUMN_NAME in df_all.columns:
-            try:
-                df_candidates = df_all[df_all[SPLIT_COLUMN_NAME] == 2]
-                if df_candidates.empty:
-                    df_candidates = df_all
-            except Exception:
-                df_candidates = df_all
+        df_candidates, sample_split = self._gradcam_sample_rows(df_all, held_out_only=member_rows)
+        if sample_split is None:
+            result["reason"] = "The exported member has no test or validation rows to sample."
+            return result
+        result["sample_split"] = sample_split
 
         # Cap the number of samples
         df_candidates = df_candidates.head(12)
@@ -2678,9 +2705,14 @@ class LudwigDirectBackend:
         if gradcam_info.get("status") == "generated":
             tab3_content += "<h2 style='text-align: center;'>Grad-CAM Heatmaps</h2>"
             if ensemble and ensemble.get("exported_model"):
+                rows_text = {
+                    "test": " on its own test rows",
+                    "validation": " on its own validation rows, since it has no test rows",
+                }.get(str(gradcam_info.get("sample_split")), "")
                 tab3_content += (
                     "<p style='text-align:center; color:#666;'>Computed with the exported member model "
-                    f"({ensemble['exported_model']}), not with the averaged ensemble.</p>"
+                    f"({html_escape(str(ensemble['exported_model']))}){rows_text}, not with the averaged "
+                    "ensemble.</p>"
                 )
             for orig_path, heat_path in gradcam_info.get("pairs", [])[:4]:
                 try:
@@ -2706,7 +2738,7 @@ class LudwigDirectBackend:
         html += tabbed_html + modal_html + get_html_closing()
 
         try:
-            with open(report_path, "w") as f:
+            with open(report_path, "w", encoding="utf-8") as f:
                 f.write(html)
             logger.info(f"HTML report generated at: {report_path}")
         except Exception as e:

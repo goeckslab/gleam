@@ -237,3 +237,12 @@ MULTICLASS_METRIC_DISPLAY_NAME_OVERRIDES = {
 
 # Upper bound on ensemble members (folds x seeds); members train one after another.
 MAX_ENSEMBLE_MEMBERS = 50
+
+# Below this many rows of a class, a decision threshold tuned on those rows is flagged as unreliable.
+MIN_THRESHOLD_ROWS_PER_CLASS = 5
+
+# Ludwig 0.10.1's boolean strings (ludwig/utils/strings_utils.py), compared after lower-casing.
+# Text binary labels found here are mapped by these sets; any other text pair makes the
+# alphabetically first label True.
+LUDWIG_BOOL_TRUE_STRS = {"yes", "y", "true", "t", "1", "1.0"}
+LUDWIG_BOOL_FALSE_STRS = {"no", "n", "false", "f", "0", "0.0", "-1", "-1.0"}

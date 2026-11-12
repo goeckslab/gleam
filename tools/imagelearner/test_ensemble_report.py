@@ -161,6 +161,10 @@ def test_report_renders_test_fold_ensemble_with_per_fold_thresholds(tmp_path, mo
         assert "Per-Fold Thresholds, Mean:" in html
         assert "Operating point (per-fold thresholds)" in html
     assert "test = every row, scored out-of-fold" in html
+    # validation rows are pooled across folds and scored at the mean of the per-fold thresholds
+    assert "out-of-fold validation rows of all folds pooled" in html
+    assert "the mean of the per-fold thresholds for validation rows" in html
+    assert "averaged across that fold&#x27;s seeds" not in html
     assert "Decision thresholds: per fold" in html
     assert "Mean of Per-Fold Test Thresholds" in html
     assert "Source: Ludwig model evaluation." not in html
@@ -257,3 +261,20 @@ def test_ensemble_summary_flags_gaps_and_default_fold_thresholds():
         summary, "binary"
     )
     assert "trained (test predictions unmatched)" in html
+
+
+def test_gradcam_samples_held_out_rows_of_the_exported_member():
+    pick = ludwig_backend.LudwigDirectBackend._gradcam_sample_rows
+    with_test = pd.DataFrame({IMAGE: ["a", "b", "c"], SPLIT: [0, 1, 2]})
+    rows, source = pick(with_test, held_out_only=True)
+    assert (source, rows[IMAGE].tolist()) == ("test", ["c"])
+
+    no_test = pd.DataFrame({IMAGE: ["a", "b", "c"], SPLIT: [0, 1, 1]})
+    rows, source = pick(no_test, held_out_only=True)
+    assert (source, rows[IMAGE].tolist()) == ("validation", ["b", "c"])
+    # a single model keeps main's fallback to every row
+    rows, source = pick(no_test)
+    assert (source, len(rows)) == ("all", 3)
+
+    rows, source = pick(pd.DataFrame({IMAGE: ["a"], SPLIT: [0]}), held_out_only=True)
+    assert source is None and rows.empty

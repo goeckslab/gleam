@@ -81,7 +81,11 @@ def main():
         "--validation-size",
         type=float,
         default=0.15,
-        help="Fraction for validation (0.0–1.0)",
+        help=(
+            "Fraction of the training rows moved to validation (0.0–1.0) when the input CSV has a "
+            "split column. Without one, --split-probabilities set the validation share, also for "
+            "the validation rows test folds draw from their training rows."
+        ),
     )
     parser.add_argument(
         "--preprocessing-num-processes",
@@ -236,7 +240,7 @@ def main():
         orchestrator.run()
         logger.info("Main script finished successfully.")
     except Exception as e:
-        logger.error(f"Main script failed.{e}")
+        logger.error(f"Main script failed: {e}")
         exit_code = 1
     finally:
         sys.exit(exit_code)

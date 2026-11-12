@@ -1288,9 +1288,11 @@ def format_ensemble_members_table_html(
         html += generate_table_row(row, cell_style)
     html += "</tbody></table></div>"
 
-    if ensemble.get("cross_validation") and str(ensemble.get("fold_role") or "") == "test":
+    test_folds = bool(ensemble.get("cross_validation")) and str(ensemble.get("fold_role") or "") == "test"
+    if test_folds:
         scope = (
-            "validation = each fold's validation rows, averaged across that fold's seeds; "
+            "validation = the out-of-fold validation rows of all folds pooled, a row that several "
+            "folds validate on averaged across them; "
             "test = every row, scored out-of-fold by the fold that held it out"
         )
     elif ensemble.get("cross_validation"):
@@ -1301,10 +1303,16 @@ def format_ensemble_members_table_html(
     else:
         scope = "validation and test = the shared validation and test splits, averaged across all members"
     threshold_text = ""
-    if output_type == "binary":
+    if output_type == "binary" and test_folds:
         threshold_text = (
             " Binary member rows use the decision threshold the ensemble applies to the same rows"
-            " (each fold's own threshold for test-fold rows), so the rows compare like for like."
+            " (each fold's own threshold for test rows, the mean of the per-fold thresholds for"
+            " validation rows), so the rows compare like for like."
+        )
+    elif output_type == "binary":
+        threshold_text = (
+            " Binary member rows use the decision threshold the ensemble applies to the same rows,"
+            " so the rows compare like for like."
         )
     html += (
         "<p style='text-align: center; font-size: 0.9em; color: #666;'>"

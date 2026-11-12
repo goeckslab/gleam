@@ -37,7 +37,7 @@ from ensemble import (
     compute_regression_statistics,
     ensemble_enabled,
     ENSEMBLE_SUMMARY_FILE_NAME,
-    EnsembleSetupError,
+    EnsembleRunError,
     flatten_label_statistics,
     FOLD_ROLE_TEST,
     FOLD_ROLE_VALIDATION,
@@ -55,7 +55,7 @@ from ensemble import (
 from ludwig.globals import PREDICTIONS_PARQUET_FILE_NAME
 from ludwig_backend import Backend
 from split_data import create_stratified_random_split, split_data_0_2
-from utils import detect_output_type, load_metadata_table, nonzero_binary_label
+from utils import detect_output_type, load_metadata_table, ludwig_text_binary_truth, nonzero_binary_label
 
 logger = logging.getLogger("ImageLearner")
 
@@ -181,6 +181,7 @@ class ImageLearnerCLI:
                 validation_size=self.args.validation_size,
                 random_state=self.args.random_seed,
                 label_column=LABEL_COLUMN_NAME,
+                group_column=getattr(self.args, "sample_id_column", None),
             )
             split_config = {"type": "fixed", "column": SPLIT_COLUMN_NAME}
             split_info = (
@@ -189,6 +190,11 @@ class ImageLearnerCLI:
                 f"{self.args.validation_size * 100:.1f}% "
                 "of the training set (originally labeled 0) to validation (labeled 1) using stratified sampling."
             )
+            if getattr(self.args, "sample_id_column", None):
+                split_info += (
+                    f" Grouped by sample ID column '{self.args.sample_id_column}', so no sample ID is in "
+                    "both training and validation."
+                )
             logger.info("Applied custom 0/2 split.")
         elif unique.issubset({0, 1, 2}):
             # Standard 0/1/2 split
@@ -323,6 +329,7 @@ class ImageLearnerCLI:
         self._capture_split_counts(df)
         self._capture_label_metadata(df)
         self._check_numeric_binary_labels(df)
+        self._check_text_binary_labels(df)
 
         return final_csv, split_config, split_info
 
@@ -344,6 +351,31 @@ class ImageLearnerCLI:
                 f"The label column has two numeric values, {shown}, and neither or both are 0. "
                 "Ludwig reads every nonzero number as True, so both classes would look the same to the "
                 "model. Recode the labels as 0 and 1 (1 = the positive class) or use text labels."
+            )
+
+    @staticmethod
+    def _check_text_binary_labels(df: pd.DataFrame) -> None:
+        """Refuse two text labels that Ludwig maps to the same boolean (for example yes/true).
+
+        Ludwig reads yes/y/true/t/1 as True and no/n/false/f/0/-1 as False
+        (case-insensitive); for any other value the alphabetically first label
+        is True. Pairs such as "yes"/"true" or "maybe"/"yes" become one class.
+        """
+        series = df[LABEL_COLUMN_NAME]
+        if not (ptypes.is_object_dtype(series.dtype) or ptypes.is_string_dtype(series.dtype)):
+            return
+        values = [str(v) for v in series.dropna().unique().tolist()]
+        if len(values) != 2:
+            return
+        truth = ludwig_text_binary_truth(values)
+        if truth[values[0]] == truth[values[1]]:
+            shown = " and ".join(f"'{v}'" for v in sorted(values))
+            raise ValueError(
+                f"The label column has two values, {shown}, that Ludwig reads as the same boolean "
+                f"({truth[values[0]]}), so both classes would look the same to the model. Ludwig reads "
+                "yes/y/true/t/1 as True and no/n/false/f/0/-1 as False (any case); for other values the "
+                "alphabetically first label is True. Rename the labels so that exactly one of them is "
+                "True, for example to 0 and 1 (1 = the positive class)."
             )
 
     def _capture_split_counts(self, df: pd.DataFrame) -> None:
@@ -608,19 +640,15 @@ class ImageLearnerCLI:
             )
             ran_ok = True
             if ensemble_run:
+                # A failed ensemble fails the job with its reason (EnsembleSetupError before
+                # training, EnsembleRunError after it). Unlike a single model it never falls back
+                # to a stub model and report, which would look like a successful run.
                 try:
-                    ran_ok = self._run_ensemble(csv_path, config_file, backend_args)
-                except EnsembleSetupError:
-                    # Bad settings for this data: fail the job with the reason, before any training.
-                    raise
-                except Exception:
-                    logger.error("Ensemble workflow failed", exc_info=True)
-                    ran_ok = False
+                    self._run_ensemble(csv_path, config_file, backend_args)
                 finally:
                     # A run that fails after training must not leave every member's run behind.
                     shutil.rmtree(self.args.output_dir / MEMBERS_WORK_DIR_NAME, ignore_errors=True)
-                if ran_ok:
-                    split_info = self._ensemble_split_info(split_info, backend_args["ensemble"])
+                split_info = self._ensemble_split_info(split_info, backend_args["ensemble"])
             else:
                 try:
                     # Run Ludwig experiment with absolute paths to avoid working directory issues
@@ -705,16 +733,34 @@ class ImageLearnerCLI:
     # ------------------------------------------------------------------
     # Cross-validation / multi-seed ensembles
     # ------------------------------------------------------------------
+    def _fold_validation_size(self) -> float:
+        """Share of a test fold's training rows drawn as its validation rows.
+
+        Without a split column in the input CSV the form's train/validation
+        proportions decide it (validation / (train + validation)), as they do
+        for a single model's split; with one, ``validation_size`` does, as it
+        does when a 0/2 split column is given.
+        """
+        if not self.user_split_supplied:
+            probabilities = list(getattr(self.args, "split_probabilities", None) or [])
+            if len(probabilities) == 3:
+                train, validation = float(probabilities[0]), float(probabilities[1])
+                if train + validation > 0:
+                    return validation / (train + validation)
+        return float(self.args.validation_size)
+
     def _run_ensemble(
         self,
         csv_path: Path,
         config_file: Path,
         backend_args: Dict[str, Any],
-    ) -> bool:
+    ) -> None:
         """Train every ensemble member, average their predictions, and lay the
         results out under output_dir/experiment_run like a single-model run.
 
-        Returns False when no member trained successfully.
+        Raises EnsembleSetupError when the plan cannot be built from this data,
+        and EnsembleRunError when no member trained, a cross-validation fold has
+        no trained member, or no member's predictions match the dataset rows.
         """
         df = pd.read_csv(csv_path)
         cross_validation = bool(getattr(self.args, "cross_validation", False))
@@ -730,13 +776,23 @@ class ImageLearnerCLI:
             fold_role=fold_role,
             num_seeds=num_seeds,
             random_seed=int(self.args.random_seed),
-            validation_size=float(self.args.validation_size),
+            validation_size=self._fold_validation_size(),
             label_column=LABEL_COLUMN_NAME,
             group_column=self.args.sample_id_column,
             stratify=not likely_regression,
             user_test_split=self.user_split_supplied,
         )
-        warnings_for_plan = [] if likely_regression else plan_warnings(df, members)
+        tunes_threshold = (
+            not likely_regression
+            and df[LABEL_COLUMN_NAME].nunique() == 2
+            and str(getattr(self.args, "threshold_mode", "auto")).lower() != "manual"
+        )
+        warnings_for_plan = [] if likely_regression else plan_warnings(
+            df,
+            members,
+            fold_role=fold_role if cross_validation else None,
+            tunes_threshold=tunes_threshold,
+        )
         for message in warnings_for_plan:
             logger.warning("Ensemble plan: %s", message)
         logger.info(
@@ -817,8 +873,9 @@ class ImageLearnerCLI:
 
         trained = [record for record in records if record["status"] == "ok"]
         if not trained:
-            logger.error("All %d ensemble members failed.", len(records))
-            return False
+            raise EnsembleRunError(
+                f"All {len(records)} ensemble members failed to train; see the log for each member's error."
+            )
         if len(trained) < len(records):
             logger.warning(
                 "%d of %d ensemble members failed; averaging the %d that trained.",
@@ -831,12 +888,11 @@ class ImageLearnerCLI:
                 {member.fold for member in members} - {record["fold"] for record in trained}
             )
             if untrained_folds:
-                logger.error(
-                    "No member of fold(s) %s trained, so the rows those folds hold out cannot be "
-                    "scored; refusing to report metrics for a partial cross-validation.",
-                    ", ".join(str(fold) for fold in untrained_folds),
+                raise EnsembleRunError(
+                    f"No member of fold(s) {', '.join(str(fold) for fold in untrained_folds)} trained, "
+                    "so the rows those folds hold out cannot be scored; refusing to report metrics for a "
+                    "partial cross-validation. See the log for each member's error."
                 )
-                return False
 
         task_type = self._ensemble_task_type(trained)
         test_agg = aggregate_member_predictions(
@@ -851,12 +907,10 @@ class ImageLearnerCLI:
             len(val_agg),
         )
         if test_agg.empty and val_agg.empty:
-            logger.error(
-                "None of the %d trained member(s) produced predictions that could be matched to "
-                "dataset rows; there is nothing to evaluate.",
-                len(trained),
+            raise EnsembleRunError(
+                f"None of the {len(trained)} trained member(s) produced predictions that could be "
+                "matched to dataset rows; there is nothing to evaluate."
             )
-            return False
         coverage = self._ensemble_coverage(members, trained, test_agg, val_agg)
         for warning in coverage.get("warnings", []):
             logger.warning("Ensemble coverage: %s", warning)
@@ -939,6 +993,9 @@ class ImageLearnerCLI:
             "cross_validation": cross_validation,
             "num_folds": num_folds if cross_validation else None,
             "fold_role": fold_role if cross_validation else None,
+            "fold_validation_size": (
+                self._fold_validation_size() if cross_validation and fold_role == FOLD_ROLE_TEST else None
+            ),
             "num_seeds": num_seeds,
             "random_seed": int(self.args.random_seed),
             "seeds": sorted({member.seed for member in members}),
@@ -1013,7 +1070,6 @@ class ImageLearnerCLI:
         )
         backend_args["ensemble"] = summary
         logger.info("Ensemble assembled under %s", top_dir)
-        return True
 
     @staticmethod
     def _ensemble_coverage(
@@ -1191,7 +1247,8 @@ class ImageLearnerCLI:
     ) -> Dict[str, Any]:
         """Read one member's test/validation predictions and its metrics."""
         test_rows = member_df.index[member_df[SPLIT_COLUMN_NAME] == 2]
-        class_order = self._ludwig_label_classes(exp_dir)
+        # Order of Ludwig's probability vector, for prediction files without named columns.
+        class_order = self._ludwig_label_classes(exp_dir, include_binary=True)
         test_frame = self._load_member_split_frame(
             exp_dir / "predictions.csv", test_rows, label_values, class_order
         )
@@ -1240,15 +1297,26 @@ class ImageLearnerCLI:
             return stats_type or "regression"
         return "binary" if n_prob == 2 else "category"
 
-    def _ludwig_label_classes(self, exp_dir: Optional[Path]) -> Optional[List[str]]:
-        """Ludwig's class names for the label, in its index order (``idx2str``), if recorded."""
+    def _ludwig_label_classes(
+        self, exp_dir: Optional[Path], include_binary: bool = False
+    ) -> Optional[List[str]]:
+        """Ludwig's class names for the label, in its index order (``idx2str``), if recorded.
+
+        With ``include_binary``, a text binary label without ``idx2str`` returns
+        ``bool2str`` ([False label, True label]), the order of Ludwig's
+        probability vector. Numeric binary labels record neither.
+        """
         if not exp_dir:
             return None
         for meta_name in ("training_set_metadata.json", "train_set_metadata.json"):
             meta = self._read_json(Path(exp_dir) / "model" / meta_name)
-            idx2str = ((meta or {}).get(LABEL_COLUMN_NAME) or {}).get("idx2str")
+            label_meta = (meta or {}).get(LABEL_COLUMN_NAME) or {}
+            idx2str = label_meta.get("idx2str")
             if isinstance(idx2str, list):
                 return [str(v) for v in idx2str]
+            bool2str = label_meta.get("bool2str")
+            if include_binary and isinstance(bool2str, list) and len(bool2str) == 2:
+                return [str(v) for v in bool2str]
         return None
 
     def _ensemble_class_order(
@@ -1302,6 +1370,7 @@ class ImageLearnerCLI:
                     "threshold_metric": metric_label,
                 }
             source = "Optimized on averaged validation split"
+            info: Dict[str, Any] = {"threshold_metric": metric_label}
             if cross_validation:
                 # No model outside a row's own fold may score it, so the tuning scores average
                 # fewer models than the test scores the threshold is applied to. Say so.
@@ -1309,10 +1378,13 @@ class ImageLearnerCLI:
                     "Optimized on out-of-fold validation predictions (each row scored by its own "
                     "fold's models only; test rows are averaged across all members)"
                 )
-            return optimized, None, {
-                "threshold_source": source,
-                "threshold_metric": metric_label,
-            }
+                # Label-free hint of how well the threshold transfers: averaging more models
+                # narrows the scores, so a much smaller test spread means a shifted operating point.
+                info["score_spread"] = {
+                    "validation": self._positive_score_spread(val_agg),
+                    "test": self._positive_score_spread(test_agg),
+                }
+            return optimized, None, {"threshold_source": source, **info}
 
         fold_thresholds: Dict[str, float] = {}
         default_folds: List[str] = []
@@ -1353,6 +1425,19 @@ class ImageLearnerCLI:
             return _threshold_metric_display_name(metric)
         except Exception:
             return str(metric)
+
+    @staticmethod
+    def _positive_score_spread(aggregated: pd.DataFrame) -> Optional[float]:
+        """Standard deviation of the averaged positive-class probability, or None."""
+        if aggregated is None or aggregated.empty:
+            return None
+        prob_cols = probability_columns(aggregated.columns)
+        names = [class_name_from_column(col) for col in prob_cols]
+        if len(names) != 2:
+            return None
+        scores = aggregated[prob_cols[positive_class_index(names)]].to_numpy(dtype=float)
+        scores = scores[np.isfinite(scores)]
+        return float(np.std(scores)) if len(scores) else None
 
     @staticmethod
     def _optimize_threshold(
@@ -1466,6 +1551,11 @@ class ImageLearnerCLI:
             layout = f"{summary.get('num_folds')}-fold cross-validation ({role} folds)"
             if role == FOLD_ROLE_TEST:
                 layout += "; every row is scored out-of-fold, and the generated test split is folded back in"
+                if summary.get("fold_validation_size") is not None:
+                    layout += (
+                        f"; each fold draws {float(summary['fold_validation_size']) * 100:.1f}% of its "
+                        "training rows as validation rows"
+                    )
         else:
             layout = "single split"
         if num_seeds > 1:

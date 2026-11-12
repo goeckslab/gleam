@@ -1,10 +1,10 @@
 import logging
 import math
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Dict, Iterable, Optional
 
 import pandas as pd
-from constants import MAX_ENSEMBLE_MEMBERS
+from constants import LUDWIG_BOOL_FALSE_STRS, LUDWIG_BOOL_TRUE_STRS, MAX_ENSEMBLE_MEMBERS
 
 logger = logging.getLogger("ImageLearner")
 
@@ -32,6 +32,32 @@ def nonzero_binary_label(labels: Iterable[object]) -> Optional[str]:
     if len(numbers) != 2 or len(zeros) != 1 or not all(map(math.isfinite, numbers.values())):
         return None
     return next(name for name in numbers if name != zeros[0])
+
+
+def ludwig_text_binary_truth(labels: Iterable[object]) -> Dict[str, bool]:
+    """How Ludwig 0.10.1 maps two text labels to booleans (binary_feature.get_feature_meta).
+
+    Labels in Ludwig's boolean sets (case-insensitive) take their value from
+    them. If either label is in neither set, the alphabetically first label is
+    the fallback True label: the other label is True only if the sets say so.
+    Both labels can end up with the same value, for example "yes"/"true" or
+    "maybe"/"yes", and the model then cannot tell the classes apart.
+    """
+    names = [str(label) for label in labels]
+
+    def from_sets(name: str) -> Optional[bool]:
+        lowered = name.lower()
+        if lowered in LUDWIG_BOOL_TRUE_STRS:
+            return True
+        if lowered in LUDWIG_BOOL_FALSE_STRS:
+            return False
+        return None
+
+    strict = {name: from_sets(name) for name in names}
+    if all(value is not None for value in strict.values()):
+        return strict
+    fallback_true = sorted(names)[0]
+    return {name: (strict[name] if strict[name] is not None else name == fallback_true) for name in names}
 
 
 _POSITIVE_CLASS_HINTS = ("event", "true", "positive", "pos", "1")

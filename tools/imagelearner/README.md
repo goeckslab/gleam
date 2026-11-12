@@ -31,7 +31,10 @@ Under "Customize Default Settings" the wrapper can train several models per run:
 - *Number of random seeds* trains that many models on the same split (seeds `random_seed`, `random_seed+1`, ...).
 - *k-fold cross-validation* trains one model per fold. "Validation folds" keep the test split fixed and rotate the folds through the validation set; "test folds" score every sample exactly once out-of-fold and refuse a test split supplied in the input CSV.
 - Both options combine to folds x seeds members (at most 50). Class probabilities (or regression values) are averaged across the members that did not train on a row, and the report lists every member, their mean ± SD, and the averaged ensemble. Member rows are scored from each member's own predictions at the ensemble's decision threshold, so they compare like for like with the ensemble row.
-- The run stops before training when a class has fewer rows than folds, when there are fewer sample IDs than folds, or when two numeric labels do not include exactly one 0 (Ludwig would read both as True).
+- The run stops before training when a class has fewer rows than folds, when there are fewer sample IDs than folds, when two numeric labels do not include exactly one 0 (Ludwig would read both as True), or when two text labels read as the same boolean in Ludwig (for example yes/true).
+- With test folds each fold draws validation / (training + validation) of the split proportions (12.5% with the defaults) from its training rows as validation rows, or 15% when the input CSV has a split column.
+- For an automatic binary threshold the report warns when a class has fewer than 5 rows in the validation rows a threshold is tuned on.
+- A failed ensemble (every member failed, a fold with no trained member, or no matched predictions) fails the job with the reason instead of producing a stub model and report.
 
 Members are trained sequentially, so plan GPU time accordingly. The ludwig_model output holds the first trained member's weights, and the report shows that member's own test metrics and threshold; the other members' predictions and statistics live in the artifacts ZIP, and their weights are deleted during the run to bound disk use.
 

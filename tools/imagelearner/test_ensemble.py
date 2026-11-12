@@ -916,17 +916,36 @@ def test_workflow_refuses_a_cross_validation_with_an_untrained_fold(tmp_path, mo
             super().run_experiment(dataset_path, config_path, output_dir, random_seed)
 
     backend = FoldFailureBackend()
-    image_workflow.ImageLearnerCLI(args, backend).run()
+    # fold 2 held out rows nobody scored: no partial ensemble, the job fails with the reason
+    with pytest.raises(ensemble.EnsembleRunError, match=r"No member of fold\(s\) 2 trained"):
+        image_workflow.ImageLearnerCLI(args, backend).run()
 
-    # fold 2 held out rows nobody scored: no partial ensemble, the run takes the failure path
     assert not (args.output_dir / "experiment_run" / ensemble.ENSEMBLE_SUMMARY_FILE_NAME).exists()
     # the member that did train is not left behind in the scratch directory
     assert not (args.output_dir / ensemble.MEMBERS_WORK_DIR_NAME).exists()
-    config, _, _ = backend.report_configs[-1]
-    assert "ensemble" not in config
+    # no stub model or fallback report makes the failed run look like a success
+    assert backend.report_configs == []
+    assert not (args.output_dir / "experiment_run" / "model").exists()
 
 
-def test_workflow_falls_back_when_no_member_predictions_can_be_matched(tmp_path, monkeypatch):
+def test_workflow_fails_when_every_member_fails(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    image_workflow = importlib.import_module("image_workflow")
+    csv_path, zip_path, _ = _make_dataset(tmp_path)
+    args = _make_args(tmp_path, csv_path, zip_path, cross_validation=False, num_seeds=2)
+
+    class BrokenBackend(FakeBackend):
+        def run_experiment(self, dataset_path, config_path, output_dir, random_seed=42):
+            raise RuntimeError("CUDA out of memory")
+
+    backend = BrokenBackend()
+    with pytest.raises(ensemble.EnsembleRunError, match="All 2 ensemble members failed"):
+        image_workflow.ImageLearnerCLI(args, backend).run()
+    assert backend.report_configs == []
+    assert not (args.output_dir / ensemble.MEMBERS_WORK_DIR_NAME).exists()
+
+
+def test_workflow_fails_when_no_member_predictions_can_be_matched(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     image_workflow = importlib.import_module("image_workflow")
     csv_path, zip_path, _ = _make_dataset(tmp_path)
@@ -942,11 +961,11 @@ def test_workflow_falls_back_when_no_member_predictions_can_be_matched(tmp_path,
             return None
 
     backend = MisalignedBackend()
-    image_workflow.ImageLearnerCLI(args, backend).run()
+    with pytest.raises(ensemble.EnsembleRunError, match="nothing to evaluate"):
+        image_workflow.ImageLearnerCLI(args, backend).run()
 
     assert not (args.output_dir / "experiment_run" / ensemble.ENSEMBLE_SUMMARY_FILE_NAME).exists()
-    config, _, _ = backend.report_configs[-1]
-    assert "ensemble" not in config
+    assert backend.report_configs == []
     assert not (args.output_dir / ensemble.MEMBERS_WORK_DIR_NAME).exists()
 
 
@@ -1105,3 +1124,192 @@ def test_single_model_path_is_unchanged_without_ensemble_options(tmp_path, monke
     assert not (exp_dir / ensemble.ENSEMBLE_SUMMARY_FILE_NAME).exists()
     config, _, _ = backend.report_configs[-1]
     assert "ensemble" not in config
+
+
+# ---------------------------------------------------------------------------
+# Follow-up review: threshold-tuning rows, seeded group folds, vector fallback,
+# test-fold validation size, text binary labels, 0/2 split groups
+# ---------------------------------------------------------------------------
+def _binary_plan(n_pos):
+    """Two test folds over 40 negatives and n_pos positives; validation drawn from training rows."""
+    df = pd.DataFrame({LABEL: [0] * 40 + [1] * n_pos, SPLIT: 0})
+    return df, ensemble.build_member_plan(
+        df, cross_validation=True, num_folds=2, fold_role="test", num_seeds=1,
+        random_seed=0, validation_size=0.25,
+    )
+
+
+def test_plan_warnings_flag_thin_threshold_tuning_rows_per_test_fold():
+    df, members = _binary_plan(n_pos=8)  # about 1 positive in each fold's validation rows
+    warnings = ensemble.plan_warnings(df, members, fold_role="test", tunes_threshold=True)
+    thin = [w for w in warnings if "decision threshold rests on very few" in w]
+    assert len(thin) == 2
+    assert thin[0].startswith("Fold 1: the validation rows hold only ")
+    assert "'1' row" in thin[0]
+    # a manual threshold is not tuned, so nothing to flag
+    assert not any(
+        "rests on very few" in w for w in ensemble.plan_warnings(df, members, fold_role="test")
+    )
+
+
+def test_plan_warnings_stay_quiet_when_each_fold_tunes_on_enough_rows():
+    df, members = _binary_plan(n_pos=80)  # about 10 positives per fold's validation rows
+    warnings = ensemble.plan_warnings(df, members, fold_role="test", tunes_threshold=True)
+    assert not any("rests on very few" in w for w in warnings)
+
+
+def test_plan_warnings_count_pooled_validation_rows_for_one_threshold():
+    df = pd.DataFrame({LABEL: [0] * 30 + [1] * 3, SPLIT: [0] * 20 + [1] * 10 + [0, 1, 1]})
+    seeds_only = ensemble.build_member_plan(
+        df, cross_validation=False, num_folds=2, fold_role="validation", num_seeds=2,
+        random_seed=0, validation_size=0.15,
+    )
+    assert ensemble.plan_warnings(df, seeds_only, tunes_threshold=True) == [
+        "The validation rows the decision threshold is tuned on hold only 2 '1' rows; "
+        "the threshold rests on very few examples."
+    ]
+    # validation folds pool every non-test row; 3 positives are still too few
+    folds = ensemble.build_member_plan(
+        df, cross_validation=True, num_folds=3, fold_role="validation", num_seeds=1,
+        random_seed=0, validation_size=0.15,
+    )
+    pooled = ensemble.plan_warnings(df, folds, fold_role="validation", tunes_threshold=True)
+    assert "hold only 3 '1' rows" in pooled[0]
+
+
+def test_grouped_fallback_folds_follow_the_seed_when_every_group_size_differs():
+    # 12 sample IDs with 1..12 images each: sorting by size alone would ignore the seed
+    patients = [f"p{size}" for size in range(1, 13) for _ in range(size)]
+    df = pd.DataFrame({"patient": patients})
+    by_seed = [ensemble.assign_folds(df, 3, seed, group_column="patient") for seed in range(5)]
+    for folds in by_seed:
+        assert (pd.Series(folds).groupby(df["patient"]).nunique() == 1).all()
+        assert set(folds) == {0, 1, 2}
+        # the 78 rows stay roughly balanced (26 per fold), within the largest group's size
+        assert max(np.bincount(folds)) - min(np.bincount(folds)) <= 12
+    assert len({tuple(folds) for folds in by_seed}) > 1
+
+
+@pytest.mark.parametrize(
+    "labels, vector, expected",
+    [
+        # numeric: [P(False), P(True)] = [P(0), P(-2)], whatever the sorted order of the labels
+        ([0, -2], "[0.7, 0.3]", {"0": 0.7, "-2": 0.3}),
+        ([2, 0], "[0.7, 0.3]", {"0": 0.7, "2": 0.3}),
+    ],
+)
+def test_normalize_prediction_frame_names_a_numeric_binary_vector_by_boolean(labels, vector, expected):
+    out = ensemble.normalize_prediction_frame(pd.DataFrame({"label_probabilities": [vector]}), labels)
+    assert {ensemble.class_name_from_column(c): out[c].iloc[0] for c in out.columns if c != "label_predictions"} == (
+        expected
+    )
+
+
+def test_normalize_prediction_frame_names_a_text_binary_vector_by_bool2str():
+    # Ludwig makes the alphabetically first label True: bool2str = [False label, True label]
+    out = ensemble.normalize_prediction_frame(
+        pd.DataFrame({"label_probabilities": ["[0.9, 0.1]"]}), ["case", "control"], class_order=["control", "case"]
+    )
+    assert out["label_probabilities_control"].tolist() == [0.9]
+    assert out["label_probabilities_case"].tolist() == [0.1]
+
+
+def test_member_outputs_read_bool2str_for_a_text_binary_vector(tmp_path):
+    image_workflow = importlib.import_module("image_workflow")
+    exp_dir = tmp_path / "experiment_run"
+    (exp_dir / "model").mkdir(parents=True)
+    (exp_dir / "model" / "training_set_metadata.json").write_text(
+        json.dumps({LABEL: {"bool2str": ["control", "case"], "fallback_true_label": "case"}})
+    )
+    cli = image_workflow.ImageLearnerCLI(argparse.Namespace(), FakeBackend())
+    assert cli._ludwig_label_classes(exp_dir) is None  # confusion-matrix order is unchanged
+    assert cli._ludwig_label_classes(exp_dir, include_binary=True) == ["control", "case"]
+
+
+@pytest.mark.parametrize(
+    "labels, same",
+    [
+        (("yes", "true"), True),
+        (("No", "FALSE"), True),
+        (("maybe", "yes"), True),  # "maybe" sorts first, so it is the fallback True label
+        (("no", "other"), True),  # "no" sorts first but is False; "other" is not the fallback
+        (("yes", "no"), False),
+        (("benign", "malignant"), False),
+        (("case", "control"), False),
+    ],
+)
+def test_ludwig_text_binary_truth_follows_ludwig(labels, same):
+    truth = utils.ludwig_text_binary_truth(labels)
+    assert (truth[labels[0]] == truth[labels[1]]) is same
+    if labels == ("case", "control"):
+        assert truth == {"case": True, "control": False}
+
+
+@pytest.mark.parametrize("labels, refused", [(("yes", "true"), True), (("maybe", "yes"), True), (("benign", "malignant"), False)])
+def test_workflow_refuses_text_binary_labels_ludwig_cannot_tell_apart(tmp_path, monkeypatch, labels, refused):
+    monkeypatch.chdir(tmp_path)
+    image_workflow = importlib.import_module("image_workflow")
+    csv_path, zip_path, df = _make_dataset(tmp_path)
+    df[LABEL] = df[LABEL].map({0: labels[0], 1: labels[1]})
+    df[[IMAGE, LABEL, "patient", SPLIT]].to_csv(csv_path, index=False)
+    args = _make_args(tmp_path, csv_path, zip_path, cross_validation=False, num_seeds=1)
+    cli = image_workflow.ImageLearnerCLI(args, FakeBackend())
+    if refused:
+        with pytest.raises(ValueError, match="reads as the same boolean"):
+            cli.run()
+    else:
+        cli.run()
+
+
+@pytest.mark.parametrize("with_split, expected", [(False, 0.1 / 0.8), (True, 0.15)])
+def test_test_folds_draw_validation_by_the_form_proportions(tmp_path, monkeypatch, with_split, expected):
+    monkeypatch.chdir(tmp_path)
+    image_workflow = importlib.import_module("image_workflow")
+    csv_path, zip_path, df = _make_dataset(tmp_path, n_per_class=40, with_split=with_split)
+    if with_split:
+        df[SPLIT] = df[SPLIT].replace(2, 0)  # a user split without test rows
+        df[[IMAGE, LABEL, "patient", SPLIT]].to_csv(csv_path, index=False)
+    # without sample IDs the validation rows are not rounded to whole groups
+    args = _make_args(tmp_path, csv_path, zip_path, fold_role="test", num_folds=2, num_seeds=1,
+                      sample_id_column=None)
+    backend = FakeBackend()
+    image_workflow.ImageLearnerCLI(args, backend).run()
+
+    summary = json.loads((args.output_dir / "experiment_run" / ensemble.ENSEMBLE_SUMMARY_FILE_NAME).read_text())
+    assert summary["fold_validation_size"] == pytest.approx(expected)
+    for row in summary["fold_layout"]:
+        share = row["validation"] / (row["train"] + row["validation"])
+        assert share == pytest.approx(expected, abs=0.03)
+    _, split_info, _ = backend.report_configs[-1]
+    assert f"each fold draws {expected * 100:.1f}% of its training rows as validation rows" in split_info
+
+
+def test_validation_fold_summary_records_score_spread(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    image_workflow = importlib.import_module("image_workflow")
+    csv_path, zip_path, _ = _make_dataset(tmp_path)
+    args = _make_args(tmp_path, csv_path, zip_path, num_seeds=1)
+    image_workflow.ImageLearnerCLI(args, FakeBackend()).run()
+    summary = json.loads((args.output_dir / "experiment_run" / ensemble.ENSEMBLE_SUMMARY_FILE_NAME).read_text())
+    spread = summary["score_spread"]
+    assert set(spread) == {"validation", "test"}
+    assert all(isinstance(value, float) and value >= 0 for value in spread.values())
+
+
+def test_split_0_2_keeps_sample_ids_out_of_both_training_and_validation():
+    split_data = importlib.import_module("split_data")
+    df = pd.DataFrame(
+        {
+            LABEL: [i % 2 for i in range(120)],
+            "patient": [f"p{i // 4}" for i in range(120)],
+            SPLIT: [2 if (i // 4) % 5 == 0 else 0 for i in range(120)],
+        }
+    )
+    out = split_data.split_data_0_2(df, SPLIT, validation_size=0.2, random_state=3, label_column=LABEL,
+                                    group_column="patient")
+    assert (out.loc[df[SPLIT] == 2, SPLIT] == 2).all()  # test rows untouched
+    assert set(out[SPLIT]) == {0, 1, 2}
+    splits_per_patient = out.groupby("patient")[SPLIT].nunique()
+    assert (splits_per_patient == 1).all()
+    validation_share = (out[SPLIT] == 1).sum() / (df[SPLIT] == 0).sum()
+    assert validation_share == pytest.approx(0.2, abs=0.05)
