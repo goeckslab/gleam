@@ -437,17 +437,23 @@ class EnsembleRowAlignmentTest(unittest.TestCase):
 
         def decisions():
             predictions, _ = LudwigModel.load(str(model_dir)).predict(dataset=frame)
-            scores = predictions[f"label_probabilities_{positive}"].to_numpy(dtype=float)
+            scores = predictions[f"label_probabilities_{positive}"].to_numpy(dtype=np.float32)
             return scores, (predictions["label_predictions"].astype(str) == positive).to_numpy()
 
+        def at(scores, cut):
+            # Ludwig compares the float32 probability with the threshold cast to float32. A tuned
+            # threshold is a validation score read back from CSV, so it sits on a score: comparing
+            # in float64 could put that row on the other side.
+            return (scores >= np.float32(cut)).tolist()
+
         scores, is_positive = decisions()
-        self.assertEqual(is_positive.tolist(), (scores >= threshold).tolist())
+        self.assertEqual(is_positive.tolist(), at(scores, threshold))
         # Move the saved threshold between two scores: the reloaded model must follow it.
-        ordered = np.sort(scores)
-        middle = float((ordered[len(ordered) // 2 - 1] + ordered[len(ordered) // 2]) / 2)
+        ordered = np.unique(scores)
+        middle = float((float(ordered[len(ordered) // 2 - 1]) + float(ordered[len(ordered) // 2])) / 2)
         self.assertTrue(save_model_threshold(model_dir, middle, positive))
         scores, is_positive = decisions()
-        self.assertEqual(is_positive.tolist(), (scores >= middle).tolist())
+        self.assertEqual(is_positive.tolist(), at(scores, middle))
         self.assertTrue(0 < is_positive.sum() < len(is_positive))
         return threshold
 
