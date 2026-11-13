@@ -15,8 +15,14 @@ def split_data_0_2(
     validation_size: float = 0.1,
     random_state: int = 42,
     label_column: Optional[str] = None,
+    group_column: Optional[str] = None,
 ) -> pd.DataFrame:
-    """Given a DataFrame whose split_column only contains {0,2}, re-assign a portion of the 0s to become 1s (validation)."""
+    """Given a DataFrame whose split_column only contains {0,2}, re-assign a portion of the 0s to become 1s (validation).
+
+    With ``group_column`` whole groups (for example all images of one patient)
+    move to validation together, so no group is in both training and validation.
+    The test rows (2) are never changed.
+    """
     out = df.copy()
     out[split_column] = pd.to_numeric(out[split_column], errors="coerce").astype(int)
 
@@ -24,6 +30,18 @@ def split_data_0_2(
 
     if not idx_train:
         logger.info("No rows with split=0; nothing to do.")
+        return out
+    if group_column and group_column in out.columns and 0 < validation_size < 1:
+        carved = create_stratified_random_split(
+            out.loc[idx_train],
+            split_column,
+            [1.0 - float(validation_size), float(validation_size), 0.0],
+            random_state=random_state,
+            label_column=label_column,
+            group_column=group_column,
+        )
+        out.loc[carved.index, split_column] = carved[split_column].astype(int)
+        logger.info("Carved validation rows from split 0 by group column '%s'.", group_column)
         return out
     stratify_arr = None
     if label_column and label_column in out.columns:

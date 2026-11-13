@@ -24,6 +24,9 @@ TRAIN_SET_METADATA_FILE_NAME = "train_set_metadata.json"
 DESCRIPTION_FILE_NAME = "description.json"
 TRAINING_STATISTICS_FILE_NAME = "training_statistics.json"
 PREDICTIONS_SHAPES_FILE_NAME = "predictions.shapes"
+VALIDATION_PREDICTIONS_FILE_NAME = "validation_predictions.csv"
+# Per-row binary decision threshold column written by ensemble runs.
+DECISION_THRESHOLD_COLUMN = "decision_threshold"
 MODEL_ENCODER_TEMPLATES: Dict[str, Any] = {
     "stacked_cnn": "stacked_cnn",
     "resnet18": {"type": "resnet", "model_variant": 18},
@@ -188,6 +191,7 @@ METRIC_DISPLAY_NAMES = {
     "balanced_accuracy": "Balanced Accuracy",
     "accuracy_micro": "Micro Accuracy",
     "loss": "Loss",
+    "log_loss": "Log Loss (Unweighted)",
     "roc_auc": "ROC-AUC",
     "roc_auc_macro": "Macro ROC-AUC",
     "roc_auc_micro": "Micro ROC-AUC",
@@ -231,3 +235,15 @@ MULTICLASS_METRIC_DISPLAY_NAME_OVERRIDES = {
     "accuracy_micro": "Accuracy",
     "roc_auc": "Macro ROC-AUC",
 }
+
+# Upper bound on ensemble members (folds x seeds); members train one after another.
+MAX_ENSEMBLE_MEMBERS = 50
+
+# Below this many rows of a class, a decision threshold tuned on those rows is flagged as unreliable.
+MIN_THRESHOLD_ROWS_PER_CLASS = 5
+
+# Ludwig 0.10.1's boolean strings (ludwig/utils/strings_utils.py), compared after lower-casing.
+# Text binary labels found here are mapped by these sets; any other text pair makes the
+# alphabetically first label True.
+LUDWIG_BOOL_TRUE_STRS = {"yes", "y", "true", "t", "1", "1.0"}
+LUDWIG_BOOL_FALSE_STRS = {"no", "n", "false", "f", "0", "0.0", "-1", "-1.0"}

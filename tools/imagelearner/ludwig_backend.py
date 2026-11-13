@@ -1,9 +1,12 @@
+import hashlib
 import inspect
 import json
 import logging
 import os
 import zipfile
 from collections import Counter
+from copy import deepcopy
+from html import escape as html_escape
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
@@ -23,7 +26,10 @@ from html_structure import (
     encode_image_to_base64,
     format_binary_threshold_notice,
     format_config_table_html,
+    format_cross_validation_overview_table,
     format_dataset_overview_table,
+    format_ensemble_members_table_html,
+    format_ensemble_summary_html,
     format_image_match_notice,
     format_stats_table_html,
     format_test_merged_stats_table_html,
@@ -52,7 +58,7 @@ from plotly_plots import (
     compute_binary_threshold_metrics_from_predictions,
     resolve_binary_threshold_for_report,
 )
-from utils import detect_output_type, extract_metrics_from_json
+from utils import detect_output_type, extract_metrics_from_json, save_model_threshold
 
 logger = logging.getLogger("ImageLearner")
 
@@ -115,11 +121,21 @@ class Backend(Protocol):
     ) -> Path:
         ...
 
+    def release_cached_data(self) -> None:
+        """Free datasets and models kept in memory for reuse between runs (optional)."""
+        ...
+
 
 class LudwigDirectBackend:
     """Backend for running Ludwig experiments directly via the internal experiment_cli function."""
 
     _torchvision_patched = False
+
+    def __init__(self):
+        self._prediction_context = None
+        self._prepared_context = None
+        self._batch_size_key = None
+        self._batch_sizes = {}
 
     def _detect_image_dimensions(self, image_zip_path: str) -> Tuple[int, int]:
         """Detect image dimensions from the first image in the dataset."""
@@ -795,6 +811,12 @@ class LudwigDirectBackend:
                     and config_params.get("threshold") is not None
                 ):
                     output_feat["threshold"] = float(config_params["threshold"])
+                if config_params.get("fallback_true_label") is not None:
+                    # Ludwig would make the alphabetically first text label True ("benign" of
+                    # benign/malignant). Name the class the report scores as positive instead.
+                    output_feat["preprocessing"] = {
+                        "fallback_true_label": str(config_params["fallback_true_label"])
+                    }
             else:
                 category_top_k = min(DEFAULT_HITS_AT_K, max(1, int(num_unique_labels)))
                 output_feat = {
@@ -903,14 +925,105 @@ class LudwigDirectBackend:
 
         configure_binary_metrics()
         output_dir.mkdir(parents=True, exist_ok=True)
+        self._prediction_context = None
+        config_text = config_path.read_text()
+        config = yaml.safe_load(config_text)
+        cache_key = (
+            dataset_path.resolve(),
+            hashlib.sha256(dataset_path.read_bytes()).digest(),
+            config_text,
+        )
+        cached_sizes = self._batch_sizes if cache_key == self._batch_size_key else {}
+        cached_prepared = None
+        if self._prepared_context is not None and self._prepared_context[0] == cache_key:
+            cached_prepared = self._prepared_context[1]
+        else:
+            self._prepared_context = None
+        prepared_kwargs = {}
+        if cached_prepared is not None:
+            # Reloading Ludwig's HDF5 cache shuffles training rows again. Reuse
+            # the original datasets so each seed keeps its original row order.
+            prepared_kwargs = dict(
+                training_set=cached_prepared[0],
+                validation_set=cached_prepared[1],
+                test_set=cached_prepared[2],
+                training_set_metadata=deepcopy(cached_prepared[3]),
+            )
+        trainer = config.setdefault("trainer", {})
+        used_cached_sizes = False
+        for name, size in cached_sizes.items():
+            if trainer.get(name, "auto") in (None, "auto"):
+                trainer[name] = size
+                used_cached_sizes = True
 
         try:
-            experiment_cli(
-                dataset=str(dataset_path),
-                config=str(config_path),
-                output_directory=str(output_dir),
-                random_seed=random_seed,
-                skip_preprocessing=True,
+            result = None
+            retry_without_cache = False
+            try:
+                result = experiment_cli(
+                    dataset=str(dataset_path),
+                    config=config,
+                    output_directory=str(output_dir),
+                    random_seed=random_seed,
+                    **prepared_kwargs,
+                )
+            except RuntimeError as exc:
+                if not used_cached_sizes or "out of memory" not in str(exc).lower():
+                    raise
+                retry_without_cache = True
+
+            if retry_without_cache:
+                # Available GPU memory can change between members; probe again on OOM.
+                import gc
+
+                import torch
+
+                self._batch_size_key = None
+                self._batch_sizes = {}
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                logger.warning("Cached batch sizes no longer fit; retrying with automatic tuning.")
+                result = experiment_cli(
+                    dataset=str(dataset_path),
+                    config=str(config_path),
+                    output_directory=str(output_dir),
+                    random_seed=random_seed,
+                    **prepared_kwargs,
+                )
+
+            model, _, _, prepared_data, run_dir = result
+            self._prepared_context = (cache_key, prepared_data)
+            description_path = Path(run_dir) / DESCRIPTION_FILE_NAME
+            if not description_path.exists():
+                # Ludwig omits this artifact when already-prepared datasets are supplied. Rebuild it
+                # from the public, fully rendered config, which Ludwig itself writes; the run has
+                # finished, so a failure here must not fail a trained member.
+                try:
+                    from ludwig.api import get_experiment_description
+
+                    description = get_experiment_description(
+                        model.config, dataset=str(dataset_path),
+                        backend=model.backend, random_seed=random_seed,
+                    )
+                    description_path.write_text(json.dumps(description, indent=2))
+                except Exception as exc:
+                    logger.warning("Could not write %s: %s", DESCRIPTION_FILE_NAME, exc)
+            self._batch_size_key = cache_key
+            parameter_names = dict(model.model.named_parameters())
+            stateful = any(
+                name not in parameter_names and not name.endswith((".loss_fn.weight", ".loss_fn.pos_weight"))
+                for name in model.model.state_dict()
+            )
+            # Probing can update buffers such as BatchNorm statistics. Such
+            # models must keep probing for every seed; loss weights are constant.
+            self._batch_sizes = {
+                name: size
+                for name in ("batch_size", "eval_batch_size")
+                if not stateful and isinstance(size := getattr(model.config_obj.trainer, name, None), int) and size > 0
+            }
+            self._prediction_context = (
+                output_dir.resolve(), dataset_path.resolve(), model, prepared_data,
             )
             logger.info(
                 f"LudwigDirectBackend: Experiment completed. Results in {output_dir}"
@@ -929,6 +1042,18 @@ class LudwigDirectBackend:
                 exc_info=True,
             )
             raise
+
+    def release_cached_data(self) -> None:
+        """Drop the prepared datasets and in-memory model kept for reuse between runs.
+
+        Called once no further run can reuse them, so report generation and
+        Grad-CAM do not hold the training data in memory.
+        """
+        import gc
+
+        self._prepared_context = None
+        self._prediction_context = None
+        gc.collect()
 
     def get_training_process(self, output_dir) -> Optional[Dict[str, Any]]:
         """Retrieve the learning rate used in the most recent Ludwig run."""
@@ -995,6 +1120,8 @@ class LudwigDirectBackend:
         """Save model predictions for a specific prepared-data split."""
         output_dir = Path(output_dir)
         dataset_path = Path(dataset_path)
+        context = self._prediction_context
+        self._prediction_context = None
         exp_dir = self._get_latest_experiment_dir(output_dir)
         if not exp_dir:
             logger.warning("No experiment run directory found; skipping split predictions.")
@@ -1030,17 +1157,19 @@ class LudwigDirectBackend:
             logger.warning("No rows found for split %s; skipping split predictions.", split_value)
             return None
 
-        try:
-            from ludwig.api import LudwigModel
-        except Exception as exc:
-            logger.warning("Unable to import LudwigModel for split predictions: %s", exc)
-            return None
+        prepared_split = None
+        if context is not None and context[:2] == (output_dir.resolve(), dataset_path.resolve()):
+            ludwig_model = context[2]
+            if int(split_value) in (0, 1, 2):
+                prepared_split = context[3][int(split_value)]
+        else:
+            try:
+                from ludwig.api import LudwigModel
 
-        try:
-            ludwig_model = LudwigModel.load(str(model_dir))
-        except Exception as exc:
-            logger.warning("Unable to load LudwigModel for split predictions: %s", exc)
-            return None
+                ludwig_model = LudwigModel.load(str(model_dir))
+            except Exception as exc:
+                logger.warning("Unable to load LudwigModel for split predictions: %s", exc)
+                return None
 
         prediction_input_df = df_split.copy()
         if IMAGE_PATH_COLUMN_NAME in prediction_input_df.columns:
@@ -1065,6 +1194,8 @@ class LudwigDirectBackend:
         candidate_datasets = [prediction_input_df]
         if list(feature_df.columns) != list(prediction_input_df.columns):
             candidate_datasets.append(feature_df)
+        if prepared_split is not None and len(prepared_split) == len(df_split):
+            candidate_datasets.insert(0, prepared_split)
 
         last_exc: Optional[Exception] = None
         prediction_result: Any = None
@@ -1223,6 +1354,30 @@ class LudwigDirectBackend:
                 return module
         return None
 
+    @staticmethod
+    def _gradcam_sample_rows(
+        df_all: pd.DataFrame, held_out_only: bool = False
+    ) -> Tuple[pd.DataFrame, Optional[str]]:
+        """Rows Grad-CAM samples, and which split they come from ("test", "validation" or "all").
+
+        Test rows come first. A single model falls back to every row. An
+        ensemble's exported member (``held_out_only``) falls back to its
+        validation rows and never shows its training images; with neither it
+        returns no rows and None.
+        """
+        if SPLIT_COLUMN_NAME not in df_all.columns:
+            return df_all, "all"
+        split_values = pd.to_numeric(df_all[SPLIT_COLUMN_NAME], errors="coerce")
+        test_rows = df_all[split_values == 2]
+        if not test_rows.empty:
+            return test_rows, "test"
+        if not held_out_only:
+            return df_all, "all"
+        validation_rows = df_all[split_values == 1]
+        if not validation_rows.empty:
+            return validation_rows, "validation"
+        return df_all.iloc[0:0], None
+
     def _generate_gradcam_heatmaps(
         self,
         exp_dir: Path,
@@ -1262,6 +1417,11 @@ class LudwigDirectBackend:
             result["reason"] = "Image resize/height not found in Ludwig preprocessing."
             return result
 
+        gradcam_path = config.get("gradcam_label_path")
+        member_rows = bool(gradcam_path and Path(gradcam_path).exists())
+        if member_rows:
+            # Ensembles: sample the exported member's own held-out rows, not the ensemble's view.
+            label_path = Path(gradcam_path)
         label_csv = label_path if label_path and label_path.exists() else None
         if not label_csv:
             result["reason"] = "Prepared label CSV not available for Grad-CAM sampling."
@@ -1277,15 +1437,11 @@ class LudwigDirectBackend:
             result["reason"] = "Image column missing from prepared CSV; cannot build Grad-CAM inputs."
             return result
 
-        # Prefer test split; otherwise fall back to the full dataset
-        df_candidates = df_all
-        if SPLIT_COLUMN_NAME in df_all.columns:
-            try:
-                df_candidates = df_all[df_all[SPLIT_COLUMN_NAME] == 2]
-                if df_candidates.empty:
-                    df_candidates = df_all
-            except Exception:
-                df_candidates = df_all
+        df_candidates, sample_split = self._gradcam_sample_rows(df_all, held_out_only=member_rows)
+        if sample_split is None:
+            result["reason"] = "The exported member has no test or validation rows to sample."
+            return result
+        result["sample_split"] = sample_split
 
         # Cap the number of samples
         df_candidates = df_candidates.head(12)
@@ -1672,6 +1828,50 @@ class LudwigDirectBackend:
                 logger.warning(f"✘ Skipped {viz_name}: {e}")
         logger.info(f"All visualizations written to {viz_dir}")
 
+    @staticmethod
+    def _describe_model_threshold(
+        exp_dir: Path,
+        config_for_summary: Dict[str, Any],
+        ensemble: Optional[Dict[str, Any]],
+        evaluation_threshold: float,
+    ) -> None:
+        """Record which threshold the saved model applies, saving a tuned one into it first.
+
+        A single model trained with an automatic threshold still holds Ludwig's
+        0.5; the threshold selected on its validation split is written into the
+        model so the ludwig_model output decides the way the Test Summary does.
+        An ensemble's exported member was handled when the ensemble was assembled.
+        """
+        if ensemble:
+            exported = ensemble.get("exported_model_threshold")
+            if exported is None:
+                return
+            saved = ensemble.get("exported_model_threshold_source") != "validation" or bool(
+                ensemble.get("exported_model_threshold_saved")
+            )
+            config_for_summary["model_threshold"] = float(exported) if saved else 0.5
+            config_for_summary["model_threshold_note"] = (
+                f"Exported member {ensemble.get('exported_model')}'s own threshold, not the ensemble's"
+                if saved
+                else f"The exported member's own threshold {float(exported):.6f} could not be saved"
+            )
+            return
+        if not (exp_dir / "model" / "model_hyperparameters.json").exists():
+            return
+        selected = config_for_summary.get("threshold")
+        tuned = str(config_for_summary.get("threshold_source") or "").startswith("Optimized")
+        if tuned and selected is not None:
+            if save_model_threshold(exp_dir / "model", float(selected), config_for_summary.get("positive_label")):
+                config_for_summary["model_threshold"] = float(selected)
+                config_for_summary["model_threshold_note"] = "The selected threshold, saved after training"
+            else:
+                config_for_summary["model_threshold"] = evaluation_threshold
+                config_for_summary["model_threshold_note"] = (
+                    "The selected threshold could not be saved; apply it to the model's probabilities"
+                )
+        else:
+            config_for_summary["model_threshold"] = evaluation_threshold
+
     def generate_html_report(
         self,
         title: str,
@@ -1875,8 +2075,17 @@ class LudwigDirectBackend:
             label_split_counts: Optional[List[Dict[str, int]]] = None,
             split_counts: Optional[Dict[int, int]] = None,
             fallback_dataset: Optional[Path] = None,
+            ensemble_summary: Optional[Dict[str, Any]] = None,
         ) -> str:
             """Summarize dataset distribution across splits using the actual split config."""
+            if (
+                ensemble_summary
+                and ensemble_summary.get("cross_validation")
+                and ensemble_summary.get("fold_layout")
+            ):
+                # Folds rotate the splits, so describe the per-fold layout instead.
+                return format_cross_validation_overview_table(ensemble_summary)
+
             if label_split_counts:
                 # Use the actual counts captured during data prep instead of heuristics.
                 return format_dataset_overview_table(label_split_counts, regression_mode=False)
@@ -2017,8 +2226,40 @@ class LudwigDirectBackend:
         hits_top_k = int(config_for_summary.get("top_k") or DEFAULT_HITS_AT_K)
         train_stats_path = exp_dir / "training_statistics.json"
         test_stats_path = exp_dir / TEST_STATISTICS_FILE_NAME
+        ensemble = config.get("ensemble") if isinstance(config.get("ensemble"), dict) else None
+        # Ensemble runs embed split and label columns in their averaged prediction
+        # CSVs, so prediction-based plots must not re-align rows against the label CSV.
+        preds_label_path = (
+            None
+            if ensemble
+            else (
+                str(config.get("label_column_data_path"))
+                if config.get("label_column_data_path")
+                else None
+            )
+        )
         try:
-            if train_stats_path.exists() and test_stats_path.exists():
+            if ensemble:
+                output_type = ensemble.get("task_type")
+                if test_stats_path.exists():
+                    with open(test_stats_path) as f:
+                        test_stats = json.load(f)
+                    output_type = detect_output_type(test_stats)
+                metrics_html = format_ensemble_summary_html(
+                    ensemble, output_type, top_k=hits_top_k
+                )
+                train_val_metrics_html = format_ensemble_members_table_html(
+                    ensemble,
+                    output_type,
+                    top_k=hits_top_k,
+                    title="Member Validation and Test Metrics",
+                )
+                test_metrics_html = format_test_merged_stats_table_html(
+                    ensemble.get("ensemble_test_metrics") or {},
+                    output_type,
+                    top_k=hits_top_k,
+                )
+            elif train_stats_path.exists() and test_stats_path.exists():
                 with open(train_stats_path) as f:
                     train_stats = json.load(f)
                 with open(test_stats_path) as f:
@@ -2068,7 +2309,16 @@ class LudwigDirectBackend:
                 or config.get("threshold_metric")
                 or "f1"
             )
-            if threshold_mode == "manual":
+            if ensemble and ensemble.get("threshold") is not None and ensemble.get("threshold_source"):
+                # The workflow already chose the ensemble threshold (per fold for
+                # test-fold CV); re-optimizing on the pooled validation rows would
+                # use the test rows' labels.
+                config_for_summary["threshold"] = float(ensemble["threshold"])
+                config_for_summary["threshold_source"] = str(ensemble["threshold_source"])
+                config_for_summary["threshold_metric"] = str(
+                    ensemble.get("threshold_metric") or requested_metric
+                )
+            elif threshold_mode == "manual":
                 threshold = (
                     config_for_summary.get("threshold")
                     if config_for_summary.get("threshold") is not None
@@ -2084,9 +2334,7 @@ class LudwigDirectBackend:
                     threshold_mode,
                     str(requested_metric),
                     str(validation_predictions_path),
-                    label_data_path=str(config.get("label_column_data_path"))
-                    if config.get("label_column_data_path")
-                    else None,
+                    label_data_path=preds_label_path,
                     existing_threshold=float(existing_threshold)
                     if existing_threshold is not None
                     else None,
@@ -2111,15 +2359,14 @@ class LudwigDirectBackend:
         else:
             config_for_summary["threshold"] = None
 
-        test_metrics_at_selected_threshold = False
-        if output_type == "binary" and predictions_csv_path.exists():
+        test_metrics_at_selected_threshold = bool(ensemble and ensemble.get("ensemble_test_metrics"))
+        # Ensemble metrics already use the selected thresholds, including per-fold values.
+        if output_type == "binary" and predictions_csv_path.exists() and not ensemble:
             try:
                 threshold_metrics = compute_binary_threshold_metrics_from_predictions(
                     str(predictions_csv_path),
                     float(config_for_summary.get("threshold", 0.5)),
-                    label_data_path=str(config.get("label_column_data_path"))
-                    if config.get("label_column_data_path")
-                    else None,
+                    label_data_path=preds_label_path,
                     split_value=2,
                 )
                 if threshold_metrics:
@@ -2134,13 +2381,25 @@ class LudwigDirectBackend:
                 )
 
         if output_type == "binary":
+            self._describe_model_threshold(exp_dir, config_for_summary, ensemble, evaluation_threshold)
+        if output_type == "binary":
             config_for_summary["evaluation_threshold"] = evaluation_threshold
-            evaluation_notice = format_binary_threshold_notice(
-                evaluation_threshold, "Ludwig model evaluation"
-            )
-            metrics_html = evaluation_notice + metrics_html
-            train_val_metrics_html = evaluation_notice + train_val_metrics_html
-            if test_metrics_at_selected_threshold:
+            # Ensemble tables mix member metrics with thresholded averaged predictions.
+            if not ensemble:
+                evaluation_notice = format_binary_threshold_notice(
+                    evaluation_threshold, "Ludwig model evaluation"
+                )
+                metrics_html = evaluation_notice + metrics_html
+                train_val_metrics_html = evaluation_notice + train_val_metrics_html
+            if ensemble and ensemble.get("fold_thresholds"):
+                test_notice = (
+                    "<p class='threshold-notice' style='text-align:center;'>"
+                    "<strong>Decision thresholds: per fold</strong>. "
+                    "Each test row uses the threshold selected on that fold's validation data. "
+                    f"Mean threshold: {float(config_for_summary['threshold']):.6f}. "
+                    "ROC-AUC does not depend on the decision threshold.</p>"
+                )
+            elif test_metrics_at_selected_threshold:
                 test_notice = format_binary_threshold_notice(
                     float(config_for_summary["threshold"]),
                     str(config_for_summary.get("threshold_source", "Selected for test evaluation")),
@@ -2160,6 +2419,7 @@ class LudwigDirectBackend:
             config.get("label_split_counts"),
             config.get("split_counts"),
             dataset_path_from_desc,
+            ensemble_summary=ensemble,
         )
         dataset_overview_html += format_image_match_notice(
             config.get("image_match_summary")
@@ -2277,9 +2537,7 @@ class LudwigDirectBackend:
             try:
                 threshold_plot = build_binary_threshold_plot(
                     str(validation_predictions_path),
-                    label_data_path=str(config.get("label_column_data_path"))
-                    if config.get("label_column_data_path")
-                    else None,
+                    label_data_path=preds_label_path,
                     split_value=1,
                     selected_threshold=float(threshold_value)
                     if threshold_value is not None
@@ -2293,14 +2551,26 @@ class LudwigDirectBackend:
             except Exception as e:
                 logger.warning(f"Could not generate validation threshold plot: {e}")
 
-        if train_stats_path.exists():
+        curves_path = train_stats_path
+        if ensemble and not train_stats_path.exists() and ensemble.get("exported_model"):
+            # An ensemble has no training run of its own: show the exported member's curves.
+            member_stats_path = exp_dir / "members" / str(ensemble["exported_model"]) / "training_statistics.json"
+            if member_stats_path.exists():
+                curves_path = member_stats_path
+                tab2_content += (
+                    "<p style='text-align:center; color:#666;'>The learning curves below belong to the "
+                    f"exported member model ({html_escape(str(ensemble['exported_model']))}), the model in "
+                    "the ludwig_model output. The other members' statistics are in the ZIP under "
+                    "experiment_run/members/.</p>"
+                )
+        if curves_path.exists():
             try:
                 if output_type == "regression":
-                    tv_plots = build_regression_train_val_plots(str(train_stats_path))
+                    tv_plots = build_regression_train_val_plots(str(curves_path))
                     tab2_content = append_plot_blocks(tab2_content, tv_plots)
                 else:
                     tv_plots = build_train_validation_plots(
-                        str(train_stats_path),
+                        str(curves_path),
                         top_k=hits_top_k,
                         output_type=output_type,
                     )
@@ -2316,6 +2586,11 @@ class LudwigDirectBackend:
                         )
             except Exception as e:
                 logger.warning(f"Could not generate train/val plots: {e}")
+
+        if threshold_plot:
+            # No training curves to pair it with (ensemble runs): still show the threshold sweep.
+            tab2_content = append_plot_blocks(tab2_content, [threshold_plot])
+            threshold_plot = None
 
         # Only include training PNGs for regression; classification is handled by filtered Plotly plots
         if output_type == "regression":
@@ -2336,9 +2611,7 @@ class LudwigDirectBackend:
             try:
                 val_diag_plots = build_prediction_diagnostics(
                     str(validation_predictions_path),
-                    label_data_path=str(config.get("label_column_data_path"))
-                    if config.get("label_column_data_path")
-                    else None,
+                    label_data_path=preds_label_path,
                     split_value=1,
                 )
                 val_conf_plots = [
@@ -2353,7 +2626,26 @@ class LudwigDirectBackend:
         # --- Predictions vs Ground Truth table (REGRESSION ONLY) ---
         preds_section = ""
         parquet_path = exp_dir / PREDICTIONS_PARQUET_FILE_NAME
-        if output_type == "regression" and parquet_path.exists():
+        if output_type == "regression" and ensemble and predictions_csv_path.exists():
+            # Averaged ensemble predictions already carry the ground truth.
+            try:
+                df_table = pd.read_csv(predictions_csv_path)
+                df_table = df_table[[LABEL_COLUMN_NAME, "label_predictions"]].rename(
+                    columns={"label_predictions": "prediction"}
+                )
+                preds_html = df_table.to_html(index=False, classes="predictions-table")
+                preds_section = (
+                    "<h2 style='text-align: center;'>Ground Truth vs. Predictions</h2>"
+                    "<div class='preds-controls'>"
+                    "<button id='downloadPredsCsv' class='download-btn'>Download CSV</button>"
+                    "</div>"
+                    "<div class='scroll-rows-30' style='overflow-x:auto; overflow-y:auto; max-height:350px; margin-bottom:20px;'>"
+                    + preds_html
+                    + "</div>"
+                )
+            except Exception as e:
+                logger.warning(f"Could not build ensemble Predictions vs GT table: {e}")
+        elif output_type == "regression" and parquet_path.exists():
             try:
                 # 1) load predictions from Parquet
                 df_preds = pd.read_parquet(parquet_path).reset_index(drop=True)
@@ -2409,9 +2701,7 @@ class LudwigDirectBackend:
                     interactive_plots = build_binary_threshold_classification_plots_from_predictions(
                         str(predictions_csv_path),
                         float(threshold_value) if threshold_value is not None else 0.5,
-                        label_data_path=str(config.get("label_column_data_path"))
-                        if config.get("label_column_data_path")
-                        else None,
+                        label_data_path=preds_label_path,
                         split_value=2,
                     )
                     if not interactive_plots:
@@ -2467,9 +2757,7 @@ class LudwigDirectBackend:
                 try:
                     test_diag_plots = build_prediction_diagnostics(
                         str(predictions_csv_path),
-                        label_data_path=str(config.get("label_column_data_path"))
-                        if config.get("label_column_data_path")
-                        else None,
+                        label_data_path=preds_label_path,
                         split_value=2,
                     )
                     if test_diag_plots:
@@ -2480,6 +2768,16 @@ class LudwigDirectBackend:
 
         if gradcam_info.get("status") == "generated":
             tab3_content += "<h2 style='text-align: center;'>Grad-CAM Heatmaps</h2>"
+            if ensemble and ensemble.get("exported_model"):
+                rows_text = {
+                    "test": " on its own test rows",
+                    "validation": " on its own validation rows, since it has no test rows",
+                }.get(str(gradcam_info.get("sample_split")), "")
+                tab3_content += (
+                    "<p style='text-align:center; color:#666;'>Computed with the exported member model "
+                    f"({html_escape(str(ensemble['exported_model']))}){rows_text}, not with the averaged "
+                    "ensemble.</p>"
+                )
             for orig_path, heat_path in gradcam_info.get("pairs", [])[:4]:
                 try:
                     display_name = Path(str(orig_path)).name
@@ -2504,7 +2802,7 @@ class LudwigDirectBackend:
         html += tabbed_html + modal_html + get_html_closing()
 
         try:
-            with open(report_path, "w") as f:
+            with open(report_path, "w", encoding="utf-8") as f:
                 f.write(html)
             logger.info(f"HTML report generated at: {report_path}")
         except Exception as e:

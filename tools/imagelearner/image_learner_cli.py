@@ -81,7 +81,11 @@ def main():
         "--validation-size",
         type=float,
         default=0.15,
-        help="Fraction for validation (0.0–1.0)",
+        help=(
+            "Fraction of the training rows moved to validation (0.0–1.0) when the input CSV has a "
+            "split column. Without one, --split-probabilities set the validation share, also for "
+            "the validation rows test folds draw from their training rows."
+        ),
     )
     parser.add_argument(
         "--preprocessing-num-processes",
@@ -105,6 +109,36 @@ def main():
         type=int,
         default=42,
         help="Random seed used for dataset splitting (default: 42)",
+    )
+    parser.add_argument(
+        "--cross-validation",
+        action="store_true",
+        help="Train one model per fold (k-fold cross-validation) and average their predictions.",
+    )
+    parser.add_argument(
+        "--num-folds",
+        type=int,
+        default=5,
+        help="Number of cross-validation folds (default: 5).",
+    )
+    parser.add_argument(
+        "--fold-role",
+        choices=["validation", "test"],
+        default="validation",
+        help=(
+            "'validation' keeps the test split fixed and rotates folds through the "
+            "validation set; 'test' rotates folds of all rows through the test set "
+            "(default: validation)."
+        ),
+    )
+    parser.add_argument(
+        "--num-seeds",
+        type=int,
+        default=1,
+        help=(
+            "Train this many models per split with seeds random_seed, random_seed+1, ... "
+            "and average their predictions (default: 1)."
+        ),
     )
     parser.add_argument(
         "--learning-rate",
@@ -153,6 +187,15 @@ def main():
         type=str,
         default="f1",
         help="Metric used for automatic binary threshold optimization.",
+    )
+    parser.add_argument(
+        "--positive-label",
+        type=str,
+        default=None,
+        help=(
+            "Label to treat as the positive class of a two-class target. Thresholds, precision and "
+            "recall refer to it. Leave unset to let the tool choose (see the tool help)."
+        ),
     )
     parser.add_argument(
         "--validation-metric",
@@ -206,7 +249,7 @@ def main():
         orchestrator.run()
         logger.info("Main script finished successfully.")
     except Exception as e:
-        logger.error(f"Main script failed.{e}")
+        logger.error(f"Main script failed: {e}")
         exit_code = 1
     finally:
         sys.exit(exit_code)
