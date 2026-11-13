@@ -323,6 +323,55 @@ def test_prepare_config_records_category_top_k():
     assert config["output_features"][0]["top_k"] == 3
 
 
+@pytest.mark.parametrize("fallback", ["malignant", None])
+def test_prepare_config_names_ludwigs_true_label(fallback):
+    *_, LudwigDirectBackend = _load_backend_test_objects()
+    yaml_str = LudwigDirectBackend().prepare_config(
+        {
+            "model_name": "resnet18",
+            "use_pretrained": False,
+            "epochs": 1,
+            "label_metadata": {"num_unique": 2},
+            "fallback_true_label": fallback,
+        },
+        {"type": "random", "probabilities": [0.7, 0.1, 0.2]},
+    )
+    feature = yaml.safe_load(yaml_str)["output_features"][0]
+    assert feature["type"] == "binary"
+    if fallback:
+        assert feature["preprocessing"] == {"fallback_true_label": "malignant"}
+    else:
+        assert "preprocessing" not in feature
+
+
+@pytest.mark.parametrize("source, bool2str, in_model, row, note", [
+    ("Optimized on validation split", None, 0.31, 0.31, "saved after training"),
+    ("Optimized on validation split", ["malignant", "benign"], 0.5, 0.6, "could not be saved"),
+    ("Manual", None, 0.5, 0.6, None),
+    ("Default 0.5 (automatic optimization unavailable)", None, 0.5, 0.6, None),
+])
+def test_single_model_report_saves_only_a_tuned_threshold(tmp_path, source, bool2str, in_model, row, note):
+    *_, backend_class = _load_backend_test_objects()
+    model_dir = tmp_path / "model"
+    model_dir.mkdir()
+    (model_dir / "model_hyperparameters.json").write_text(json.dumps(
+        {"output_features": [{"name": "label", "type": "binary", "threshold": 0.5}]}
+    ))
+    if bool2str:
+        (model_dir / "training_set_metadata.json").write_text(json.dumps({"label": {"bool2str": bool2str}}))
+    summary = {"threshold": 0.31, "threshold_source": source, "positive_label": "malignant"}
+    # 0.6 stands for the threshold the model was trained and evaluated with
+    backend_class._describe_model_threshold(tmp_path, summary, None, 0.6)
+    saved = json.loads((model_dir / "model_hyperparameters.json").read_text())["output_features"][0]["threshold"]
+    assert saved == pytest.approx(in_model)
+    assert summary["model_threshold"] == pytest.approx(row)
+    assert (note in summary["model_threshold_note"]) if note else ("model_threshold_note" not in summary)
+
+    empty = {"threshold": 0.31, "threshold_source": source}
+    backend_class._describe_model_threshold(tmp_path / "failed_run", empty, None, 0.5)
+    assert "model_threshold" not in empty
+
+
 def test_prepare_config_records_explicit_resize_image_size_summary(tmp_path):
     (
         _image_path_col,

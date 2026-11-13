@@ -805,6 +805,15 @@ def compute_classification_statistics(
             "kappa_score": _safe(cohen_kappa_score, y_true, y_pred),
         }
 
+    if len(y_true):
+        # Mean negative log of the probability given to the true class, read in class_names order
+        # (sklearn's log_loss would assume alphabetical columns). Unlike Ludwig's training loss it
+        # carries no class weights, so it is reported under its own name.
+        true_idx = np.asarray([class_names.index(label) for label in y_true])
+        true_prob = probabilities[np.arange(len(y_true)), true_idx]
+        log_loss = float(-np.mean(np.log(np.clip(true_prob, 1e-15, 1.0))))
+        stats["log_loss"] = log_loss if np.isfinite(log_loss) else None
+
     stats = {k: v for k, v in stats.items() if v is not None}
     stats["per_class_stats"] = per_class
     stats["confusion_matrix"] = cm.tolist()

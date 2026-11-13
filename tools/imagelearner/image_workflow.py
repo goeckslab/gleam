@@ -55,7 +55,15 @@ from ensemble import (
 from ludwig.globals import PREDICTIONS_PARQUET_FILE_NAME
 from ludwig_backend import Backend
 from split_data import create_stratified_random_split, split_data_0_2
-from utils import detect_output_type, load_metadata_table, ludwig_text_binary_truth, nonzero_binary_label
+from utils import (
+    detect_output_type,
+    load_metadata_table,
+    ludwig_text_binary_truth,
+    nonzero_binary_label,
+    resolve_binary_positive_label,
+    save_model_threshold,
+    use_positive_label,
+)
 
 logger = logging.getLogger("ImageLearner")
 
@@ -69,6 +77,8 @@ class ImageLearnerCLI:
         self.temp_dir: Optional[Path] = None
         self.image_extract_dir: Optional[Path] = None
         self.label_metadata: Dict[str, Any] = {}
+        self.positive_label: Optional[str] = None
+        self.fallback_true_label: Optional[str] = None
         self.output_type_hint: Optional[str] = None
         self.label_split_counts: List[Dict[str, int]] = []
         self.split_counts: Dict[int, int] = {}
@@ -329,7 +339,7 @@ class ImageLearnerCLI:
         self._capture_split_counts(df)
         self._capture_label_metadata(df)
         self._check_numeric_binary_labels(df)
-        self._check_text_binary_labels(df)
+        self._resolve_positive_label(df)
 
         return final_csv, split_config, split_info
 
@@ -353,30 +363,50 @@ class ImageLearnerCLI:
                 "model. Recode the labels as 0 and 1 (1 = the positive class) or use text labels."
             )
 
-    @staticmethod
-    def _check_text_binary_labels(df: pd.DataFrame) -> None:
-        """Refuse two text labels that Ludwig maps to the same boolean (for example yes/true).
+    def _resolve_positive_label(self, df: pd.DataFrame) -> None:
+        """Choose the positive class of a two-class label once, for Ludwig and for the report.
 
-        Ludwig reads yes/y/true/t/1 as True and no/n/false/f/0/-1 as False
-        (case-insensitive); for any other value the alphabetically first label
-        is True. Pairs such as "yes"/"true" or "maybe"/"yes" become one class.
+        Ludwig fixes it for numeric labels (the nonzero one) and for labels it
+        knows as booleans (yes/y/true/t/1 are True, no/n/false/f/0/-1 False).
+        For any other text label Ludwig would take the alphabetically first one
+        as True, which is "benign" of benign/malignant; instead the user's
+        ``--positive-label``, or the report's own guess, is handed to Ludwig as
+        ``fallback_true_label``. The model's True class, a manual threshold, the
+        tuned threshold and every reported metric then refer to the same class.
+
+        Refuses two text labels that Ludwig maps to the same boolean (for
+        example yes/true): the model could not tell them apart.
         """
+        use_positive_label(None)
+        self.positive_label = None
+        self.fallback_true_label = None
+        requested = str(getattr(self.args, "positive_label", None) or "").strip()
         series = df[LABEL_COLUMN_NAME]
-        if not (ptypes.is_object_dtype(series.dtype) or ptypes.is_string_dtype(series.dtype)):
-            return
-        values = [str(v) for v in series.dropna().unique().tolist()]
+        values = series.dropna().unique().tolist()
         if len(values) != 2:
+            if requested:
+                raise ValueError(
+                    f"A positive class ('{requested}') was given, but the label column has {len(values)} "
+                    "distinct values. It applies to two-class labels only; leave it empty."
+                )
             return
-        truth = ludwig_text_binary_truth(values)
-        if truth[values[0]] == truth[values[1]]:
-            shown = " and ".join(f"'{v}'" for v in sorted(values))
-            raise ValueError(
-                f"The label column has two values, {shown}, that Ludwig reads as the same boolean "
-                f"({truth[values[0]]}), so both classes would look the same to the model. Ludwig reads "
-                "yes/y/true/t/1 as True and no/n/false/f/0/-1 as False (any case); for other values the "
-                "alphabetically first label is True. Rename the labels so that exactly one of them is "
-                "True, for example to 0 and 1 (1 = the positive class)."
-            )
+        names = [str(v) for v in values]
+        positive = resolve_binary_positive_label(names, requested or None)
+        if ptypes.is_object_dtype(series.dtype) or ptypes.is_string_dtype(series.dtype):
+            truth = ludwig_text_binary_truth(names, positive)
+            if truth[names[0]] == truth[names[1]]:
+                shown = " and ".join(f"'{v}'" for v in sorted(names))
+                raise ValueError(
+                    f"The label column has two values, {shown}, that Ludwig reads as the same boolean "
+                    f"({truth[names[0]]}), so both classes would look the same to the model. Ludwig reads "
+                    "yes/y/true/t/1 as True and no/n/false/f/0/-1 as False (any case). Rename the labels "
+                    "so that at most one of them is in either list, for example to 0 and 1 "
+                    "(1 = the positive class)."
+                )
+            self.fallback_true_label = positive
+        self.positive_label = canonical_label(values[names.index(positive)])
+        use_positive_label(self.positive_label)
+        logger.info("Positive class of the binary label: %s", self.positive_label)
 
     def _capture_split_counts(self, df: pd.DataFrame) -> None:
         """Capture actual split counts for downstream reporting (avoids heuristic 70/10/20 tables)."""
@@ -622,6 +652,8 @@ class ImageLearnerCLI:
                 "threshold_mode": self.args.threshold_mode,
                 "threshold_metric": self.args.threshold_metric,
                 "label_metadata": self.label_metadata,
+                "positive_label": self.positive_label,
+                "fallback_true_label": self.fallback_true_label,
                 "output_type_hint": self.output_type_hint,
                 "validation_metric": self.args.validation_metric,
                 "target_column": getattr(self.args, "report_target_column", LABEL_COLUMN_NAME),
@@ -728,6 +760,7 @@ class ImageLearnerCLI:
             logger.error("Workflow execution failed", exc_info=True)
             raise
         finally:
+            use_positive_label(None)
             self._cleanup_temp_dirs()
 
     # ------------------------------------------------------------------
@@ -1007,6 +1040,7 @@ class ImageLearnerCLI:
             **threshold_info,
             "members_planned": len(members),
             "members_trained": len(trained),
+            "positive_label": self.positive_label if task_type == "binary" else None,
             "exported_model": trained[0]["name"],
             **exported_info,
             "plan_warnings": warnings_for_plan,
@@ -1050,6 +1084,12 @@ class ImageLearnerCLI:
         description_path = first_member_dir / DESCRIPTION_FILE_NAME
         if description_path.exists():
             shutil.copy2(description_path, top_dir / DESCRIPTION_FILE_NAME)
+        if summary.get("exported_model_threshold_source") == "validation":
+            # The member was trained with Ludwig's 0.5; make the exported copy decide at the
+            # threshold tuned on its own validation rows, the one its reported metrics use.
+            summary["exported_model_threshold_saved"] = save_model_threshold(
+                top_dir / "model", summary["exported_model_threshold"], self.positive_label
+            )
 
         metadata_columns = [LABEL_COLUMN_NAME, IMAGE_PATH_COLUMN_NAME]
         canonical = task_type != "regression"

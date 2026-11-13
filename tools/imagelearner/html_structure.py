@@ -107,6 +107,7 @@ def format_config_table_html(
         "trainable",
         "target_column",
         "task_type",
+        "positive_label",
         "compute_resource",
         "preprocessing_worker_count",
         "validation_metric",
@@ -116,6 +117,7 @@ def format_config_table_html(
         "threshold",
         "threshold_source",
         "threshold_metric",
+        "model_threshold",
         "epochs",
         "total_epochs",
         "batch_size",
@@ -135,6 +137,8 @@ def format_config_table_html(
         "threshold": "Selected Threshold (Test Summary)",
         "threshold_source": "Threshold Source",
         "threshold_metric": "Threshold Optimization Metric",
+        "positive_label": "Positive Class",
+        "model_threshold": "Threshold Saved in the Model (ludwig_model Output)",
         "compute_resource": "Compute Resource",
         "preprocessing_worker_count": "Preprocessing Worker Count",
     }
@@ -158,6 +162,16 @@ def format_config_table_html(
                 continue
             val = val if val is not None else 0.5
             val_str = f"{float(val):.6f}"
+        elif key == "positive_label":
+            if output_type != "binary" or val is None:
+                continue
+            val_str = escape(str(val))
+        elif key == "model_threshold":
+            if output_type != "binary" or val is None:
+                continue
+            val_str = f"{float(val):.6f}"
+            if config.get("model_threshold_note"):
+                val_str += f"<br><span style='font-size: 0.85em;'>{escape(str(config['model_threshold_note']))}</span>"
         elif key in {"threshold_source", "threshold_metric"}:
             if output_type != "binary":
                 continue
@@ -1077,8 +1091,8 @@ def format_test_merged_stats_table_html(
 # -----------------------------------------
 
 ENSEMBLE_TABLE_METRICS = {
-    "binary": ["accuracy", "roc_auc"],
-    "category": ["accuracy", "accuracy_micro", "roc_auc"],
+    "binary": ["accuracy", "roc_auc", "log_loss"],
+    "category": ["accuracy", "accuracy_micro", "roc_auc", "log_loss"],
     "regression": ["mean_absolute_error", "root_mean_squared_error", "r2"],
 }
 
@@ -1208,6 +1222,13 @@ def _exported_model_text(ensemble: Dict[str, Any], output_type: Optional[str]) -
             text += f" at the default threshold {float(threshold):.3f} (its validation rows could not tune one)"
         else:
             text += f" at its own validation-tuned threshold {float(threshold):.3f}"
+            if ensemble.get("exported_model_threshold_saved"):
+                text += ", which is saved in the model file, so its predictions use it"
+            else:
+                text += (
+                    "; the model file still applies 0.5, so apply this threshold to its "
+                    "positive-class probability yourself"
+                )
     return text + "."
 
 

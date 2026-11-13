@@ -1,10 +1,11 @@
+import json
 import logging
 import math
 from pathlib import Path
-from typing import Dict, Iterable, Optional
+from typing import Dict, Iterable, List, Optional
 
 import pandas as pd
-from constants import LUDWIG_BOOL_FALSE_STRS, LUDWIG_BOOL_TRUE_STRS, MAX_ENSEMBLE_MEMBERS
+from constants import LABEL_COLUMN_NAME, LUDWIG_BOOL_FALSE_STRS, LUDWIG_BOOL_TRUE_STRS, MAX_ENSEMBLE_MEMBERS
 
 logger = logging.getLogger("ImageLearner")
 
@@ -34,53 +35,176 @@ def nonzero_binary_label(labels: Iterable[object]) -> Optional[str]:
     return next(name for name in numbers if name != zeros[0])
 
 
-def ludwig_text_binary_truth(labels: Iterable[object]) -> Dict[str, bool]:
+def _ludwig_bool(name: str) -> Optional[bool]:
+    """A text label's fixed boolean in Ludwig 0.10.1, or None if Ludwig has no rule for it."""
+    lowered = str(name).lower()
+    if lowered in LUDWIG_BOOL_TRUE_STRS:
+        return True
+    if lowered in LUDWIG_BOOL_FALSE_STRS:
+        return False
+    return None
+
+
+def ludwig_text_binary_truth(
+    labels: Iterable[object], fallback_true_label: Optional[str] = None
+) -> Dict[str, bool]:
     """How Ludwig 0.10.1 maps two text labels to booleans (binary_feature.get_feature_meta).
 
     Labels in Ludwig's boolean sets (case-insensitive) take their value from
-    them. If either label is in neither set, the alphabetically first label is
-    the fallback True label: the other label is True only if the sets say so.
-    Both labels can end up with the same value, for example "yes"/"true" or
-    "maybe"/"yes", and the model then cannot tell the classes apart.
+    them. If either label is in neither set, the fallback True label decides
+    the labels outside the sets: ``fallback_true_label`` (the output feature's
+    ``preprocessing.fallback_true_label``), or the alphabetically first label
+    when it is not given. Both labels can end up with the same value, for
+    example "yes"/"true", and the model then cannot tell the classes apart.
     """
     names = [str(label) for label in labels]
-
-    def from_sets(name: str) -> Optional[bool]:
-        lowered = name.lower()
-        if lowered in LUDWIG_BOOL_TRUE_STRS:
-            return True
-        if lowered in LUDWIG_BOOL_FALSE_STRS:
-            return False
-        return None
-
-    strict = {name: from_sets(name) for name in names}
+    strict = {name: _ludwig_bool(name) for name in names}
     if all(value is not None for value in strict.values()):
         return strict
-    fallback_true = sorted(names)[0]
+    fallback_true = fallback_true_label if fallback_true_label is not None else sorted(names)[0]
     return {name: (strict[name] if strict[name] is not None else name == fallback_true) for name in names}
 
 
 _POSITIVE_CLASS_HINTS = ("event", "true", "positive", "pos", "1")
 
+# The positive class resolved for this run (see ``use_positive_label``).
+_RUN_POSITIVE_LABEL: Optional[str] = None
 
-def positive_class_name(class_names: Iterable[object]) -> Optional[str]:
-    """The positive class of a binary task; the report and the ensemble must agree on it.
 
-    Two numeric classes with exactly one zero follow Ludwig (the nonzero label
-    is positive); otherwise the first name in sorted order holding a hint such
-    as "true" or "1" decides, then the last name in sorted order.
-    """
-    names = [str(name) for name in class_names]
-    if not names:
-        return None
-    nonzero = nonzero_binary_label(names)
-    if nonzero is not None:
-        return nonzero
+def _guess_positive_label(names: List[str]) -> str:
+    """The first name in sorted order holding a hint such as "positive", else the last name."""
     ordered = sorted(names)
     for name in ordered:
         if any(hint in name.lower() for hint in _POSITIVE_CLASS_HINTS):
             return name
     return ordered[-1]
+
+
+def _same_label(left: object, right: object) -> bool:
+    """Whether two spellings name one label ("case" and " case ", or "1" and "1.0")."""
+    left, right = str(left).strip(), str(right).strip()
+    if left == right:
+        return True
+    try:
+        return float(left) == float(right)
+    except ValueError:
+        return False
+
+
+def resolve_binary_positive_label(labels: Iterable[object], requested: Optional[object] = None) -> str:
+    """The positive class of two labels: Ludwig's True class, which the report scores as positive.
+
+    Ludwig fixes the answer for some labels: of two numbers with exactly one
+    zero the nonzero one is True, and yes/y/true/t/1 are True and
+    no/n/false/f/0/-1 False whatever the other label is. Otherwise the choice
+    is free: ``requested`` if given, else a name holding a hint such as
+    "positive", else the last name in sorted order. The workflow hands a free
+    choice to Ludwig as ``fallback_true_label``, so the model and the report
+    always score the same class.
+
+    Raises ValueError when ``requested`` is not one of the labels or
+    contradicts a label Ludwig fixes.
+    """
+    names = [str(label) for label in labels]
+    if len(set(names)) != 2:
+        raise ValueError(f"A positive class needs exactly two labels, got {sorted(set(names))}.")
+    fixed = nonzero_binary_label(names)
+    if fixed is None:
+        truth = {name: _ludwig_bool(name) for name in names}
+        true_names = [name for name in names if truth[name] is True]
+        false_names = [name for name in names if truth[name] is False]
+        if len(true_names) == 1:
+            fixed = true_names[0]
+        elif not true_names and len(false_names) == 1:
+            fixed = next(name for name in names if name != false_names[0])
+    chosen = None
+    if requested is not None and str(requested).strip():
+        chosen = next((name for name in names if _same_label(name, requested)), None)
+        if chosen is None:
+            # "TRUE" for a column pandas shows as True, or "Benign" for benign: accept one clear match.
+            folded = [name for name in names if name.strip().casefold() == str(requested).strip().casefold()]
+            chosen = folded[0] if len(folded) == 1 else None
+        if chosen is None:
+            raise ValueError(
+                f"The positive class '{requested}' is not one of the two labels "
+                f"({' and '.join(repr(name) for name in sorted(names))})."
+            )
+        if fixed is not None and chosen != fixed:
+            raise ValueError(
+                f"The positive class cannot be '{chosen}': Ludwig always reads '{fixed}' as the positive "
+                "(True) class of these labels (a nonzero number, or yes/y/true/t/1, is True; "
+                "0 or no/n/false/f/-1 is False). Leave the positive class empty or rename the labels."
+            )
+    return fixed or chosen or _guess_positive_label(names)
+
+
+def use_positive_label(label: Optional[object]) -> None:
+    """Set (or with None clear) the positive class every binary metric of this run uses.
+
+    The workflow resolves it once from the dataset and the user's choice and
+    gives the same label to Ludwig, so thresholds, report plots and ensemble
+    statistics cannot pick different classes.
+    """
+    global _RUN_POSITIVE_LABEL
+    _RUN_POSITIVE_LABEL = None if label is None else str(label)
+
+
+def positive_class_name(class_names: Iterable[object]) -> Optional[str]:
+    """The positive class among the given class names; the report and the ensemble must agree on it.
+
+    The run's positive class (``use_positive_label``) wins when it is one of
+    the names. Otherwise two names follow ``resolve_binary_positive_label``
+    (probability columns named False/True, for example), and any other number
+    of names falls back to its name hints.
+    """
+    names = [str(name) for name in class_names]
+    if not names:
+        return None
+    if _RUN_POSITIVE_LABEL is not None:
+        for name in names:
+            if _same_label(name, _RUN_POSITIVE_LABEL):
+                return name
+    if len(set(names)) == 2:
+        return resolve_binary_positive_label(names)
+    return _guess_positive_label(names)
+
+
+def save_model_threshold(model_dir: Path, threshold: float, positive_label: Optional[object] = None) -> bool:
+    """Write a tuned binary decision threshold into a saved Ludwig model.
+
+    A loaded Ludwig model predicts True when P(True) >= the ``threshold`` of
+    its output feature in ``model_hyperparameters.json``. Training leaves that
+    at 0.5 unless a manual threshold was configured, so a model tuned after
+    training would otherwise decide differently from the report.
+
+    Returns False and changes nothing when the model has no binary label
+    feature, or when its True label (``bool2str`` in the training metadata) is
+    not ``positive_label``: the threshold would then cut the wrong class.
+    """
+    model_dir = Path(model_dir)
+    config_path = model_dir / "model_hyperparameters.json"
+    try:
+        config = json.loads(config_path.read_text())
+        feature = next(
+            feat for feat in config["output_features"]
+            if feat.get("name") == LABEL_COLUMN_NAME and feat.get("type") == "binary"
+        )
+        metadata_path = model_dir / "training_set_metadata.json"
+        if positive_label is not None and metadata_path.exists():
+            bool2str = (json.loads(metadata_path.read_text()).get(LABEL_COLUMN_NAME) or {}).get("bool2str")
+            if isinstance(bool2str, list) and len(bool2str) == 2 and not _same_label(bool2str[1], positive_label):
+                logger.warning(
+                    "The model's True label '%s' is not the positive class '%s'; its threshold stays unchanged.",
+                    bool2str[1], positive_label,
+                )
+                return False
+        feature["threshold"] = float(threshold)
+        config_path.write_text(json.dumps(config, indent=4))
+    except (OSError, ValueError, KeyError, TypeError, StopIteration) as exc:
+        logger.warning("Could not save the decision threshold in %s: %s", config_path, exc)
+        return False
+    logger.info("Saved decision threshold %.6f in %s", float(threshold), config_path)
+    return True
 
 
 def detect_output_type(test_stats):

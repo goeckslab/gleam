@@ -254,6 +254,11 @@ def test_ensemble_summary_flags_gaps_and_default_fold_thresholds():
     assert "and it trained on one fold&#x27;s training rows" in html
     assert "Its own test metrics (its own fold&#x27;s test rows only):" in html
     assert "at its own validation-tuned threshold 0.410" in html
+    assert "the model file still applies 0.5" in html
+    summary["exported_model_threshold_saved"] = True
+    assert "threshold 0.410, which is saved in the model file" in html_structure.format_ensemble_summary_html(
+        summary, "binary"
+    )
     summary["exported_model_threshold_source"] = "manual"
     assert "at the manual threshold 0.410" in html_structure.format_ensemble_summary_html(summary, "binary")
     summary["exported_model_threshold_source"] = "default"

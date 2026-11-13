@@ -95,6 +95,9 @@
                 #end if
                 --image-resize "$model_hyperparameter_configuration.image_resize"
                 --random-seed "$customize_defaults_section.random_seed"
+                #if str($customize_defaults_section.positive_label).strip()
+                    --positive-label="$customize_defaults_section.positive_label"
+                #end if
                 #if $customize_defaults_section.cross_validation.enable_cross_validation == "true"
                     --cross-validation
                     --num-folds "$customize_defaults_section.cross_validation.num_folds"
@@ -413,6 +416,28 @@
                     label="Test split proportion (only works if no split column in the metadata csv)"
                     value="0.2"
                     help="Fraction of data for testing (e.g., 0.2) train split + val split + test split should = 1."/>
+            <param name="positive_label" type="text" value="" optional="true"
+                   label="Positive class (binary classification only)"
+                   help="The label to treat as the positive class, as written in the target column (for example malignant). The decision threshold, precision, recall, F1 and the ROC and precision-recall curves refer to this class, and the trained model's True class is set to it. Leave empty to let the tool choose: a label containing event, true, positive, pos or 1, otherwise the alphabetically last label. Some labels cannot be chosen freely: of two numbers the nonzero one is always positive (recode the labels so that 0 is the negative class), and yes/y/true/t/1 are always positive and no/n/false/f/0/-1 always negative.">
+                <sanitizer>
+                    <valid initial="default">
+                        <add value="&lt;" />
+                        <add value="&gt;" />
+                        <add value="'" />
+                        <add value="[" />
+                        <add value="]" />
+                        <add value="{" />
+                        <add value="}" />
+                        <add value="@" />
+                        <add value="#" />
+                        <add value="&amp;" />
+                        <add value="%" />
+                        <add value=";" />
+                        <add value="|" />
+                        <add value="~" />
+                    </valid>
+                </sanitizer>
+            </param>
             <conditional name="binary_threshold_policy">
                 <param name="mode" type="select" label="Binary classification threshold">
                     <option value="auto" selected="true">Auto: optimize threshold by metric</option>
@@ -650,6 +675,10 @@ If you do not provide a split column, the tool will automatically split the data
 You can optionally specify a sample ID column to keep related samples in the same split and prevent data leakage.
 For a binary task the two labels must be told apart by Ludwig: two numbers need exactly one 0 (for example 0/1), and two text labels must not both read as true or both as false (for example yes/true or no/false); otherwise the run stops before training.
 
+**Positive class and decision threshold (binary tasks)**
+The decision threshold, precision, recall, F1 and the ROC and precision-recall curves refer to the positive class, which the report lists as "Positive Class". Of two numbers the nonzero one is positive, and yes/y/true/t/1 are positive and no/n/false/f/0/-1 negative. For any other pair of text labels you can name the positive class under "Customize Default Settings"; if you leave it empty the tool takes a label containing event, true, positive, pos or 1, otherwise the alphabetically last label (malignant of benign/malignant). The trained model uses the same class as its True class.
+With an automatic threshold, the threshold selected on the validation split is saved in the ludwig_model output after training, so the model predicts the positive class at that threshold, not at 0.5; the report lists it as "Threshold Saved in the Model".
+
 **Models Available**
 This tool supports a wide range of state-of-the-art image classification models including:
 - Traditional CNNs (ResNet, EfficientNet, VGG, etc.)
@@ -676,7 +705,7 @@ For classification the class probabilities are averaged across the models that d
 The tool will output a trained model in the form of a ludwig_model file,
 a report in the form of an HTML file, and a hidden ZIP archive containing the predictions, image-size details, experiment stats, and visualizations.
 The html report will contain metrics&experiment setup parameters, train&val plots and test plots.
-For ensemble runs the ZIP also contains ``experiment_run/ensemble_summary.json`` and one ``experiment_run/members/<fold>_<seed>/`` folder per member with its own predictions and statistics (member weights are left out to keep the archive small); ``predictions.csv`` and ``validation_predictions.csv`` at the top level hold the averaged predictions. The ludwig_model output is the first trained member; the report lists its own test metrics and decision threshold (tuned on its own validation rows unless the threshold is manual), and Grad-CAM images use its own test rows (its validation rows if it has no test rows).
+For ensemble runs the ZIP also contains ``experiment_run/ensemble_summary.json`` and one ``experiment_run/members/<fold>_<seed>/`` folder per member with its own predictions and statistics (member weights are left out to keep the archive small); ``predictions.csv`` and ``validation_predictions.csv`` at the top level hold the averaged predictions. The ludwig_model output is the first trained member; the report lists its own test metrics and decision threshold (tuned on its own validation rows unless the threshold is manual, and saved in the model file), shows its learning curves, and Grad-CAM images use its own test rows (its validation rows if it has no test rows). For classification the member table and the Test Summary also give an unweighted log loss of the averaged probabilities; it carries no class weights, so do not compare it with the loss Ludwig reports during training.
 
         ]]>
     </help>

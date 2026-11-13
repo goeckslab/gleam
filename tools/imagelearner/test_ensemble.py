@@ -589,6 +589,9 @@ class FakeBackend:
         exp_dir = Path(output_dir) / "experiment_run"
         (exp_dir / "model" / "training_checkpoints").mkdir(parents=True)
         (exp_dir / "model" / "model_weights").write_text("weights")
+        (exp_dir / "model" / "model_hyperparameters.json").write_text(
+            json.dumps({"output_features": [{"name": LABEL, "type": "binary", "threshold": 0.5}]})
+        )
         (exp_dir / "model" / "training_progress.json").write_text(
             json.dumps({"learning_rate": 0.001, "batch_size": 8, "epoch": 2})
         )
@@ -734,6 +737,14 @@ def test_workflow_trains_members_and_averages_predictions(tmp_path, monkeypatch)
     assert summary["coverage"]["warnings"] == []
     assert 0 < summary["exported_model_threshold"] < 1
     assert "accuracy" in summary["exported_model_test_metrics"]
+    # the exported copy decides at its own tuned threshold; the member's original keeps Ludwig's 0.5
+    assert summary["exported_model_threshold_saved"] is True
+    assert summary["positive_label"] == "1"
+    for folder, expected in (("model", summary["exported_model_threshold"]), ("members/fold1_seed42/model", 0.5)):
+        saved = json.loads((exp_dir / folder / "model_hyperparameters.json").read_text())
+        assert saved["output_features"][0]["threshold"] == pytest.approx(expected)
+    assert "log_loss" in summary["ensemble_test_metrics"]
+    assert "log_loss" in summary["members"][0]["test"]
     assert 0 < summary["threshold"] < 1
     assert summary["threshold_source"].startswith("Optimized on out-of-fold validation predictions")
     assert summary["threshold_metric"] == "F1"
@@ -1245,7 +1256,7 @@ def test_ludwig_text_binary_truth_follows_ludwig(labels, same):
         assert truth == {"case": True, "control": False}
 
 
-@pytest.mark.parametrize("labels, refused", [(("yes", "true"), True), (("maybe", "yes"), True), (("benign", "malignant"), False)])
+@pytest.mark.parametrize("labels, refused", [(("yes", "true"), True), (("No", "f"), True), (("benign", "malignant"), False)])
 def test_workflow_refuses_text_binary_labels_ludwig_cannot_tell_apart(tmp_path, monkeypatch, labels, refused):
     monkeypatch.chdir(tmp_path)
     image_workflow = importlib.import_module("image_workflow")
@@ -1313,3 +1324,164 @@ def test_split_0_2_keeps_sample_ids_out_of_both_training_and_validation():
     assert (splits_per_patient == 1).all()
     validation_share = (out[SPLIT] == 1).sum() / (df[SPLIT] == 0).sum()
     assert validation_share == pytest.approx(0.2, abs=0.05)
+
+
+@pytest.fixture
+def no_run_positive_label():
+    utils.use_positive_label(None)
+    yield
+    utils.use_positive_label(None)
+
+
+@pytest.mark.parametrize(
+    "labels, requested, positive",
+    [
+        (("benign", "malignant"), None, "malignant"),       # last in sorted order
+        (("benign", "malignant"), "benign", "benign"),      # the user's choice
+        (("negative", "positive"), None, "positive"),       # a name hint
+        (("case", "control"), " case ", "case"),            # spaces around the choice
+        (("maybe", "yes"), None, "yes"),                    # Ludwig: yes is always True
+        (("no", "other"), None, "other"),                   # Ludwig: no is always False
+        (("abnormal", "n"), None, "abnormal"),              # ... even when it sorts last
+        (("0", "1"), "1.0", "1"),                           # numbers: the nonzero label
+        (("0", "-2"), None, "-2"),
+        (("False", "True"), None, "True"),                  # Ludwig's column names for numbers
+        (("False", "True"), "TRUE", "True"),                # a different case still names one label
+        (("benign", "malignant"), "Benign", "benign"),
+    ],
+)
+def test_resolve_binary_positive_label(labels, requested, positive):
+    assert utils.resolve_binary_positive_label(labels, requested) == positive
+    assert utils.resolve_binary_positive_label(labels[::-1], requested) == positive
+    # Handing the choice to Ludwig as fallback_true_label makes exactly that label True.
+    truth = utils.ludwig_text_binary_truth(labels, positive)
+    assert [name for name in labels if truth[name]] == [positive]
+
+
+@pytest.mark.parametrize(
+    "labels, requested, message",
+    [
+        (("benign", "malignant"), "tumor", "is not one of the two labels"),
+        (("no", "other"), "no", "always reads 'other' as the positive"),
+        (("maybe", "yes"), "maybe", "always reads 'yes' as the positive"),
+        (("0", "1"), "0", "always reads '1' as the positive"),
+        (("a", "b", "c"), None, "exactly two labels"),
+        (("Case", "case"), "CASE", "is not one of the two labels"),
+    ],
+)
+def test_resolve_binary_positive_label_refuses_impossible_choices(labels, requested, message):
+    with pytest.raises(ValueError, match=message):
+        utils.resolve_binary_positive_label(labels, requested)
+
+
+def test_run_positive_label_decides_every_positive_class_lookup(no_run_positive_label):
+    names = ["benign", "malignant"]
+    assert utils.positive_class_name(names) == "malignant"
+    utils.use_positive_label("benign")
+    assert utils.positive_class_name(names) == "benign"
+    assert ensemble.positive_class_index(names) == 0
+    thresholded = ensemble.apply_binary_threshold(
+        pd.DataFrame({"label_probabilities_benign": [0.7, 0.2], "label_probabilities_malignant": [0.3, 0.8]}), 0.6
+    )
+    assert thresholded["label_predictions"].tolist() == ["benign", "malignant"]
+    # names the run's label is not among (Ludwig's False/True columns) keep Ludwig's rule
+    utils.use_positive_label("1")
+    assert utils.positive_class_name(["False", "True"]) == "True"
+    assert utils.positive_class_name(["0", "1.0"]) == "1.0"
+
+
+@pytest.mark.parametrize(
+    "labels, requested, positive, fallback",
+    [
+        (("benign", "malignant"), None, "malignant", "malignant"),
+        (("benign", "malignant"), "benign", "benign", "benign"),
+        (("maybe", "yes"), None, "yes", "yes"),
+        ((0, 1), None, "1", None),                # numbers need no fallback label
+        ((0, 1), "1", "1", None),
+    ],
+)
+def test_workflow_gives_ludwig_the_positive_class(
+    tmp_path, monkeypatch, no_run_positive_label, labels, requested, positive, fallback
+):
+    monkeypatch.chdir(tmp_path)
+    image_workflow = importlib.import_module("image_workflow")
+    csv_path, zip_path, df = _make_dataset(tmp_path)
+    df[LABEL] = df[LABEL].map({0: labels[0], 1: labels[1]})
+    df[[IMAGE, LABEL, "patient", SPLIT]].to_csv(csv_path, index=False)
+    args = _make_args(tmp_path, csv_path, zip_path, cross_validation=False, num_seeds=1, positive_label=requested)
+    backend = FakeBackend()
+    seen = {}
+    prepare_config = backend.prepare_config
+
+    def capture(config_params, split_config):
+        seen.update(config_params)
+        seen["during_run"] = utils.positive_class_name([str(label) for label in labels])
+        return prepare_config(config_params, split_config)
+
+    backend.prepare_config = capture
+    utils.use_positive_label("stale")
+    image_workflow.ImageLearnerCLI(args, backend).run()
+    assert seen["positive_label"] == positive
+    assert seen["fallback_true_label"] == fallback
+    assert seen["during_run"] == positive
+    assert utils._RUN_POSITIVE_LABEL is None  # a run does not leave its choice behind
+
+
+@pytest.mark.parametrize(
+    "labels, requested, message",
+    [
+        ((0, 1), "0", "always reads '1' as the positive"),
+        (("benign", "malignant"), "tumor", "is not one of the two labels"),
+        (("a", "b", "c"), "a", "applies to two-class labels only"),
+    ],
+)
+def test_workflow_refuses_an_impossible_positive_class(tmp_path, monkeypatch, labels, requested, message):
+    monkeypatch.chdir(tmp_path)
+    image_workflow = importlib.import_module("image_workflow")
+    csv_path, zip_path, df = _make_dataset(tmp_path)
+    df[LABEL] = [labels[index % len(labels)] for index in range(len(df))]
+    df[[IMAGE, LABEL, "patient", SPLIT]].to_csv(csv_path, index=False)
+    args = _make_args(tmp_path, csv_path, zip_path, cross_validation=False, num_seeds=1, positive_label=requested)
+    with pytest.raises(ValueError, match=message):
+        image_workflow.ImageLearnerCLI(args, FakeBackend()).run()
+
+
+def test_save_model_threshold_only_cuts_the_positive_class(tmp_path):
+    def model(bool2str=None, feature_type="binary"):
+        folder = tmp_path / f"model{len(list(tmp_path.iterdir()))}"
+        folder.mkdir()
+        (folder / "model_hyperparameters.json").write_text(json.dumps({
+            "input_features": [{"name": IMAGE, "type": "image"}],
+            "output_features": [{"name": LABEL, "type": feature_type, "threshold": 0.5}],
+        }))
+        if bool2str:
+            (folder / "training_set_metadata.json").write_text(json.dumps({LABEL: {"bool2str": bool2str}}))
+        return folder
+
+    def threshold(folder):
+        return json.loads((folder / "model_hyperparameters.json").read_text())["output_features"][0]["threshold"]
+
+    numeric = model()
+    assert utils.save_model_threshold(numeric, 0.31, "1") is True
+    assert threshold(numeric) == pytest.approx(0.31)
+    text = model(["benign", "malignant"])
+    assert utils.save_model_threshold(text, 0.42, "malignant") is True
+    assert threshold(text) == pytest.approx(0.42)
+    # Ludwig's True class is not the class the threshold was tuned for: leave the model alone
+    reversed_model = model(["malignant", "benign"])
+    assert utils.save_model_threshold(reversed_model, 0.42, "malignant") is False
+    assert threshold(reversed_model) == 0.5
+    assert utils.save_model_threshold(model(feature_type="category"), 0.42, "1") is False
+    assert utils.save_model_threshold(tmp_path / "missing", 0.42, "1") is False
+
+
+def test_log_loss_reads_probabilities_in_the_given_class_order():
+    # "b" first: sklearn's log_loss would read the columns alphabetically and report 2.30
+    probs = np.array([[0.9, 0.1], [0.1, 0.9], [0.9, 0.1]])
+    stats = ensemble.compute_classification_statistics(["b", "a", "b"], probs, ["b", "a"], threshold=0.5)
+    assert stats["log_loss"] == pytest.approx(-np.log(0.9))
+    multi = np.array([[0.7, 0.2, 0.1], [0.1, 0.6, 0.3], [0.25, 0.25, 0.5], [1.0, 0.0, 0.0]])
+    stats = ensemble.compute_classification_statistics(["z", "m", "a", "m"], multi, ["z", "m", "a"])
+    expected = -np.mean(np.log([0.7, 0.6, 0.5, 1e-15]))
+    assert stats["log_loss"] == pytest.approx(expected)
+    assert ensemble.flatten_label_statistics(stats)["log_loss"] == pytest.approx(expected)

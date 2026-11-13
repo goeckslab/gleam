@@ -58,7 +58,7 @@ from plotly_plots import (
     compute_binary_threshold_metrics_from_predictions,
     resolve_binary_threshold_for_report,
 )
-from utils import detect_output_type, extract_metrics_from_json
+from utils import detect_output_type, extract_metrics_from_json, save_model_threshold
 
 logger = logging.getLogger("ImageLearner")
 
@@ -811,6 +811,12 @@ class LudwigDirectBackend:
                     and config_params.get("threshold") is not None
                 ):
                     output_feat["threshold"] = float(config_params["threshold"])
+                if config_params.get("fallback_true_label") is not None:
+                    # Ludwig would make the alphabetically first text label True ("benign" of
+                    # benign/malignant). Name the class the report scores as positive instead.
+                    output_feat["preprocessing"] = {
+                        "fallback_true_label": str(config_params["fallback_true_label"])
+                    }
             else:
                 category_top_k = min(DEFAULT_HITS_AT_K, max(1, int(num_unique_labels)))
                 output_feat = {
@@ -1822,6 +1828,50 @@ class LudwigDirectBackend:
                 logger.warning(f"✘ Skipped {viz_name}: {e}")
         logger.info(f"All visualizations written to {viz_dir}")
 
+    @staticmethod
+    def _describe_model_threshold(
+        exp_dir: Path,
+        config_for_summary: Dict[str, Any],
+        ensemble: Optional[Dict[str, Any]],
+        evaluation_threshold: float,
+    ) -> None:
+        """Record which threshold the saved model applies, saving a tuned one into it first.
+
+        A single model trained with an automatic threshold still holds Ludwig's
+        0.5; the threshold selected on its validation split is written into the
+        model so the ludwig_model output decides the way the Test Summary does.
+        An ensemble's exported member was handled when the ensemble was assembled.
+        """
+        if ensemble:
+            exported = ensemble.get("exported_model_threshold")
+            if exported is None:
+                return
+            saved = ensemble.get("exported_model_threshold_source") != "validation" or bool(
+                ensemble.get("exported_model_threshold_saved")
+            )
+            config_for_summary["model_threshold"] = float(exported) if saved else 0.5
+            config_for_summary["model_threshold_note"] = (
+                f"Exported member {ensemble.get('exported_model')}'s own threshold, not the ensemble's"
+                if saved
+                else f"The exported member's own threshold {float(exported):.6f} could not be saved"
+            )
+            return
+        if not (exp_dir / "model" / "model_hyperparameters.json").exists():
+            return
+        selected = config_for_summary.get("threshold")
+        tuned = str(config_for_summary.get("threshold_source") or "").startswith("Optimized")
+        if tuned and selected is not None:
+            if save_model_threshold(exp_dir / "model", float(selected), config_for_summary.get("positive_label")):
+                config_for_summary["model_threshold"] = float(selected)
+                config_for_summary["model_threshold_note"] = "The selected threshold, saved after training"
+            else:
+                config_for_summary["model_threshold"] = evaluation_threshold
+                config_for_summary["model_threshold_note"] = (
+                    "The selected threshold could not be saved; apply it to the model's probabilities"
+                )
+        else:
+            config_for_summary["model_threshold"] = evaluation_threshold
+
     def generate_html_report(
         self,
         title: str,
@@ -2331,6 +2381,8 @@ class LudwigDirectBackend:
                 )
 
         if output_type == "binary":
+            self._describe_model_threshold(exp_dir, config_for_summary, ensemble, evaluation_threshold)
+        if output_type == "binary":
             config_for_summary["evaluation_threshold"] = evaluation_threshold
             # Ensemble tables mix member metrics with thresholded averaged predictions.
             if not ensemble:
@@ -2499,14 +2551,26 @@ class LudwigDirectBackend:
             except Exception as e:
                 logger.warning(f"Could not generate validation threshold plot: {e}")
 
-        if train_stats_path.exists():
+        curves_path = train_stats_path
+        if ensemble and not train_stats_path.exists() and ensemble.get("exported_model"):
+            # An ensemble has no training run of its own: show the exported member's curves.
+            member_stats_path = exp_dir / "members" / str(ensemble["exported_model"]) / "training_statistics.json"
+            if member_stats_path.exists():
+                curves_path = member_stats_path
+                tab2_content += (
+                    "<p style='text-align:center; color:#666;'>The learning curves below belong to the "
+                    f"exported member model ({html_escape(str(ensemble['exported_model']))}), the model in "
+                    "the ludwig_model output. The other members' statistics are in the ZIP under "
+                    "experiment_run/members/.</p>"
+                )
+        if curves_path.exists():
             try:
                 if output_type == "regression":
-                    tv_plots = build_regression_train_val_plots(str(train_stats_path))
+                    tv_plots = build_regression_train_val_plots(str(curves_path))
                     tab2_content = append_plot_blocks(tab2_content, tv_plots)
                 else:
                     tv_plots = build_train_validation_plots(
-                        str(train_stats_path),
+                        str(curves_path),
                         top_k=hits_top_k,
                         output_type=output_type,
                     )

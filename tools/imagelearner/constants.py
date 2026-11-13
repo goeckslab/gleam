@@ -191,6 +191,7 @@ METRIC_DISPLAY_NAMES = {
     "balanced_accuracy": "Balanced Accuracy",
     "accuracy_micro": "Micro Accuracy",
     "loss": "Loss",
+    "log_loss": "Log Loss (Unweighted)",
     "roc_auc": "ROC-AUC",
     "roc_auc_macro": "Macro ROC-AUC",
     "roc_auc_micro": "Micro ROC-AUC",

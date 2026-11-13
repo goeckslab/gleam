@@ -6,6 +6,7 @@ automatic batch-size probing, preprocessing, training, predictions and reports.
 import argparse
 import json
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -29,7 +30,7 @@ from ludwig.trainers.trainer import Trainer
 from ludwig_backend import configure_binary_metrics, LudwigDirectBackend
 from PIL import Image
 from plotly_plots import _resolve_display_labels
-from utils import ludwig_text_binary_truth
+from utils import ludwig_text_binary_truth, save_model_threshold
 
 
 class SmallImageBackend(LudwigDirectBackend):
@@ -94,7 +95,7 @@ def make_args(csv_path, image_zip, output, **overrides):
         image_resize="original", threshold=None, threshold_mode="auto",
         threshold_metric="f1", validation_metric=None,
         target_column=None, image_column=None, sample_id_column=None,
-        torch_home=None, cross_validation=True, num_folds=2,
+        torch_home=None, positive_label=None, cross_validation=True, num_folds=2,
         fold_role="validation", num_seeds=2,
         # The tests reload and compare every member's weights.
         keep_member_weights=True,
@@ -208,7 +209,11 @@ class RuntimeEquivalenceTest(unittest.TestCase):
                 finally:
                     os.chdir(previous_dir)
                 durations.append(time.monotonic() - started)
-                self.assertIn("Ensemble Summary", (output / "image_classification_results_report.html").read_text())
+                report = (output / "image_classification_results_report.html").read_text()
+                self.assertIn("Ensemble Summary", report)
+                self.assertIn("The learning curves below belong to the exported member model", report)
+                if task != "regression":
+                    self.assertIn("Log Loss (Unweighted)", report)
                 outputs.append(output / "experiment_run")
                 counts.append(counter)
 
@@ -403,18 +408,80 @@ class EnsembleRowAlignmentTest(unittest.TestCase):
                 self.assert_report_labels_name_the_right_classes(run_dir, statistics)
                 self.assert_rows_match_member_models(run_dir, image_dir)
 
-    def test_text_binary_labels_follow_ludwigs_bool2str(self):
-        # Ludwig makes the alphabetically first text label True: bool2str = [False label, True label].
+    def test_text_binary_labels_make_the_positive_class_ludwigs_true_label(self):
+        # Left alone, Ludwig makes the alphabetically first text label True ("case"); the tool
+        # names its positive class instead: bool2str = [False label, True label].
         with tempfile.TemporaryDirectory(prefix="imagelearner_textbinary_") as tmp:
             root = Path(tmp).resolve()
             image_dir, run_dir = self.run_ensemble(root, [("case", "control")[index % 2] for index in range(30)])
             summary = json.loads((run_dir / "ensemble_summary.json").read_text())
+            self.assertEqual(summary["positive_label"], "control")
             for member in summary["members"]:
                 meta = json.loads(
                     (run_dir / "members" / member["name"] / "model" / "training_set_metadata.json").read_text()
                 )
-                self.assertEqual(meta["label"]["bool2str"], ["control", "case"])
+                self.assertEqual(meta["label"]["bool2str"], ["case", "control"])
             self.assert_rows_match_member_models(run_dir, image_dir)
+            self.assert_exported_model_decides_at_its_saved_threshold(
+                run_dir, image_dir, "control", summary["exported_model_threshold"]
+            )
+
+    def assert_exported_model_decides_at_its_saved_threshold(self, run_dir, image_dir, positive, expected=None):
+        """The ludwig_model output predicts the positive class exactly when P(positive) >= its saved threshold."""
+        model_dir = run_dir / "model"
+        config = json.loads((model_dir / "model_hyperparameters.json").read_text())
+        threshold = config["output_features"][0]["threshold"]
+        if expected is not None:
+            self.assertAlmostEqual(threshold, expected, places=6)
+        frame = pd.DataFrame({"image_path": sorted(str(p) for p in image_dir.iterdir())})
+
+        def decisions():
+            predictions, _ = LudwigModel.load(str(model_dir)).predict(dataset=frame)
+            scores = predictions[f"label_probabilities_{positive}"].to_numpy(dtype=float)
+            return scores, (predictions["label_predictions"].astype(str) == positive).to_numpy()
+
+        scores, is_positive = decisions()
+        self.assertEqual(is_positive.tolist(), (scores >= threshold).tolist())
+        # Move the saved threshold between two scores: the reloaded model must follow it.
+        ordered = np.sort(scores)
+        middle = float((ordered[len(ordered) // 2 - 1] + ordered[len(ordered) // 2]) / 2)
+        self.assertTrue(save_model_threshold(model_dir, middle, positive))
+        scores, is_positive = decisions()
+        self.assertEqual(is_positive.tolist(), (scores >= middle).tolist())
+        self.assertTrue(0 < is_positive.sum() < len(is_positive))
+        return threshold
+
+    def test_single_model_saves_its_tuned_threshold_for_the_chosen_positive_class(self):
+        labels = [("benign", "malignant")[index % 2] for index in range(30)]
+        for requested, positive, bool2str in (
+            (None, "malignant", ["benign", "malignant"]),
+            ("benign", "benign", ["malignant", "benign"]),
+        ):
+            with tempfile.TemporaryDirectory(prefix="imagelearner_positive_") as tmp:
+                root = Path(tmp).resolve()
+                csv_path, image_zip, image_dir = write_dataset(root, labels, seed=7)
+                output = root / "out"
+                output.mkdir()
+                args = make_args(
+                    csv_path, image_zip, output, cross_validation=False, num_seeds=1, positive_label=requested,
+                )
+                report = run_cli(args, SmallImageBackend())
+                run_dir = output / "experiment_run"
+                meta = json.loads((run_dir / "model" / "training_set_metadata.json").read_text())
+                self.assertEqual(meta["label"]["bool2str"], bool2str)
+                self.assertIn("Source: Optimized on validation split.", report)
+                self.assertRegex(report, rf"Positive Class</td>\s*<td[^>]*>\s*{positive}\s*</td>")
+                # The threshold the Test Summary uses is the one saved in the model, not Ludwig's 0.5.
+                selected = re.search(
+                    r"Decision threshold: ([0-9.]+)</strong>\. Source: Optimized on validation split", report
+                ).group(1)
+                self.assertNotEqual(float(selected), 0.5)
+                self.assertRegex(
+                    report, rf"Threshold Saved in the Model \(ludwig_model Output\)</td>\s*<td[^>]*>\s*{selected}<br>"
+                )
+                self.assert_exported_model_decides_at_its_saved_threshold(
+                    run_dir, image_dir, positive, float(selected)
+                )
 
     def assert_report_labels_name_the_right_classes(self, run_dir, statistics):
         """The per-class plots label each statistics key with the class it belongs to."""
@@ -458,6 +525,11 @@ class LudwigBinaryLabelTest(unittest.TestCase):
                 {}, pd.Series(list(pair), dtype=object), {"fallback_true_label": None}, LOCAL_BACKEND, False
             )
             self.assertEqual(ludwig_text_binary_truth(pair), meta["str2bool"], pair)
+            for fallback in pair:
+                meta = BinaryFeatureMixin.get_feature_meta(
+                    {}, pd.Series(list(pair), dtype=object), {"fallback_true_label": fallback}, LOCAL_BACKEND, False
+                )
+                self.assertEqual(ludwig_text_binary_truth(pair, fallback), meta["str2bool"], (pair, fallback))
 
 
 if __name__ == "__main__":

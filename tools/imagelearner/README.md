@@ -24,6 +24,16 @@ Image Learner is a Galaxy wrapper for training and evaluating image classificati
 - Derived prediction and metric assets stored with the model output
 - For ensemble runs: averaged predictions, `ensemble_summary.json`, and one `members/<fold>_<seed>/` folder per trained member (predictions and statistics, no weights) inside the artifacts ZIP
 
+## Positive class and decision threshold
+
+For a two-class target the report names the positive class: the class that the decision threshold, precision, recall, F1 and the ROC and precision-recall curves refer to.
+
+- Ludwig fixes it for some labels: of two numbers the nonzero one is positive, and yes/y/true/t/1 are positive and no/n/false/f/0/-1 negative.
+- For any other pair of text labels, set "Positive class" (`--positive-label`). Left empty, the tool takes a label containing event, true, positive, pos or 1, otherwise the alphabetically last label.
+- The choice is passed to Ludwig as the label's `fallback_true_label`, so the model's True class is the report's positive class. Ludwig on its own would take the alphabetically first label (benign of benign/malignant).
+- With an automatic threshold, the threshold selected on the validation split is written into the saved model (`model_hyperparameters.json`) after training, so the ludwig_model output decides at the reported threshold, not at 0.5. For an ensemble this is the exported member's own threshold.
+- Ensemble classification reports add an unweighted log loss of the averaged probabilities. It carries no class weights and is not comparable with Ludwig's training loss.
+
 ## Cross-validation and ensembles
 
 Under "Customize Default Settings" the wrapper can train several models per run:
@@ -36,7 +46,7 @@ Under "Customize Default Settings" the wrapper can train several models per run:
 - For an automatic binary threshold the report warns when a class has fewer than 5 rows in the validation rows a threshold is tuned on.
 - A failed ensemble (every member failed, a fold with no trained member, or no matched predictions) fails the job with the reason instead of producing a stub model and report.
 
-Members are trained sequentially, so plan GPU time accordingly. The ludwig_model output holds the first trained member's weights, and the report shows that member's own test metrics and threshold; the other members' predictions and statistics live in the artifacts ZIP, and their weights are deleted during the run to bound disk use.
+Members are trained sequentially, so plan GPU time accordingly. The ludwig_model output holds the first trained member's weights, and the report shows that member's own test metrics, threshold and learning curves; the other members' predictions and statistics live in the artifacts ZIP, and their weights are deleted during the run to bound disk use.
 
 Seeds on the same split reuse the prepared datasets in their original row order. Different folds use separate caches. Validation predictions reuse the trained model and prepared validation data. Automatic batch sizes are reused only for models without mutable persistent buffers: models with buffers such as BatchNorm statistics retain the original probes, which can change those statistics. If reused sizes run out of memory, the member retries with automatic tuning. Explicit batch sizes remain unchanged.
 

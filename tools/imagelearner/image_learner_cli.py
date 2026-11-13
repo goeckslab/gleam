@@ -189,6 +189,15 @@ def main():
         help="Metric used for automatic binary threshold optimization.",
     )
     parser.add_argument(
+        "--positive-label",
+        type=str,
+        default=None,
+        help=(
+            "Label to treat as the positive class of a two-class target. Thresholds, precision and "
+            "recall refer to it. Leave unset to let the tool choose (see the tool help)."
+        ),
+    )
+    parser.add_argument(
         "--validation-metric",
         type=str,
         default=None,
