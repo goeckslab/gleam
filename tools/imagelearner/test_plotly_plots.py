@@ -4,6 +4,7 @@ import pytest
 from plotly_plots import (
     _resolve_display_labels,
     _resolve_positive_label_from_probability,
+    _select_positive_probability_column,
     build_binary_threshold_classification_plots_from_predictions,
     build_prediction_diagnostics,
     build_train_validation_plots,
@@ -271,6 +272,53 @@ def test_binary_threshold_plots_are_recomputed_from_predictions(tmp_path):
     assert "Selected Threshold: 0.500" in plots[0]["html"]
 
 
+def test_binary_threshold_plots_and_metrics_use_recorded_per_row_thresholds(tmp_path):
+    predictions_path = tmp_path / "predictions.csv"
+    pd.DataFrame(
+        {
+            "split": [2, 2, 2, 2],
+            "label": [1, 0, 1, 0],
+            "label_probabilities_0": [0.1, 0.8, 0.45, 0.7],
+            "label_probabilities_1": [0.9, 0.2, 0.55, 0.3],
+            # fold 1 rows decide at 0.4, fold 2 rows at 0.6
+            "decision_threshold": [0.4, 0.4, 0.6, 0.6],
+        }
+    ).to_csv(predictions_path, index=False)
+
+    plots = build_binary_threshold_classification_plots_from_predictions(
+        str(predictions_path), threshold=0.5, split_value=2
+    )
+    assert "Per-Fold Thresholds, Mean: 0.500" in plots[0]["html"]
+    assert "Operating point (per-fold thresholds)" in plots[1]["html"]
+    assert "Operating point (per-fold thresholds)" in plots[2]["html"]
+
+    # row 3 is positive at the mean threshold but negative at its own fold's 0.6
+    metrics = compute_binary_threshold_metrics_from_predictions(
+        str(predictions_path), threshold=0.5, split_value=2
+    )
+    assert metrics["accuracy"] == pytest.approx(0.75)
+    assert metrics["recall"] == pytest.approx(0.5)
+
+
+def test_binary_threshold_plots_keep_single_threshold_when_rows_agree(tmp_path):
+    predictions_path = tmp_path / "predictions.csv"
+    pd.DataFrame(
+        {
+            "split": [2, 2, 2, 2],
+            "label": [1, 0, 1, 0],
+            "label_probabilities_0": [0.1, 0.8, 0.4, 0.7],
+            "label_probabilities_1": [0.9, 0.2, 0.6, 0.3],
+            "decision_threshold": [0.5, 0.5, 0.5, 0.5],
+        }
+    ).to_csv(predictions_path, index=False)
+
+    plots = build_binary_threshold_classification_plots_from_predictions(
+        str(predictions_path), threshold=0.5, split_value=2
+    )
+    assert "Selected Threshold: 0.500" in plots[0]["html"]
+    assert "Selected threshold=0.500" in plots[1]["html"]
+
+
 def test_binary_prediction_diagnostics_put_calibration_before_confidence(tmp_path):
     predictions_path = tmp_path / "predictions.csv"
     pd.DataFrame(
@@ -491,3 +539,44 @@ def test_statistics_confusion_matrix_keeps_numeric_class_axes_categorical(tmp_pa
         assert axis.categoryorder == "array"
         assert list(axis.categoryarray) == list(fig.data[0].x)
     assert fig.layout.yaxis.autorange == "reversed"
+
+
+@pytest.mark.parametrize(
+    "suffixes, expected",
+    [(["0", "-2"], "-2"), (["0", "2"], "2"), (["0", "-1"], "-1"), (["False", "True"], "True")],
+)
+def test_positive_probability_column_keeps_ludwig_nonzero_class(suffixes, expected):
+    columns = [f"label_probabilities_{suffix}" for suffix in suffixes]
+    assert _select_positive_probability_column(columns) == (f"label_probabilities_{expected}", expected)
+
+
+@pytest.mark.parametrize(
+    "names",
+    [
+        ["0", "2"], ["False", "True"], ["event", "no_event"], ["negative", "positive"],
+        ["benign", "malignant"], ["class1", "class2"], ["HER2-", "HER2+"], ["no", "yes"],
+    ],
+)
+def test_report_and_ensemble_pick_the_same_positive_class(names):
+    from ensemble import positive_class_index
+
+    for ordered in (names, names[::-1]):
+        columns = [f"label_probabilities_{name}" for name in ordered]
+        assert _select_positive_probability_column(columns)[1] == ordered[positive_class_index(ordered)]
+
+
+def test_positive_label_matches_numeric_hint_against_float_labels():
+    assert _resolve_positive_label_from_probability(np.array([0.0, -2.0]), "-2") == -2.0
+    assert _resolve_positive_label_from_probability(np.array([2.0, 0.0]), "2") == 2.0
+
+
+def test_resolve_display_labels_keeps_integer_class_names_in_ludwig_order():
+    # Ludwig keys per-class stats by class name; idx2str is frequency-ordered.
+    assert _resolve_display_labels(["0", "1", "2"], ["2", "0", "1"]) == ["0", "1", "2"]
+
+
+def test_resolve_display_labels_matches_canonical_ensemble_names():
+    # Ensemble statistics use "1" where Ludwig's metadata says "1.0".
+    assert _resolve_display_labels(["1", "2", "3"], ["1.0", "2.0", "3.0"]) == ["1.0", "2.0", "3.0"]
+    assert _resolve_display_labels(["3", "1", "2"], ["1.0", "2.0", "3.0"]) == ["3.0", "1.0", "2.0"]
+    assert _resolve_display_labels(["cat", "dog"], [" cat", "dog "]) == [" cat", "dog "]

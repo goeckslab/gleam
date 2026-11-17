@@ -338,6 +338,17 @@ jobs:
     - name: Get number of CPU cores
       uses: SimenB/github-actions-cpu-cores@v2
       id: cpu-cores
+    - name: Verify Image Learner runtime optimizations with real Ludwig
+      if: ${{ matrix.chunk == 0 && contains(needs.setup.outputs.repository-list, 'tools/imagelearner') }}
+      timeout-minutes: 30
+      run: |
+        set -euo pipefail
+        mkdir -p upload
+        docker run --rm --entrypoint python \
+          -e CUDA_VISIBLE_DEVICES="" -e OMP_NUM_THREADS=1 -e MKL_NUM_THREADS=1 \
+          -v "$PWD:/workspace" -w /workspace/tools/imagelearner \
+          quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1 \
+          integration_ludwig_runtime.py 2>&1 | tee upload/imagelearner-runtime-integration.log
     - name: Check binary metrics with real Ludwig
       if: ${{ matrix.chunk == 0 && contains(needs.setup.outputs.repository-list, 'tools/imagelearner') }}
       timeout-minutes: 15
@@ -348,6 +359,19 @@ jobs:
           -e CUDA_VISIBLE_DEVICES= -e OMP_NUM_THREADS=2 -e MKL_NUM_THREADS=2 \
           -v "$PWD:/work:ro" -w /work "$image" \
           tools/imagelearner/test_binary_metrics_integration.py
+    - name: Run Image Learner unit tests in the tool container
+      if: ${{ matrix.chunk == 0 && contains(needs.setup.outputs.repository-list, 'tools/imagelearner') }}
+      timeout-minutes: 20
+      run: |
+        set -euo pipefail
+        image=$(python -c "import xml.etree.ElementTree as ET; print(ET.parse('tools/imagelearner/image_learner.xml').find('./requirements/container').text)")
+        # The image runs as a user who cannot write to site-packages or $HOME: install pytest
+        # into a user site under /tmp (PYTHONUSERBASE), which Python puts on sys.path.
+        docker run --rm --entrypoint sh \
+          -e CUDA_VISIBLE_DEVICES= -e OMP_NUM_THREADS=2 -e MKL_NUM_THREADS=2 -e PYTHONDONTWRITEBYTECODE=1 \
+          -e PYTHONUSERBASE=/tmp/pyuser \
+          -v "$PWD:/work:ro" -w /work/tools/imagelearner "$image" \
+          -c 'python -m pip install --user --no-cache-dir --no-warn-script-location --quiet --disable-pip-version-check pytest && python -m pytest -q -p no:cacheprovider test_ensemble.py test_ensemble_report.py test_image_workflow.py test_ludwig_backend_threshold.py test_plotly_plots.py'
     - name: Planemo test
       uses: galaxyproject/planemo-ci-action@v1
       id: test

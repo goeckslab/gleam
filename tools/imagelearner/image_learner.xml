@@ -1,4 +1,4 @@
-<tool id="image_learner" name="Image Learner" version="0.1.7" profile="22.01">
+<tool id="image_learner" name="Image Learner" version="0.1.8" profile="22.01">
     <description>trains and evaluates an image classification/regression model</description>
     <requirements>
         <container type="docker">quay.io/goeckslab/galaxy-ludwig-gpu:0.10.1</container>
@@ -6,6 +6,7 @@
     <required_files>
         <include path="calibration_plot.py" />
         <include path="constants.py" />
+        <include path="ensemble.py" />
         <include path="html_structure.py" />
         <include path="image_learner_cli.py" />
         <include path="image_workflow.py" />
@@ -94,12 +95,21 @@
                 #end if
                 --image-resize "$model_hyperparameter_configuration.image_resize"
                 --random-seed "$customize_defaults_section.random_seed"
+                #if str($customize_defaults_section.positive_label).strip()
+                    --positive-label="$customize_defaults_section.positive_label"
+                #end if
+                #if $customize_defaults_section.cross_validation.enable_cross_validation == "true"
+                    --cross-validation
+                    --num-folds "$customize_defaults_section.cross_validation.num_folds"
+                    --fold-role "$customize_defaults_section.cross_validation.fold_role"
+                #end if
+                --num-seeds "$customize_defaults_section.num_seeds"
                 --torch-home "$TORCH_HOME"
                 --output-dir "." &&
 
             mkdir -p '$output_model.extra_files_path' &&
             cp -r experiment_run/model/*.json experiment_run/model/model_weights '$output_model.extra_files_path' &&
-            python -c "import pathlib, zipfile; out = pathlib.Path('$output_artifacts_zip'); exp = pathlib.Path('experiment_run'); model_dir = exp / 'model'; zf = zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED); [zf.write(path, path.relative_to(exp.parent)) for path in sorted(exp.rglob('*')) if path.is_file() and model_dir not in path.parents]; zf.close()" &&
+            python -c "import pathlib, zipfile; out = pathlib.Path('$output_artifacts_zip'); exp = pathlib.Path('experiment_run'); model_dir = exp / 'model'; zf = zipfile.ZipFile(out, 'w', compression=zipfile.ZIP_DEFLATED); [zf.write(path, path.relative_to(exp.parent)) for path in sorted(exp.rglob('*')) if path.is_file() and model_dir not in path.parents and 'model_weights' not in path.parts]; zf.close()" &&
 
             echo "Image Learner Classification Experiment is Done!"
         ]]>
@@ -122,7 +132,7 @@
                     <!-- No additional parameters -->
                 </when>
             </conditional>
-            <param name="sample_id_column" type="data_column" data_ref="input_csv" use_header_names="true" optional="true" label="Sample ID column (optional)" help="Optional column used to group samples during splitting to prevent data leakage (e.g., patient_id or slide_id). Only used when no split column is provided." />
+            <param name="sample_id_column" type="data_column" data_ref="input_csv" use_header_names="true" optional="true" label="Sample ID column (optional)" help="Optional column used to group samples during splitting to prevent data leakage (e.g., patient_id or slide_id). Used when no split column is provided, when validation rows are drawn from the training rows of a 0/2 split column, and to keep grouped samples in the same fold during cross-validation." />
         </section>
         <section name="model_hyperparameter_configuration" title="Model, Weights, and Hyperparameters Configuration" expanded="true">
             <conditional name="task_selection">
@@ -351,6 +361,23 @@
         </section>
         <section name="customize_defaults_section" title="Customize Default Settings" expanded="false">
             <param argument="random_seed" type="integer" value="42" optional="true" label="Random seed (set for reproducibility)" min="0" max="999999"/>
+            <conditional name="cross_validation">
+                <param name="enable_cross_validation" type="select" label="Enable k-fold cross-validation?" help="Trains one model per fold and averages their predictions. Combined with several random seeds this trains folds x seeds models (at most 50). Every class needs at least as many rows as there are folds among the rows that take part in them (with validation folds, the rows outside the test split). Default: No.">
+                    <option value="false" selected="true">No</option>
+                    <option value="true">Yes</option>
+                </param>
+                <when value="true">
+                    <param name="num_folds" type="integer" value="5" min="2" max="20" label="Number of folds" help="Folds are stratified by label and, when a sample ID column is set, keep each sample ID in a single fold. Default: 5." />
+                    <param name="fold_role" type="select" label="How are the folds used?" help="Validation folds keep a fixed test set and report the ensemble on it; use this to compare with a single-model run. Test folds score every sample exactly once (out-of-fold); they cannot be combined with a test split supplied in the input CSV. Each test fold draws its validation rows from its training rows: validation / (training + validation) of the split proportions below (12.5% with the defaults), or 15% when the input CSV has a split column.">
+                        <option value="validation" selected="true">Validation folds: keep the test split fixed; each fold takes a turn as the validation set</option>
+                        <option value="test">Test folds: every sample is tested exactly once; validation is drawn from the remaining training rows</option>
+                    </param>
+                </when>
+                <when value="false">
+                    <!-- No additional parameters -->
+                </when>
+            </conditional>
+            <param name="num_seeds" type="integer" value="1" min="1" max="50" label="Number of random seeds" help="Train this many models per data split, using seeds random_seed, random_seed+1, ..., and average their predictions. 1 trains a single model. Default: 1." />
             <param name="epochs" type="integer" value="10" min="1" max="99999" label="Epochs" help="Total number of full passes through the training dataset. Higher values may improve accuracy but increase training time. Default: 10." />
             <param name="early_stop" type="integer" value="5" min="1" max="99999" label="Early Stop" help="Number of epochs with no improvement after which training will be stopped. Default: 5." />
             <conditional name="learning_rate_condition">
@@ -389,6 +416,28 @@
                     label="Test split proportion (only works if no split column in the metadata csv)"
                     value="0.2"
                     help="Fraction of data for testing (e.g., 0.2) train split + val split + test split should = 1."/>
+            <param name="positive_label" type="text" value="" optional="true"
+                   label="Positive class (binary classification only)"
+                   help="The label to treat as the positive class, as written in the target column (for example malignant). The decision threshold, precision, recall, F1 and the ROC and precision-recall curves refer to this class, and the trained model's True class is set to it. Leave empty to let the tool choose: a label containing event, true, positive, pos or 1, otherwise the alphabetically last label. Some labels cannot be chosen freely: of two numbers the nonzero one is always positive (recode the labels so that 0 is the negative class), and yes/y/true/t/1 are always positive and no/n/false/f/0/-1 always negative.">
+                <sanitizer>
+                    <valid initial="default">
+                        <add value="&lt;" />
+                        <add value="&gt;" />
+                        <add value="'" />
+                        <add value="[" />
+                        <add value="]" />
+                        <add value="{" />
+                        <add value="}" />
+                        <add value="@" />
+                        <add value="#" />
+                        <add value="&amp;" />
+                        <add value="%" />
+                        <add value=";" />
+                        <add value="|" />
+                        <add value="~" />
+                    </valid>
+                </sanitizer>
+            </param>
             <conditional name="binary_threshold_policy">
                 <param name="mode" type="select" label="Binary classification threshold">
                     <option value="auto" selected="true">Auto: optimize threshold by metric</option>
@@ -582,6 +631,38 @@
                 </assert_contents>
             </output>
         </test>
+        <!-- Cross-validation ensemble: 2 folds x 1 seed, averaged predictions on the fixed test split -->
+        <test expect_num_outputs="3">
+            <param name="data_configuration|input_csv" value="mnist_subset.csv" ftype="csv" />
+            <param name="data_configuration|image_zip" value="mnist_subset.zip" ftype="zip" />
+            <param name="model_hyperparameter_configuration|model_name" value="resnet18" />
+            <param name="customize_defaults_section|epochs" value="2" />
+            <param name="customize_defaults_section|cross_validation|enable_cross_validation" value="true" />
+            <param name="customize_defaults_section|cross_validation|num_folds" value="2" />
+            <param name="customize_defaults_section|cross_validation|fold_role" value="validation" />
+            <param name="customize_defaults_section|num_seeds" value="1" />
+            <output name="output_report">
+                <assert_contents>
+                    <has_text text="Experiment Summary" />
+                    <has_text text="Ensemble Summary" />
+                    <has_text text="Member Models and Averaged Ensemble" />
+                    <has_text text="fold1_seed42" />
+                    <has_text text="fold2_seed42" />
+                    <has_text text="Test Summary" />
+                </assert_contents>
+            </output>
+            <output name="output_artifacts_zip" ftype="zip">
+                <assert_contents>
+                    <has_archive_member path="experiment_run/predictions.csv" />
+                    <has_archive_member path="experiment_run/validation_predictions.csv" />
+                    <has_archive_member path="experiment_run/ensemble_summary.json" />
+                    <has_archive_member path="experiment_run/members/fold1_seed42/predictions.csv" />
+                    <has_archive_member path="experiment_run/members/fold2_seed42/predictions.csv" />
+                    <has_archive_member path="experiment_run/image_size_details.json" />
+                    <has_archive_member path="experiment_run/model/.*" max="0" />
+                </assert_contents>
+            </output>
+        </test>
     </tests>
     <help>
         <![CDATA[
@@ -592,6 +673,11 @@ The metadata csv should contain a column with the name 'image_path' and a column
 Optionally, you can also add a column with the name 'split' to specify which split each row belongs to (train, val, test). 
 If you do not provide a split column, the tool will automatically split the data into train, val, and test sets based on the proportions you specify or [0.7, 0.1, 0.2] by default.
 You can optionally specify a sample ID column to keep related samples in the same split and prevent data leakage.
+For a binary task the two labels must be told apart by Ludwig: two numbers need exactly one 0 (for example 0/1), and two text labels must not both read as true or both as false (for example yes/true or no/false); otherwise the run stops before training.
+
+**Positive class and decision threshold (binary tasks)**
+The decision threshold, precision, recall, F1 and the ROC and precision-recall curves refer to the positive class, which the report lists as "Positive Class". Of two numbers the nonzero one is positive, and yes/y/true/t/1 are positive and no/n/false/f/0/-1 negative. For any other pair of text labels you can name the positive class under "Customize Default Settings"; if you leave it empty the tool takes a label containing event, true, positive, pos or 1, otherwise the alphabetically last label (malignant of benign/malignant). The trained model uses the same class as its True class.
+With an automatic threshold, the threshold selected on the validation split is saved in the ludwig_model output after training, so the model predicts the positive class at that threshold, not at 0.5; the report lists it as "Threshold Saved in the Model".
 
 **Models Available**
 This tool supports a wide range of state-of-the-art image classification models including:
@@ -605,10 +691,21 @@ The MetaFormer family represents a unified perspective on transformer-like archi
 
 **If the selected label column has more than 10 unique values, the tool will automatically treat the task as a regression problem and apply appropriate metrics (e.g., MSE, RMSE, R²).**
 
+**Cross-validation and ensembles**
+Under "Customize Default Settings" you can train several models in one run and average their predictions:
+
+- *Number of random seeds*: trains that many models on the same split with seeds random_seed, random_seed+1, ... (for example 10 seeds for a 10-model ensemble).
+- *k-fold cross-validation*: trains one model per fold. With "validation folds" the test split stays fixed and each fold takes a turn as the validation set, so the ensemble is scored on the same test set as a single model. With "test folds" every sample is tested exactly once (out-of-fold); if the input CSV already assigns rows to the test split, the run stops and asks you to use validation folds or remove those test rows.
+- Both can be combined: folds x seeds models are trained, at most 50. Folds are stratified by label and keep rows that share a sample ID in the same fold. Every class needs at least one row per fold, and there must be at least as many sample IDs as folds; otherwise the run stops before training.
+- With test folds each fold draws its validation rows from its training rows: validation / (training + validation) of the split proportions (12.5% with the defaults), or 15% when the input CSV has a split column.
+
+For classification the class probabilities are averaged across the models that did not train on a row; for regression the predicted values are averaged. The report shows every member's metrics, their mean ± SD, and the metrics of the averaged ensemble. Member metrics are computed from each member's own predictions in the same way as the ensemble's (for binary tasks at the same decision threshold), so the rows compare like for like; Ludwig's own evaluation of each member stays in the ZIP. For binary tasks the decision threshold is chosen on the averaged validation (out-of-fold) predictions; with validation folds each of those rows is scored only by the models of the fold that held it out, while test rows are averaged across all members, so the threshold is tuned on scores from fewer models than it is applied to; with test folds each fold gets its own threshold, tuned on that fold's validation rows only, so no test row's label influences its own threshold. Members are trained one after another, so a 5-fold x 2-seed run takes about ten times as long as a single model. For an automatic binary threshold the report warns when a class has fewer than 5 rows in the validation rows a threshold is tuned on. If every member fails, if no member of a fold trains (that fold's rows could not be scored), or if no member's predictions can be matched to the dataset rows, the job fails with the reason instead of producing a report.
+
 **Outputs**
 The tool will output a trained model in the form of a ludwig_model file,
 a report in the form of an HTML file, and a hidden ZIP archive containing the predictions, image-size details, experiment stats, and visualizations.
 The html report will contain metrics&experiment setup parameters, train&val plots and test plots.
+For ensemble runs the ZIP also contains ``experiment_run/ensemble_summary.json`` and one ``experiment_run/members/<fold>_<seed>/`` folder per member with its own predictions and statistics (member weights are left out to keep the archive small); ``predictions.csv`` and ``validation_predictions.csv`` at the top level hold the averaged predictions. The ludwig_model output is the first trained member; the report lists its own test metrics and decision threshold (tuned on its own validation rows unless the threshold is manual, and saved in the model file), shows its learning curves, and Grad-CAM images use its own test rows (its validation rows if it has no test rows). For classification the member table and the Test Summary also give an unweighted log loss of the averaged probabilities; it carries no class weights, so do not compare it with the loss Ludwig reports during training.
 
         ]]>
     </help>
